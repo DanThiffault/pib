@@ -1,0 +1,31 @@
+# Binaries
+pib
+pib.exe
+*.exe
+
+# Go build artifacts
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# IDE / editor
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Pi personal workspace config
+.pi/defender.yaml
+
