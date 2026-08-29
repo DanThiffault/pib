@@ -1,0 +1,113 @@
+{
+  "plan": {
+    "slug": "tabbed-tui-plan-browser",
+    "title": "Tabbed TUI with Plan Browser"
+  },
+  "issues": [
+    {
+      "id": "feature",
+      "type": "feature",
+      "title": "Feature: Tabbed TUI with Plan Browser",
+      "body": "## Goal\n\nModify the pib TUI so that in addition to kicking off a new planner, it can also display existing plans and their status.\n\n### In scope\n- Read-only two-pane plan browser\n- Plan metadata and issue-count aggregation\n- Issue status preview (derived state, blockers, acceptance)\n- Tab switching and drill-down navigation\n- Responsive pane sizing\n\n### Out of scope\n- Launching agents from the TUI\n- Editing issues or plans\n- Creating new plans from the browser\n- Additional tabs beyond Plan and Plans",
+      "acceptance": [
+        "Tab bar renders above all content with Plan and Plans tabs",
+        "Plan tab preserves existing textarea prompt behavior",
+        "Plans tab shows two-pane plan list with metadata and issue counts",
+        "Arrow keys navigate plan list; right/enter opens plan detail",
+        "Plan detail shows two-pane issue list with status preview",
+        "Left/esc returns from plan detail to plan list",
+        "All data loads asynchronously; UI never blocks on SQLite"
+      ]
+    },
+    {
+      "id": "adr",
+      "parent": "feature",
+      "type": "research",
+      "title": "ADR: Tabbed TUI Architecture for Plan Browser",
+      "body": "## Task\n\nDocument architecture decisions for the tabbed TUI.\n\nProduce `docs/adrs/00X-tabbed-tui-plan-browser.md` covering:\n\n- Tab state model and sub-view transitions\n- Async loading patterns for Bubble Tea\n- Two-pane layout algorithm and responsive sizing\n- Keybinding conventions (tabs, navigation, drill-down)\n\n### ADRs\n- docs/adrs/00X-tabbed-tui-plan-browser.md\n\n### Domain Terms\n- **Tab** — Top-level navigation category\n- **Plan List View** — First sub-view of Plans tab\n- **Plan Detail View** — Second sub-view of Plans tab",
+      "acceptance": [
+        "ADR file created in docs/adrs/",
+        "Covers tab state model and sub-view transitions",
+        "Defines async loading patterns",
+        "Defines two-pane layout and responsive sizing",
+        "Establishes keybinding conventions"
+      ]
+    },
+    {
+      "id": "tab-framework",
+      "parent": "feature",
+      "type": "task",
+      "title": "Task: Add Tab Framework and Refactor Prompt into TabPlan",
+      "body": "## Task\n\nIntroduce tabbed navigation to the TUI.\n\nModify `internal/ui/model.go` and related files to support multiple tabs.\n\n- Add `tab` enum (`tabPlan`, `tabPlans`) and `currentTab` field to `Model`\n- Store `config` in `Model` for `AgentFor` lookups\n- `Update` dispatches by tab; `View` renders tab bar + active tab content\n- Move existing prompt code into `tabPlan` handlers\n- Tab switching via `1`/`2` keys and `tab` key\n- Tab bar styled with active/inactive states using Lipgloss\n- Startup phases remain unchanged; `phasePrompt` becomes `tabPlan`\n\n### ADRs\n- docs/adrs/00X-tabbed-tui-plan-browser.md\n\n### Domain Terms\n- **tabPlan** — Tab containing the original planner prompt\n- **tabPlans** — Tab containing the plan browser",
+      "acceptance": [
+        "Tab enum and currentTab field exist in Model",
+        "Update/View dispatch by tab",
+        "Prompt refactored into tabPlan without behavior change",
+        "Tab bar renders with active/inactive styling",
+        "1/2 and tab keys switch tabs"
+      ]
+    },
+    {
+      "id": "plan-list",
+      "parent": "feature",
+      "type": "task",
+      "title": "Task: Implement Plan List Tab with Two-Pane Browse",
+      "body": "## Task\n\nBuild the two-pane plan browser.\n\nImplement `tabPlans` plan list view in `internal/ui/`.\n\n- Left pane: scrollable plan list from `store.Plans()` (async command)\n- Right pane: selected plan metadata (title, slug, created_at) + aggregated issue counts\n- Arrow keys (`↑`/`↓`) move cursor through plan list\n- `→` or `enter` opens plan detail view for selected plan\n- Empty state renders when no plans exist\n- Error state renders if store query fails\n- Pane widths responsive to terminal size (left ~35%, right ~65%)\n- Loading indicator shown while data fetches\n\n### ADRs\n- docs/adrs/00X-tabbed-tui-plan-browser.md\n\n### Domain Terms\n- **Plan List View** — First sub-view of Plans tab\n- **Plan metadata** — Slug, title, created date, issue counts",
+      "acceptance": [
+        "Plan list loads asynchronously from store",
+        "Left pane shows scrollable plan list",
+        "Right pane shows metadata and issue counts for selected plan",
+        "Arrow keys navigate the list",
+        "Right/enter opens plan detail",
+        "Empty and error states handled",
+        "Responsive pane sizing"
+      ]
+    },
+    {
+      "id": "plan-detail",
+      "parent": "feature",
+      "type": "task",
+      "title": "Task: Implement Plan Detail Drill-Down View",
+      "body": "## Task\n\nBuild the two-pane issue drill-down.\n\nImplement plan detail sub-view within `tabPlans`.\n\n- Left pane: issue list for selected plan (from `store.Statuses`)\n- Right pane: issue status preview (state, derived flags: blocked, ready, in-progress, awaiting-review)\n- Preview includes blockers, acceptance criteria, timestamps, agent mapping\n- Arrow keys (`↑`/`↓`) navigate issue list\n- `←` or `esc` returns to plan list view\n- Empty state when plan has no issues\n- Error state handled\n- Async loading; UI never blocks\n\n### ADRs\n- docs/adrs/00X-tabbed-tui-plan-browser.md\n\n### Domain Terms\n- **Plan Detail View** — Second sub-view of Plans tab\n- **Issue status preview** — Derived state plus blockers/acceptance",
+      "acceptance": [
+        "Issue list loads asynchronously for selected plan",
+        "Left pane shows scrollable issue list",
+        "Right pane shows full status preview",
+        "Arrow keys navigate issues",
+        "Left/esc returns to plan list",
+        "Empty and error states handled"
+      ]
+    },
+    {
+      "id": "polish",
+      "parent": "feature",
+      "type": "task",
+      "title": "Task: Polish, Edge Cases, and Tests",
+      "body": "## Task\n\nHarden the tabbed TUI.\n\nHandle edge cases and add tests for all new UI logic.\n\n- Narrow terminal fallback: single-pane when width < 80\n- Long titles truncated with ellipsis in lists\n- Loading spinner/indicator during async fetches\n- Unit tests for tab switching, cursor navigation, sub-view transitions\n- Existing tests updated for new Model fields\n- Window resize handled correctly in all views\n- Tab bar does not steal focus from active pane\n\n### ADRs\n- docs/adrs/00X-tabbed-tui-plan-browser.md\n\n### Domain Terms\n- **Tabbed TUI** — The new multi-tab terminal interface",
+      "acceptance": [
+        "Narrow terminal shows single-pane fallback",
+        "Long titles truncated gracefully",
+        "Loading states visible during async fetches",
+        "Unit tests cover tab/cursor/navigation logic",
+        "Existing tests still pass",
+        "Resize handled in all views"
+      ]
+    },
+    {
+      "id": "review",
+      "parent": "feature",
+      "type": "reviewer",
+      "title": "Review: Tabbed TUI with Plan Browser",
+      "body": "## Review\n\nManually verify all functionality before sign-off.\n\n- Both tabs (Plan, Plans) render correctly\n- Plan tab: existing prompt behavior unchanged\n- Plans tab: plan list shows all plans with metadata\n- Plan detail drill-down works end-to-end\n- Navigation keys work in all views\n- Resize handled gracefully\n- Empty states tested\n- Error states tested\n- ADR reviewed and accepted\n\n### ADRs\n- docs/adrs/00X-tabbed-tui-plan-browser.md\n\n### Domain Terms\n- **Tabbed TUI** — The new multi-tab terminal interface",
+      "acceptance": [
+        "All tabs verified manually",
+        "Plan prompt behavior unchanged",
+        "Two-pane plan list works",
+        "Plan detail drill-down works",
+        "All navigation keys verified",
+        "Resize and edge cases tested",
+        "ADR reviewed and accepted"
+      ]
+    }
+  ]
+}

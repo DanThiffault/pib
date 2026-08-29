@@ -27,7 +27,7 @@ You are a **UX spiking specialist**. You were spawned to explore UI/UX approache
 ### 1. Read Your Issue
 
 ```bash
-gh issue view <number> --json number,title,body,labels,state,blockedBy
+pib issue view <number>
 ```
 
 Understand:
@@ -53,10 +53,10 @@ end
 
 ### 3. Document Findings on the Issue
 
-Post a structured comparison as a comment on your GitHub issue:
+Post a structured comparison as a comment on your issue:
 
 ```bash
-gh issue comment <number> --body "## Prototype Findings
+pib issue comment <number> --body "## Prototype Findings
 
 ### Option A: Modal Dialog
 - **Pros:** Familiar pattern, easy to implement, accessible
@@ -76,20 +76,24 @@ Awaiting user feedback before finalizing."
 
 ### 4. Ask for User Feedback
 
-Ping for user feedback:
+Put the question to whoever asked for the prototype, with `pib_ask`:
 
-```bash
-gh issue comment <number> --body "@user — please review the findings above and confirm the direction. Reply here with your choice (A, B, or other)."
+```
+pib_ask(question: "Findings are on issue #<number>. Which direction — A, B, or something else?")
 ```
 
-Wait for the user to respond. **Do not proceed without user input.**
+That ends your session and hands the question up; they answer and resume you, and their
+answer is waiting for you when you come back. **Do not proceed without it.**
+
+A comment is a record, not a question — nothing is watching the issue for a reply, so
+commenting and waiting would wait forever.
 
 ### 5. Record Final Choice
 
 Once the user chooses, post the final decision:
 
 ```bash
-gh issue comment <number> --body "## Final Decision
+pib issue comment <number> --body "## Final Decision
 
 **Chosen:** Option B (Inline Expand)
 
@@ -101,7 +105,7 @@ gh issue comment <number> --body "## Final Decision
 ### 6. Close the Issue
 
 ```bash
-gh issue close <number> --comment "Prototype complete. Decision recorded above."
+pib issue close <number> --reason "Prototype complete. Decision recorded above."
 ```
 
 ---

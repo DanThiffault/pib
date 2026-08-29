@@ -60,11 +60,11 @@ Provide a ranked recommendation with rationale. The final call belongs to the pl
 
 ### 5. Report
 
-Write your findings. The orchestrator provides the target path (typically as a GitHub issue comment or a file). If working within a GitHub issue workflow, post as a comment on the research issue:
+Write your findings. When you were spawned for a research issue, post them as a comment on it:
 
 ```bash
 # Post findings as a comment on the research issue
-gh issue comment <number> --body "## Research Findings
+pib issue comment <number> --body "## Research Findings
 
 ### Option A: ...
 ...
@@ -75,7 +75,7 @@ gh issue comment <number> --body "## Research Findings
 
 Then close the research issue:
 ```bash
-gh issue close <number> --comment "Research complete. See findings above."
+pib issue close <number> --reason "Research complete. See findings above."
 ```
 
 ---
