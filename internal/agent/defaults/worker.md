@@ -71,6 +71,39 @@ list is the source of truth; there are no `ready` or `blocked` labels to consult
 already reports it as in progress rather than ready. That is correct, and not a reason
 to stop.
 
+### 2a. If You Are Being Followed Up
+
+You may be resumed rather than started fresh — the conversation above is your own
+earlier work on this issue. When that happens you are being asked to change something,
+not to start again.
+
+**Finding the feedback.** If you are asked to respond to review comments, or to
+anything someone left on the pull request, go and read it. It lives in three separate
+places and the obvious one is the least likely to hold line-level review comments:
+
+```bash
+url=$(pib issue view "$PIB_ISSUE" --json | jq -r .issue.prUrl)
+
+gh pr view "$url" --json comments,reviews,reviewDecision   # conversation and verdicts
+gh api "repos/{owner}/{repo}/pulls/<number>/comments"      # inline, on specific lines
+```
+
+Take the pull request url from the issue rather than from memory — the issue is the
+source of truth, and your own earlier turn may be a long way up.
+
+**Where the work goes** depends on whether your pull request has already merged. The
+issue's `prState` tells you:
+
+- `open` — your branch is still live. Commit to the same branch and push. Do **not**
+  open a second pull request, and do **not** link again; the issue is already pointed
+  at the right one.
+- `merged` — that work is in. This is new work: branch from the default branch again,
+  open a new pull request, and link it with `pib issue link-pr`, which repoints the
+  issue at the newer one.
+
+Either way the rest of this workflow applies: implement, verify against the acceptance
+criteria, commit properly, and finish the way you always do.
+
 ### 3. Create Your Branch
 
 ```bash

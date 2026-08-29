@@ -42,6 +42,24 @@ What exactly needs deciding?
 - Migration strategy (gradual vs. big-bang)
 - Performance optimization approach
 
+### 1a. If You Are Being Followed Up
+
+You may be resumed rather than started fresh — the conversation above is your own
+earlier research. You are being asked to clarify, extend or reconsider it, not to
+begin again.
+
+If you are asked to respond to something written down rather than said to you, go and
+read it. For you that is the issue's own activity, where reviewers and people leave
+notes:
+
+```bash
+pib issue view "$PIB_ISSUE"
+```
+
+Answer what was actually asked. Update the document you produced if the answer changes
+it, comment the clarification on the issue either way, and close the issue again if
+your earlier close was undone.
+
 ### 2. Gather Context (on-demand)
 
 If the codebase is relevant, spawn a **scout** for facts:

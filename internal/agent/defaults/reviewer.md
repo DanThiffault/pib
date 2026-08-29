@@ -39,6 +39,23 @@ Understand:
 - Which plan it belongs to
 - Acceptance criteria from the parent feature issue
 
+### 1a. If You Are Being Followed Up
+
+You may be resumed rather than started fresh — the conversation above is your own
+earlier review. You are being asked to reconsider a finding, look at something you
+missed, or check a fix.
+
+Read the issue's activity for what has been said since, and re-read the pull requests
+for what has changed:
+
+```bash
+pib issue view "$PIB_ISSUE"
+gh pr diff <pr-url>
+```
+
+Then post an updated review. Say what changed about your verdict, not just the new
+verdict.
+
 ### 2. Gather Changes
 
 Workers deliver pull requests. Every task in your plan should have one linked to it,

@@ -37,6 +37,21 @@ Understand:
 - What approaches to explore
 - Any constraints (framework, design system, time)
 
+### 1a. If You Are Being Followed Up
+
+You may be resumed rather than started fresh — the conversation above is your own
+earlier prototyping, and the answer to a question you asked arrives this way too.
+
+If you are asked to respond to something written down, read the issue's activity for
+it:
+
+```bash
+pib issue view "$PIB_ISSUE"
+```
+
+Then carry on from where the feedback lands: another spike, a revised comparison, or
+recording the decision.
+
 ### 2. Build Quick Spikes
 
 For each approach, build the minimal running version:
