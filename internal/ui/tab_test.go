@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"pib/internal/issues"
 )
@@ -598,5 +599,86 @@ func TestPlanDetailShowsErrorState(t *testing.T) {
 	}
 	if !strings.Contains(view, "store failed") {
 		t.Errorf("view missing error message:\n%s", view)
+	}
+}
+
+// A row that wraps costs the pane a line it has already counted, so the
+// window can hold fewer issues than the scroll arithmetic thinks and the
+// cursor ends up below the floor of the pane, invisible.
+func TestIssueListRowsStayWithinThePane(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.height = 15
+	m.plansView = viewPlanDetail
+	m.planIssuesLoadedFor = "plan-a"
+	titles := []string{
+		"Add Tab Framework and Refactor Prompt into TabPlan",
+		"Implement Plan List Tab with Two-Pane Browse",
+		"Implement Plan Detail Drill-Down View",
+		"Polish, Edge Cases, and Tests",
+		"Review: Tabbed TUI with Plan Browser",
+		"Sixth issue in the plan",
+		"Seventh issue in the plan",
+	}
+	for i, title := range titles {
+		m.planIssues = append(m.planIssues, issues.Status{
+			Issue: issues.Issue{Number: int64(i + 1), Title: title},
+		})
+	}
+	m.issueCursor = len(titles) - 1
+
+	w, _ := paneWidths(m.width)
+	h := m.contentHeight()
+	lines := strings.Split(m.issueListPane(w, h), "\n")
+
+	if len(lines) != h {
+		t.Errorf("pane rendered %d lines into a height of %d:\n%s", len(lines), h, strings.Join(lines, "\n"))
+	}
+	for i, line := range lines {
+		if got := lipgloss.Width(line); got != w {
+			t.Errorf("line %d width = %d, want %d: %q", i, got, w, line)
+		}
+	}
+
+	selected := -1
+	for i, line := range lines {
+		if strings.Contains(line, "#7") {
+			selected = i
+		}
+	}
+	if selected < 0 {
+		t.Errorf("selected issue #7 is not in the pane:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+// Entering a plan starts a load and leaving starts another, so two responses
+// can be in flight. The older one must not land on the newer plan's view.
+func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+		{Slug: "plan-b", Title: "Plan B"},
+	}, nil)
+	m.plansView = viewPlanDetail
+	m.planCursor = 1
+
+	next, _ := m.Update(planIssuesLoadedMsg{
+		planSlug: "plan-b",
+		issues:   []issues.Status{{Issue: issues.Issue{Number: 9, Title: "Belongs to B"}}},
+	})
+	m = next.(Model)
+
+	next, _ = m.Update(planIssuesLoadedMsg{
+		planSlug: "plan-a",
+		issues:   []issues.Status{{Issue: issues.Issue{Number: 1, Title: "Belongs to A"}}},
+	})
+	m = next.(Model)
+
+	if m.planIssuesLoadedFor != "plan-b" {
+		t.Errorf("planIssuesLoadedFor = %q, want plan-b", m.planIssuesLoadedFor)
+	}
+	if len(m.planIssues) != 1 || m.planIssues[0].Title != "Belongs to B" {
+		t.Errorf("stale response replaced the issues on screen: %+v", m.planIssues)
+	}
+	if strings.Contains(m.View(), "Belongs to A") {
+		t.Errorf("view shows the other plan's issues:\n%s", m.View())
 	}
 }
