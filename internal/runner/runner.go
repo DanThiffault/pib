@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"pib/internal/agent"
@@ -28,6 +29,10 @@ const (
 	EnvExitFile = "PIB_EXIT_FILE"
 	EnvSocket   = "PIB_SOCKET"
 	EnvAgent    = "PIB_AGENT"
+	// EnvIssue is the issue an agent was started for, when it was started
+	// for one. It saves an agent depending on whoever wrote its task to
+	// have mentioned the number.
+	EnvIssue = "PIB_ISSUE"
 )
 
 // pollInterval is how often a running window is checked.
@@ -152,13 +157,9 @@ func (r Runner) resume(ctx context.Context, req protocol.Request) (protocol.Resp
 // caller goes away the window is killed rather than left orphaned.
 func (r Runner) await(ctx context.Context, info run, runDir, name string, argv []string) (protocol.Response, error) {
 	window, err := newWindow(tmux.Options{
-		Name: name,
-		Dir:  r.GitRoot,
-		Env: map[string]string{
-			EnvExitFile: filepath.Join(runDir, session.ExitFileName),
-			EnvSocket:   r.SocketPath,
-			EnvAgent:    name,
-		},
+		Name:       name,
+		Dir:        r.GitRoot,
+		Env:        childEnv(runDir, r.SocketPath, name, info.issue),
 		Background: true,
 	}, argv)
 	if err != nil {
@@ -190,6 +191,19 @@ func (r Runner) await(ctx context.Context, info run, runDir, name string, argv [
 
 	var ignored session.Status
 	return r.wait(ctx, window.ID, runDir, &ignored)
+}
+
+// childEnv is what an agent is told about itself.
+func childEnv(runDir, socket, name string, issue int64) map[string]string {
+	env := map[string]string{
+		EnvExitFile: filepath.Join(runDir, session.ExitFileName),
+		EnvSocket:   socket,
+		EnvAgent:    name,
+	}
+	if issue != 0 {
+		env[EnvIssue] = strconv.FormatInt(issue, 10)
+	}
+	return env
 }
 
 // wait blocks until the agent's window closes and reads what it left behind,

@@ -211,3 +211,37 @@ func TestARunnerWithNoRecorderStillWorks(t *testing.T) {
 		t.Errorf("status = %q", resp.Status)
 	}
 }
+
+func TestTheAgentIsToldWhichIssueItIsOn(t *testing.T) {
+	var env map[string]string
+	original := newWindow
+	newWindow = func(opts tmux.Options, _ []string) (tmux.Window, error) {
+		env = opts.Env
+		if path := opts.Env[EnvExitFile]; path != "" {
+			os.WriteFile(path, []byte(`{"type":"done"}`), 0o644)
+		}
+		return tmux.Window{ID: "@99"}, nil
+	}
+	t.Cleanup(func() { newWindow = original })
+
+	r := scout(t)
+	if _, err := r.Run(context.Background(), protocol.Request{
+		Op: protocol.OpSpawn, Agent: "worker", Task: "implement it", Issue: 7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if env[EnvIssue] != "7" {
+		t.Errorf("%s = %q, want 7", EnvIssue, env[EnvIssue])
+	}
+
+	// An agent working on nothing in particular is told nothing in
+	// particular, rather than being handed a zero.
+	if _, err := r.Run(context.Background(), protocol.Request{
+		Op: protocol.OpSpawn, Agent: "worker", Task: "explore",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, set := env[EnvIssue]; set {
+		t.Errorf("%s = %q, want it unset", EnvIssue, env[EnvIssue])
+	}
+}
