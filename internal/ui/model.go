@@ -53,12 +53,21 @@ var (
 	tabBarStyle = lipgloss.NewStyle().
 			MarginLeft(2).
 			MarginBottom(1)
+
+	selectedItemStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("#7D56F4")).
+				Foreground(lipgloss.Color("#FFFFFF")).
+				PaddingLeft(4)
 )
 
 var (
-	tabKeys  = key.NewBinding(key.WithKeys("tab"))
-	tab1Keys = key.NewBinding(key.WithKeys("1"))
-	tab2Keys = key.NewBinding(key.WithKeys("2"))
+	tabKeys    = key.NewBinding(key.WithKeys("tab"))
+	tab1Keys   = key.NewBinding(key.WithKeys("1"))
+	tab2Keys   = key.NewBinding(key.WithKeys("2"))
+	upKeys     = key.NewBinding(key.WithKeys("up"))
+	downKeys   = key.NewBinding(key.WithKeys("down"))
+	selectKeys = key.NewBinding(key.WithKeys("right", "enter"))
+	backKeys   = key.NewBinding(key.WithKeys("left", "esc"))
 )
 
 type tab int
@@ -101,6 +110,7 @@ type Model struct {
 	plansLoading bool
 	planCursor   int
 	issueCursor  int
+	planCounts   map[string]issues.PlanCounts
 	cfg          config.Config
 }
 
@@ -160,8 +170,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		// Quitting works from every tab, not just the one that used to be
-		// the whole interface.
-		if key.Matches(keyMsg, cancelKeys) {
+		// the whole interface — except when esc means "back" in a drill-down.
+		quitting := key.Matches(keyMsg, cancelKeys)
+		if m.currentTab == tabPlans && m.plansView == viewPlanDetail && key.Matches(keyMsg, backKeys) {
+			quitting = false
+		}
+		if quitting {
 			return m, tea.Quit
 		}
 
@@ -249,4 +263,44 @@ func (m Model) tabBarView() string {
 		}
 	}
 	return tabBarStyle.Render(lipgloss.JoinHorizontal(lipgloss.Top, tabs...))
+}
+
+const (
+	minLeftWidth = 20
+	maxLeftWidth = 45
+	leftPercent  = 0.35
+)
+
+func paneWidths(total int) (left, right int) {
+	left = int(float64(total) * leftPercent)
+	if left < minLeftWidth {
+		left = minLeftWidth
+	}
+	if left > maxLeftWidth {
+		left = maxLeftWidth
+	}
+	right = total - left - 1 // 1-col divider
+	if right < 10 {
+		right = 10
+	}
+	return
+}
+
+func (m Model) contentHeight() int {
+	h := m.height - 3 // tab bar + help line
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+func truncate(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
 }

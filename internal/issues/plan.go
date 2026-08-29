@@ -176,6 +176,41 @@ func (s *Store) Plan(slug string) (Plan, error) {
 	return scanPlan(s.db.QueryRow(`SELECT `+planColumns+` FROM plans WHERE id = ?`, id))
 }
 
+// PlanCounts holds aggregated issue counts for a plan.
+type PlanCounts struct {
+	Total  int
+	Open   int
+	Closed int
+}
+
+// IssueCountsByPlan returns the number of total, open and closed issues
+// grouped by plan slug.
+func (s *Store) IssueCountsByPlan() (map[string]PlanCounts, error) {
+	rows, err := s.db.Query(`
+		SELECT p.slug, COUNT(i.number) as total,
+			COUNT(CASE WHEN i.state = 'open' THEN 1 END) as open_count,
+			COUNT(CASE WHEN i.state = 'closed' THEN 1 END) as closed_count
+		FROM plans p
+		LEFT JOIN issues i ON i.plan_id = p.id
+		GROUP BY p.slug
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]PlanCounts)
+	for rows.Next() {
+		var slug string
+		var total, open, closed int
+		if err := rows.Scan(&slug, &total, &open, &closed); err != nil {
+			return nil, err
+		}
+		counts[slug] = PlanCounts{Total: total, Open: open, Closed: closed}
+	}
+	return counts, rows.Err()
+}
+
 // Plans lists every plan, newest first.
 func (s *Store) Plans() ([]Plan, error) {
 	if err := s.refreshPlans(); err != nil {

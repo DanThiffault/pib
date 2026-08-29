@@ -1,11 +1,20 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"pib/internal/issues"
 )
+
+func mustParse(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
+}
 
 func readyWithTabs(t *testing.T) Model {
 	m := ready(t)
@@ -172,5 +181,232 @@ func TestPromptViewShowsTabBar(t *testing.T) {
 	// The Plan tab content should still be visible below the tab bar
 	if !strings.Contains(view, "What do you want to plan?") {
 		t.Errorf("prompt missing below tab bar:\n%s", view)
+	}
+}
+
+func plansModel(t *testing.T, plans []issues.Plan, counts map[string]issues.PlanCounts) Model {
+	m := readyWithTabs(t)
+	m.currentTab = tabPlans
+	m.input.Blur()
+	m.plans = plans
+	m.planCounts = counts
+	m.width = 100
+	m.height = 30
+	return m
+}
+
+func TestPlanListNavigation(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+		{Slug: "plan-b", Title: "Plan B"},
+		{Slug: "plan-c", Title: "Plan C"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+		"plan-b": {Total: 3, Open: 2, Closed: 1},
+		"plan-c": {Total: 0, Open: 0, Closed: 0},
+	})
+
+	// Down moves cursor
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.planCursor != 1 {
+		t.Errorf("planCursor = %d, want 1", m.planCursor)
+	}
+
+	// Another down moves cursor again
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.planCursor != 2 {
+		t.Errorf("planCursor = %d, want 2", m.planCursor)
+	}
+
+	// Down at bottom stays at bottom
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.planCursor != 2 {
+		t.Errorf("planCursor = %d, want 2", m.planCursor)
+	}
+
+	// Up moves cursor back
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = next.(Model)
+	if m.planCursor != 1 {
+		t.Errorf("planCursor = %d, want 1", m.planCursor)
+	}
+
+	// Up at top stays at top
+	m.planCursor = 0
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = next.(Model)
+	if m.planCursor != 0 {
+		t.Errorf("planCursor = %d, want 0", m.planCursor)
+	}
+}
+
+func TestPlanListShowsTwoPanes(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A", CreatedAt: mustParse("2024-01-15T10:00:00Z")},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 5, Open: 3, Closed: 2},
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "plan-a") {
+		t.Errorf("view missing plan slug:\n%s", view)
+	}
+	if !strings.Contains(view, "Plan A") {
+		t.Errorf("view missing plan title:\n%s", view)
+	}
+	if !strings.Contains(view, "Total:") {
+		t.Errorf("view missing issue total:\n%s", view)
+	}
+	if !strings.Contains(view, "Open:") {
+		t.Errorf("view missing open count:\n%s", view)
+	}
+	if !strings.Contains(view, "Closed:") {
+		t.Errorf("view missing closed count:\n%s", view)
+	}
+}
+
+func TestEnterOpensPlanDetail(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.plansView != viewPlanDetail {
+		t.Errorf("plansView = %v, want viewPlanDetail", m.plansView)
+	}
+}
+
+func TestRightOpensPlanDetail(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(Model)
+	if m.plansView != viewPlanDetail {
+		t.Errorf("plansView = %v, want viewPlanDetail", m.plansView)
+	}
+}
+
+func TestEscInDetailViewGoesBack(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.plansView != viewPlanList {
+		t.Errorf("plansView = %v, want viewPlanList after esc", m.plansView)
+	}
+}
+
+func TestEscInDetailViewDoesNotQuit(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		return // going back returns nil command, which is fine
+	}
+	if _, quitting := cmd().(tea.QuitMsg); quitting {
+		t.Error("esc in detail view should go back, not quit")
+	}
+}
+
+func TestLeftInDetailViewGoesBack(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = next.(Model)
+	if m.plansView != viewPlanList {
+		t.Errorf("plansView = %v, want viewPlanList after left", m.plansView)
+	}
+}
+
+func TestPlansTabShowsEmptyState(t *testing.T) {
+	m := readyWithTabs(t)
+	m.currentTab = tabPlans
+	m.plans = nil
+	m.plansLoading = false
+	m.plansErr = nil
+
+	view := m.View()
+	if !strings.Contains(view, "No plans yet") {
+		t.Errorf("view missing empty state:\n%s", view)
+	}
+}
+
+func TestPlansTabShowsErrorState(t *testing.T) {
+	m := readyWithTabs(t)
+	m.currentTab = tabPlans
+	m.plans = nil
+	m.plansLoading = false
+	m.plansErr = errors.New("store unreachable")
+
+	view := m.View()
+	if !strings.Contains(view, "Error loading plans") {
+		t.Errorf("view missing error state:\n%s", view)
+	}
+	if !strings.Contains(view, "store unreachable") {
+		t.Errorf("view missing error message:\n%s", view)
+	}
+}
+
+func TestPlansLoadedMsgPopulatesCounts(t *testing.T) {
+	m := readyWithTabs(t)
+	m.currentTab = tabPlans
+	m.plansLoading = true
+
+	plans := []issues.Plan{{Slug: "plan-x", Title: "Plan X"}}
+	counts := map[string]issues.PlanCounts{"plan-x": {Total: 4, Open: 2, Closed: 2}}
+
+	next, _ := m.Update(plansLoadedMsg{plans: plans, counts: counts})
+	m = next.(Model)
+
+	if m.plansLoading {
+		t.Error("plansLoading still true after loaded message")
+	}
+	if len(m.plans) != 1 || m.plans[0].Slug != "plan-x" {
+		t.Errorf("plans = %v, want one plan with slug plan-x", m.plans)
+	}
+	if m.planCounts["plan-x"].Total != 4 {
+		t.Errorf("planCounts total = %d, want 4", m.planCounts["plan-x"].Total)
+	}
+}
+
+func TestCtrlCQuitsFromDetailView(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c produced no command, want quit")
+	}
+	if _, quitting := cmd().(tea.QuitMsg); !quitting {
+		t.Error("ctrl+c in detail view should quit")
 	}
 }

@@ -536,3 +536,33 @@ func TestIssueNotFound(t *testing.T) {
 		t.Errorf("Issue(42) gave %v, want ErrNotFound", err)
 	}
 }
+
+func TestIssueCountsByPlan(t *testing.T) {
+	store := planned(t)
+	if _, err := store.CreatePlan(NewPlan{Slug: "billing", Title: "Billing", PlannerRun: ""}); err != nil {
+		t.Fatal(err)
+	}
+
+	// orders: 2 open, 1 closed
+	task(t, store, "Alpha")
+	task(t, store, "Beta")
+	gamma, _ := store.Create(NewIssue{Plan: "orders", Type: "task", Title: "Gamma"})
+	store.CloseIssue(gamma.Number, "")
+
+	// billing: 1 open
+	if _, err := store.Create(NewIssue{Plan: "billing", Type: "task", Title: "Invoice task"}); err != nil {
+		t.Fatal(err)
+	}
+
+	counts, err := store.IssueCountsByPlan()
+	if err != nil {
+		t.Fatalf("IssueCountsByPlan: %v", err)
+	}
+
+	if got := counts["orders"]; got.Total != 3 || got.Open != 2 || got.Closed != 1 {
+		t.Errorf("orders counts = %+v, want {Total:3 Open:2 Closed:1}", got)
+	}
+	if got := counts["billing"]; got.Total != 1 || got.Open != 1 || got.Closed != 0 {
+		t.Errorf("billing counts = %+v, want {Total:1 Open:1 Closed:0}", got)
+	}
+}
