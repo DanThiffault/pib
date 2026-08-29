@@ -1,110 +1,109 @@
 package ui
 
 import (
-	"fmt"
-
-	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"pib/internal/agent"
+	"pib/internal/server"
+	"pib/internal/workspace"
 )
 
 var (
 	titleStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#7D56F4")).
-		MarginLeft(2)
+			Bold(true).
+			Foreground(lipgloss.Color("#7D56F4")).
+			MarginLeft(2)
 
 	itemStyle = lipgloss.NewStyle().
-		PaddingLeft(4)
-
-	selectedItemStyle = lipgloss.NewStyle().
-		PaddingLeft(2).
-		Foreground(lipgloss.Color("#7D56F4"))
+			PaddingLeft(4)
 
 	helpStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#666666")).
-		MarginLeft(2)
+			Foreground(lipgloss.Color("#666666")).
+			MarginLeft(2)
+
+	promptStyle = lipgloss.NewStyle().
+			Bold(true).
+			MarginLeft(2)
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#D75F5F")).
+			MarginLeft(2)
+
+	noticeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#5FAF5F")).
+			MarginLeft(2)
 )
 
 type Model struct {
-	choices  []string
-	cursor   int
-	selected map[int]struct{}
-	width    int
-	height   int
+	width  int
+	height int
+
+	phase     phase
+	workspace workspace.Status
+	created   bool
+	err       error
+
+	planner   agent.Definition
+	input     textarea.Model
+	notice    string
+	server    *server.Server
+	extension string
+	socket    string
+	agentsDir string
+	installed []string
+}
+
+// Close releases the agent server. It is safe to call when none was started.
+func (m Model) Close() error {
+	if m.server == nil {
+		return nil
+	}
+	return m.server.Close()
 }
 
 func NewModel() Model {
-	return Model{
-		choices: []string{
-			"Write some Go code",
-			"Build a TUI with Bubble Tea",
-			"Style it with Lipgloss",
-			"Add interactive bubbles",
-		},
-		selected: make(map[int]struct{}),
-	}
+	ta := textarea.New()
+	ta.Placeholder = "Describe the project you want to plan…"
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 0
+	ta.SetHeight(6)
+	ta.SetWidth(72)
+	// Enter submits the description, so newlines move to alt+enter.
+	ta.KeyMap.InsertNewline = newlineKeys
+
+	return Model{input: ta}
+}
+
+// Err reports a startup failure so the caller can exit non-zero.
+func (m Model) Err() error {
+	return m.err
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return detectWorkspace
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-
-	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
-			return m, tea.Quit
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
-			if m.cursor > 0 {
-				m.cursor--
-			}
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
-			if m.cursor < len(m.choices)-1 {
-				m.cursor++
-			}
-
-		case key.Matches(msg, key.NewBinding(key.WithKeys("enter", " "))):
-			_, ok := m.selected[m.cursor]
-			if ok {
-				delete(m.selected, m.cursor)
-			} else {
-				m.selected[m.cursor] = struct{}{}
-			}
-		}
+	if sizeMsg, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = sizeMsg.Width
+		m.height = sizeMsg.Height
+		m.input.SetWidth(promptWidth(m.width))
+		return m, nil
 	}
 
-	return m, nil
+	m, cmd, handled := m.updateStartup(msg)
+	if handled {
+		return m, cmd
+	}
+
+	return m.updatePrompt(msg)
 }
 
 func (m Model) View() string {
-	s := titleStyle.Render("🍵 Your new Bubble Tea app") + "\n\n"
-
-	for i, choice := range m.choices {
-		cursor := " "
-		if m.cursor == i {
-			cursor = ">"
-			choice = selectedItemStyle.Render(cursor + " " + choice)
-		} else {
-			choice = itemStyle.Render(cursor + " " + choice)
-		}
-
-		checked := " "
-		if _, ok := m.selected[i]; ok {
-			checked = "✓"
-		}
-
-		s += fmt.Sprintf("%s [%s]\n", choice, checked)
+	if m.phase != phasePrompt {
+		return m.startupView()
 	}
-
-	s += "\n" + helpStyle.Render("↑/k up • ↓/j down • space/enter toggle • q/ctrl+c quit")
-
-	return s
+	return m.promptView()
 }
