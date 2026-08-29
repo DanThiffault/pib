@@ -410,3 +410,193 @@ func TestCtrlCQuitsFromDetailView(t *testing.T) {
 		t.Error("ctrl+c in detail view should quit")
 	}
 }
+
+func TestEnterOpensPlanDetailAndLoadsIssues(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.plansView != viewPlanDetail {
+		t.Errorf("plansView = %v, want viewPlanDetail", m.plansView)
+	}
+	if !m.planIssuesLoading {
+		t.Error("planIssuesLoading = false, want true")
+	}
+	if cmd == nil {
+		t.Fatal("enter produced no command, want issue load")
+	}
+	msg := cmd()
+	loaded, ok := msg.(planIssuesLoadedMsg)
+	if !ok {
+		t.Fatalf("cmd returned %T, want planIssuesLoadedMsg", msg)
+	}
+	if loaded.planSlug != "plan-a" {
+		t.Errorf("loaded planSlug = %q, want plan-a", loaded.planSlug)
+	}
+}
+
+func TestPlanIssuesLoadedMsgPopulatesIssues(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 2, Open: 2, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+	m.planIssuesLoading = true
+
+	statuses := []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1", State: issues.StateOpen}, Ready: true},
+		{Issue: issues.Issue{Number: 2, Title: "Issue 2", State: issues.StateOpen}, Blocked: true},
+	}
+
+	next, _ := m.Update(planIssuesLoadedMsg{planSlug: "plan-a", issues: statuses})
+	m = next.(Model)
+
+	if m.planIssuesLoading {
+		t.Error("planIssuesLoading still true after loaded message")
+	}
+	if len(m.planIssues) != 2 {
+		t.Errorf("planIssues = %d, want 2", len(m.planIssues))
+	}
+	if m.planIssues[0].Number != 1 {
+		t.Errorf("first issue number = %d, want 1", m.planIssues[0].Number)
+	}
+	if m.planIssuesLoadedFor != "plan-a" {
+		t.Errorf("planIssuesLoadedFor = %q, want plan-a", m.planIssuesLoadedFor)
+	}
+}
+
+func TestIssueListNavigation(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 3, Open: 3, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+		{Issue: issues.Issue{Number: 2, Title: "Issue 2"}},
+		{Issue: issues.Issue{Number: 3, Title: "Issue 3"}},
+	}
+	m.issueCursor = 0
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.issueCursor != 1 {
+		t.Errorf("issueCursor = %d, want 1", m.issueCursor)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.issueCursor != 2 {
+		t.Errorf("issueCursor = %d, want 2", m.issueCursor)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.issueCursor != 2 {
+		t.Errorf("issueCursor = %d, want 2 at bottom", m.issueCursor)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = next.(Model)
+	if m.issueCursor != 1 {
+		t.Errorf("issueCursor = %d, want 1", m.issueCursor)
+	}
+
+	m.issueCursor = 0
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = next.(Model)
+	if m.issueCursor != 0 {
+		t.Errorf("issueCursor = %d, want 0 at top", m.issueCursor)
+	}
+}
+
+func TestPlanDetailShowsTwoPanes(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 2, Open: 2, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "First Issue", State: issues.StateOpen, Type: "task", Acceptance: []string{"it works"}, CreatedAt: mustParse("2024-01-15T10:00:00Z")}, Ready: true, Agent: "builder"},
+		{Issue: issues.Issue{Number: 2, Title: "Second Issue", State: issues.StateOpen, Type: "task"}, Blocked: true, OpenBlockers: []int64{1}},
+	}
+	m.issueCursor = 0
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "First Issue") {
+		t.Errorf("view missing issue title:\n%s", view)
+	}
+	if !strings.Contains(view, "#1") {
+		t.Errorf("view missing issue number:\n%s", view)
+	}
+	if !strings.Contains(view, "ready") {
+		t.Errorf("view missing ready flag:\n%s", view)
+	}
+	if !strings.Contains(view, "builder") {
+		t.Errorf("view missing agent:\n%s", view)
+	}
+	if !strings.Contains(view, "it works") {
+		t.Errorf("view missing acceptance criteria:\n%s", view)
+	}
+}
+
+func TestPlanDetailShowsLoadingState(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+	m.planIssuesLoading = true
+
+	view := m.View()
+	if !strings.Contains(view, "Loading") {
+		t.Errorf("view missing loading indicator:\n%s", view)
+	}
+}
+
+func TestPlanDetailShowsEmptyState(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 0, Open: 0, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+	m.planIssuesLoading = false
+	m.planIssuesErr = nil
+	m.planIssues = nil
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "No issues") {
+		t.Errorf("view missing empty state:\n%s", view)
+	}
+}
+
+func TestPlanDetailShowsErrorState(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 0, Open: 0, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+	m.planIssuesLoading = false
+	m.planIssuesErr = errors.New("store failed")
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "Error loading issues") {
+		t.Errorf("view missing error state:\n%s", view)
+	}
+	if !strings.Contains(view, "store failed") {
+		t.Errorf("view missing error message:\n%s", view)
+	}
+}

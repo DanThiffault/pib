@@ -110,8 +110,12 @@ type Model struct {
 	plansLoading bool
 	planCursor   int
 	issueCursor  int
-	planCounts   map[string]issues.PlanCounts
-	cfg          config.Config
+	planCounts          map[string]issues.PlanCounts
+	planIssues          []issues.Status
+	planIssuesLoading   bool
+	planIssuesErr       error
+	planIssuesLoadedFor string
+	cfg                 config.Config
 }
 
 // Close releases the socket and the issue store. It is safe to call when
