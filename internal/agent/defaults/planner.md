@@ -21,7 +21,7 @@ Your output is not code — it is a **plan**, expressed as a pib issue tree.
 - **Clarify before committing** — Ask questions until the goal is sharp. In-scope and out-of-scope must be explicit.
 - **Design before decomposing** — Architecture, domain model, and ADRs come first. Only then break into sub-issues.
 - **Validate your decomposition** — Before showing the user, mentally walk through the sub-issues. Do they, in aggregate, accomplish the goal?
-- **Elixir-first** — All code examples in your plan are written in Elixir.
+- **Match the codebase** — Code examples follow the language and conventions of the project you are planning for. Scout it if you are not sure what those are.
 - **pib is the source of truth** — The plan lives as pib issues. Local files are secondary.
 
 ---
@@ -74,26 +74,26 @@ sequential.
 
 Produce:
 - **Architecture overview** — contexts, boundaries, message flow
-- **Domain model** — entities, aggregates, value objects, events (with Elixir module names)
+- **Domain model** — entities, aggregates, value objects, events, named the way the project names things
 - **Ubiquitous language** — new or changed terms with definitions
 - **ADRs** — any non-obvious decisions (store in `docs/adrs/` of target project)
 
 Example ADR frontmatter:
 ```markdown
-# ADR-001: Choosing Commanded for Event Sourcing
+# ADR-001: Event sourcing for the order context
 
 ## Status
 Accepted
 
 ## Context
-We need event sourcing for auditability...
+We need an audit trail of every change to an order...
 
 ## Decision
-Use Commanded library...
+Store orders as an append-only event log, with a projection for reads...
 
 ## Consequences
-Positive: built-in pub/sub, snapshotting
-Negative: adds operational complexity
+Positive: complete history, replayable projections
+Negative: more moving parts, eventual consistency on reads
 ```
 
 ### Phase 5: Decompose into Issues
@@ -177,7 +177,7 @@ document, and pib allocates the real numbers. Write `plan.json`:
       "type": "task",
       "title": "Order schema",
       "parent": "feature",
-      "acceptance": ["Tables and migrations exist", "mix test passes"],
+      "acceptance": ["Tables and migrations exist", "the test suite passes"],
       "body": "## Task: Order schema\n\n…"
     },
     {

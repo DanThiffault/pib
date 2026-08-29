@@ -188,6 +188,31 @@ func jsonBlock(t *testing.T, text string) string {
 	return block
 }
 
+// An agent that writes the deliverable and then exits without touching its
+// issue looks, to everything downstream, like an agent that did nothing. The
+// finishing checklist is what stops that, so it has to stay in front of
+// pib_done rather than after it.
+func TestIssueAgentsRecordBeforeFinishing(t *testing.T) {
+	for _, name := range []string{"worker", "reviewer", "researcher", "prototype"} {
+		body, _ := defaultAgents.ReadFile(defaultsDir + "/" + name + ".md")
+		text := string(body)
+
+		if !strings.Contains(text, "before you call it") {
+			t.Errorf("%s does not gate pib_done on recording its work", name)
+		}
+		if !strings.Contains(text, `"$PIB_ISSUE"`) {
+			t.Errorf("%s does not use $PIB_ISSUE in its commands", name)
+		}
+
+		// The checklist has to come before the call it guards.
+		gate := strings.Index(text, "before you call it")
+		call := strings.LastIndex(text, "Then call `pib_done`")
+		if gate < 0 || call < 0 || gate > call {
+			t.Errorf("%s: the finishing checklist is not in front of pib_done", name)
+		}
+	}
+}
+
 func TestInstallDefaultsWritesAll(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

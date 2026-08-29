@@ -38,10 +38,11 @@ Never say "done" without proving it. Run the test, show the output. No "should w
 
 ### 1. Read Your Issue
 
-Your task is a pib issue. Read it carefully:
+Your task is a pib issue. Its number is in `PIB_ISSUE`, and in the task you were
+given. Read it carefully:
 
 ```bash
-pib issue view <number>
+pib issue view "$PIB_ISSUE"
 ```
 
 Extract from it:
@@ -82,7 +83,7 @@ git checkout -b worker/<number>-$(echo "<title>" | tr '[:upper:]' '[:lower:]' | 
 - Follow existing patterns — your code should look like it belongs
 - Keep changes minimal and focused
 - Reference ADRs and domain terms from the issue
-- All code examples in your implementation follow Elixir conventions
+- Match the language and conventions of the code you are changing
 
 ### 5. Verify
 
@@ -125,8 +126,8 @@ gh pr create \
 - [x] <criterion from the issue> — <evidence>
 
 ## Verification
-- mix test: <PASS/FAIL> (<details>)
-- mix format --check-formatted: <PASS/FAIL>
+- <test command>: <PASS/FAIL> (<details>)
+- <formatter or linter>: <PASS/FAIL>
 EOF
 )"
 ```
@@ -134,7 +135,7 @@ EOF
 Then tell pib which pull request belongs to this issue:
 
 ```bash
-pib issue link-pr <number> "$(gh pr view --json url -q .url)"
+pib issue link-pr "$PIB_ISSUE" "$(gh pr view --json url -q .url)"
 ```
 
 **That link is the whole contract.** It is how pib knows the issue is waiting on review
@@ -158,7 +159,7 @@ Then report the PR URL in your summary.
   That is the correct outcome:
 
   ```bash
-  pib issue comment <number> --body "Could not finish: <what stopped you>"
+  pib issue comment "$PIB_ISSUE" --body "Could not finish: <what stopped you>"
   ```
 
 pib releases the issue when you exit — it is in progress only while you are running, so
@@ -173,14 +174,28 @@ nothing needs clearing.
 - **No retries on failure** — If you can't complete the issue, leave it open and report back. The user will restart you.
 - **One issue, one branch, one PR** — Never mix multiple issues in one branch or PR.
 - **Read before writing** — Never edit code you haven't read.
-- **Elixir conventions** — All code follows Elixir patterns (modules, structs, pattern matching, pipes).
+- **Match the codebase** — Your code should look like it was written by whoever wrote the rest. Read neighbouring files before you decide how anything should look.
 
 ---
 
 ## Finishing
 
-Call `pib_done` when your task is complete. Your last message before that call is
-what the caller receives, so state your findings before calling it.
+`pib_done` ends your session. Anything you meant to record and did not is gone: the
+caller gets your last message, and the issue keeps nothing. So before you call it:
+
+- [ ] The pull request is open
+- [ ] `pib issue link-pr` has run, and `pib issue view "$PIB_ISSUE"` shows it in review
+- [ ] You have **not** closed the issue
+
+Linking is the step that gets skipped, and it is the one that matters: an issue with no
+pull request linked looks abandoned, drops back into the ready set, and someone starts
+your work again from scratch.
+
+If you could not open a pull request at all, say so on the issue with `pib issue
+comment` before you finish. An issue with no comment and no link records nothing.
+
+Then call `pib_done`. Your last message before that call is what the caller receives,
+so state your findings before calling it.
 
 If you cannot continue without an answer only the caller can give, call `pib_ask`
 with your question. They can answer and resume you. Prefer finishing with what you
