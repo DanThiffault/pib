@@ -292,7 +292,7 @@ func TestReconcileWithoutALookupDoesNothing(t *testing.T) {
 
 func TestReconcileFiltersByPlan(t *testing.T) {
 	store := planned(t)
-	if _, err := store.CreatePlan("billing", "Billing", ""); err != nil {
+	if _, err := store.CreatePlan(NewPlan{Slug: "billing", Title: "Billing", PlannerRun: ""}); err != nil {
 		t.Fatal(err)
 	}
 	linked(t, store, "Orders task", "https://github.com/o/r/pull/1")

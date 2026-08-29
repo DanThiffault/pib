@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,11 +21,15 @@ type Document struct {
 	Issues []DocIssue `json:"issues"`
 }
 
-// DocPlan identifies the plan the issues belong to.
+// DocPlan is the plan itself: what is being built, why, and what "done"
+// means for the whole of it. This is where the goal and the scope belong —
+// not in a container issue that would sit open forever.
 type DocPlan struct {
-	Slug       string `json:"slug"`
-	Title      string `json:"title"`
-	PlannerRun string `json:"plannerRun,omitempty"`
+	Slug       string   `json:"slug"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body,omitempty"`
+	Acceptance []string `json:"acceptance,omitempty"`
+	PlannerRun string   `json:"plannerRun,omitempty"`
 }
 
 // DocIssue is one issue in a document. Parent and BlockedBy hold either an
@@ -124,9 +129,13 @@ func (s *Store) Apply(doc Document, opts ApplyOptions) (ApplyResult, error) {
 	}()
 
 	result := ApplyResult{}
-	result.Plan, err = upsertPlan(tx, doc.Plan)
+	var planFile string
+	result.Plan, planFile, err = s.upsertPlan(tx, doc.Plan)
 	if err != nil {
 		return ApplyResult{}, err
+	}
+	if planFile != "" {
+		written = append(written, planFile)
 	}
 
 	// Pass one: every issue exists and has a number, so pass two can wire
@@ -221,47 +230,101 @@ func (s *Store) Apply(doc Document, opts ApplyOptions) (ApplyResult, error) {
 	return result, nil
 }
 
-// upsertPlan finds the plan by slug or creates it. A re-apply refreshes the
-// title, which is a change rather than a removal.
-func upsertPlan(tx *sql.Tx, doc DocPlan) (Plan, error) {
+// upsertPlan finds the plan by slug or creates it, and writes its markdown
+// file. A re-apply refreshes the title, the goal and the criteria, which is
+// a change rather than a removal.
+func (s *Store) upsertPlan(tx *sql.Tx, doc DocPlan) (Plan, string, error) {
+	acceptance, err := encodeList(doc.Acceptance)
+	if err != nil {
+		return Plan{}, "", err
+	}
+
 	var (
 		plan    Plan
+		path    sql.NullString
+		stored  sql.NullString
 		created string
 		run     sql.NullString
 	)
-	err := tx.QueryRow(
-		`SELECT id, slug, title, created_at, planner_run FROM plans WHERE slug = ?`, doc.Slug).
-		Scan(&plan.ID, &plan.Slug, &plan.Title, &created, &run)
+	err = tx.QueryRow(
+		`SELECT id, slug, title, path, acceptance, created_at, planner_run FROM plans WHERE slug = ?`,
+		doc.Slug).
+		Scan(&plan.ID, &plan.Slug, &plan.Title, &path, &stored, &created, &run)
 
-	if errors.Is(err, sql.ErrNoRows) {
-		stamp := format(now())
-		res, insertErr := tx.Exec(
-			`INSERT INTO plans (slug, title, created_at, planner_run) VALUES (?, ?, ?, ?)`,
-			doc.Slug, doc.Title, stamp, nullable(doc.PlannerRun))
+	fresh := errors.Is(err, sql.ErrNoRows)
+	if err != nil && !fresh {
+		return Plan{}, "", err
+	}
+
+	rel := filepath.Join(PlansDirName, doc.Slug+".md")
+	stamp := format(now())
+
+	if fresh {
+		res, insertErr := tx.Exec(`
+			INSERT INTO plans (slug, title, path, acceptance, indexed_mtime, indexed_size, created_at, planner_run)
+			VALUES (?, ?, ?, ?, 0, 0, ?, ?)`,
+			doc.Slug, doc.Title, rel, acceptance, stamp, nullable(doc.PlannerRun))
 		if insertErr != nil {
-			return Plan{}, insertErr
+			return Plan{}, "", insertErr
 		}
 		id, idErr := res.LastInsertId()
 		if idErr != nil {
-			return Plan{}, idErr
+			return Plan{}, "", idErr
 		}
-		return Plan{ID: id, Slug: doc.Slug, Title: doc.Title, CreatedAt: parseTime(stamp), PlannerRun: doc.PlannerRun}, nil
-	}
-	if err != nil {
-		return Plan{}, err
+		plan = Plan{ID: id, Slug: doc.Slug, CreatedAt: parseTime(stamp), PlannerRun: doc.PlannerRun}
+	} else {
+		plan.CreatedAt = parseTime(created)
+		plan.PlannerRun = run.String
+		if doc.PlannerRun != "" {
+			plan.PlannerRun = doc.PlannerRun
+		}
+		if path.Valid && path.String != "" {
+			rel = path.String
+		}
 	}
 
-	plan.CreatedAt = parseTime(created)
-	plan.PlannerRun = run.String
-	if doc.PlannerRun != "" {
-		plan.PlannerRun = doc.PlannerRun
+	// The file carries the prose. A body the document leaves out keeps what
+	// is already written rather than blanking it.
+	file := File{Title: doc.Title, Type: "plan", Acceptance: doc.Acceptance, Body: doc.Body}
+	if existing, readErr := ReadFile(s.abs(rel)); readErr == nil {
+		if doc.Body == "" {
+			file.Body = existing.Body
+		}
+		if doc.Acceptance == nil {
+			file.Acceptance = existing.Acceptance
+		}
+		file.Comments = existing.Comments
+		file.Extra = existing.Extra
 	}
+	if err := WriteFile(s.abs(rel), file); err != nil {
+		return Plan{}, "", err
+	}
+
+	info, err := os.Stat(s.abs(rel))
+	if err != nil {
+		return Plan{}, "", err
+	}
+	acceptance, err = encodeList(file.Acceptance)
+	if err != nil {
+		return Plan{}, "", err
+	}
+	if _, err := tx.Exec(`
+		UPDATE plans SET title = ?, path = ?, acceptance = ?, indexed_mtime = ?, indexed_size = ?, planner_run = ?
+		WHERE id = ?`,
+		doc.Title, rel, acceptance, info.ModTime().UnixNano(), info.Size(),
+		nullable(plan.PlannerRun), plan.ID); err != nil {
+		return Plan{}, "", err
+	}
+
 	plan.Title = doc.Title
-	if _, err := tx.Exec(`UPDATE plans SET title = ?, planner_run = ? WHERE id = ?`,
-		plan.Title, nullable(plan.PlannerRun), plan.ID); err != nil {
-		return Plan{}, err
+	plan.Path = rel
+	plan.Acceptance = file.Acceptance
+
+	written := ""
+	if fresh {
+		written = s.abs(rel)
 	}
-	return plan, nil
+	return plan, written, nil
 }
 
 // existingLocalIDs maps the document ids a plan already knows to numbers.

@@ -21,6 +21,8 @@ const (
 	DataDirName = "data"
 	// IssuesDirName holds one markdown file per issue.
 	IssuesDirName = "issues"
+	// PlansDirName holds one markdown file per plan.
+	PlansDirName = "plans"
 	// DBName is the metadata database.
 	DBName = "pib.db"
 )
@@ -39,8 +41,10 @@ type Store struct {
 // Open prepares the data directory and opens the database, applying any
 // migrations the file has not seen yet.
 func Open(dataDir string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Join(dataDir, IssuesDirName), 0o755); err != nil {
-		return nil, err
+	for _, name := range []string{IssuesDirName, PlansDirName} {
+		if err := os.MkdirAll(filepath.Join(dataDir, name), 0o755); err != nil {
+			return nil, err
+		}
 	}
 
 	db, err := sql.Open("sqlite", filepath.Join(dataDir, DBName))
@@ -99,6 +103,11 @@ func (s *Store) Dir() string {
 // IssuesDir is the directory holding issue markdown files.
 func (s *Store) IssuesDir() string {
 	return filepath.Join(s.dir, IssuesDirName)
+}
+
+// PlansDir is the directory holding plan markdown files.
+func (s *Store) PlansDir() string {
+	return filepath.Join(s.dir, PlansDirName)
 }
 
 // Version is the schema version currently applied.

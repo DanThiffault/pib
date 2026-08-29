@@ -117,7 +117,7 @@ func TestOpeningTheStoreClosesOrphanedRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.CreatePlan("orders", "Order placement", ""); err != nil {
+	if _, err := first.CreatePlan(NewPlan{Slug: "orders", Title: "Order placement", PlannerRun: ""}); err != nil {
 		t.Fatal(err)
 	}
 	issue := task(t, first, "Alpha")
@@ -211,7 +211,7 @@ func TestOrphanCleanupLeavesFinishedRunsAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.CreatePlan("orders", "Order placement", ""); err != nil {
+	if _, err := first.CreatePlan(NewPlan{Slug: "orders", Title: "Order placement", PlannerRun: ""}); err != nil {
 		t.Fatal(err)
 	}
 	issue := task(t, first, "Alpha")
