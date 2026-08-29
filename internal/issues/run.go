@@ -57,6 +57,27 @@ func (s *Store) FinishRun(id, status string) error {
 	return err
 }
 
+// RunAgent names the agent a run belongs to. A run pib has never heard of
+// is not an error — the caller falls back to what it knows.
+func (s *Store) RunAgent(id string) (string, error) {
+	var agent string
+	err := s.db.QueryRow(`SELECT agent FROM runs WHERE id = ?`, id).Scan(&agent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return agent, err
+}
+
+// LatestRun is the most recent attempt at an issue, and the session a
+// followup continues.
+func (s *Store) LatestRun(issue int64) (Run, bool, error) {
+	runs, err := s.Runs(issue)
+	if err != nil || len(runs) == 0 {
+		return Run{}, false, err
+	}
+	return runs[len(runs)-1], true, nil
+}
+
 // Runs lists the attempts made at an issue, oldest first.
 func (s *Store) Runs(issue int64) ([]Run, error) {
 	rows, err := s.db.Query(`

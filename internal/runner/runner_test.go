@@ -190,8 +190,13 @@ func TestSpawnBuildsChildCommand(t *testing.T) {
 	if got.opts.Env[EnvSocket] != "/x/pib.sock" {
 		t.Errorf("%s = %q, want the socket so the child can spawn too", EnvSocket, got.opts.Env[EnvSocket])
 	}
-	if got.opts.Env[EnvAgent] != "Scout" {
-		t.Errorf("%s = %q", EnvAgent, got.opts.Env[EnvAgent])
+	// The window is titled "Scout", but the agent is "scout" — the name it
+	// signs comments with and is checked against when it spawns.
+	if got.opts.Env[EnvAgent] != "scout" {
+		t.Errorf("%s = %q, want the definition name", EnvAgent, got.opts.Env[EnvAgent])
+	}
+	if got.opts.Name != "Scout" {
+		t.Errorf("window name = %q, want the display name", got.opts.Name)
 	}
 	if got.opts.Dir != dir {
 		t.Errorf("Dir = %q, want the git root", got.opts.Dir)

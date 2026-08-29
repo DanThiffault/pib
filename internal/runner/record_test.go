@@ -25,11 +25,13 @@ type startCall struct {
 type fakeRecorder struct {
 	started  []startCall
 	finished map[string]string
-	err      error
+	// known stands in for runs recorded before this process started.
+	known map[string]string
+	err   error
 }
 
 func newRecorder() *fakeRecorder {
-	return &fakeRecorder{finished: map[string]string{}}
+	return &fakeRecorder{finished: map[string]string{}, known: map[string]string{}}
 }
 
 func (f *fakeRecorder) StartRun(id string, issue int64, agent, window string) error {
@@ -43,6 +45,15 @@ func (f *fakeRecorder) StartRun(id string, issue int64, agent, window string) er
 func (f *fakeRecorder) FinishRun(id, status string) error {
 	f.finished[id] = status
 	return nil
+}
+
+func (f *fakeRecorder) RunAgent(id string) (string, error) {
+	for _, start := range f.started {
+		if start.id == id {
+			return start.agent, nil
+		}
+	}
+	return f.known[id], nil
 }
 
 // finishing makes the fake window write the exit sidecar a real agent would,
@@ -168,6 +179,7 @@ func TestResumeContinuesTheSameRun(t *testing.T) {
 	finishing(t, `{"type":"done"}`)
 
 	recorder := newRecorder()
+	recorder.known["abc123"] = "worker"
 	r := scout(t)
 	r.Record = recorder
 
@@ -243,5 +255,73 @@ func TestTheAgentIsToldWhichIssueItIsOn(t *testing.T) {
 	}
 	if _, set := env[EnvIssue]; set {
 		t.Errorf("%s = %q, want it unset", EnvIssue, env[EnvIssue])
+	}
+}
+
+// A resumed agent is still the agent it was. Before this, it was handed its
+// own run id as a name — so it signed comments with a hex string.
+func TestResumeKeepsTheAgentsIdentity(t *testing.T) {
+	var opts tmux.Options
+	original := newWindow
+	newWindow = func(o tmux.Options, _ []string) (tmux.Window, error) {
+		opts = o
+		if path := o.Env[EnvExitFile]; path != "" {
+			os.WriteFile(path, []byte(`{"type":"done"}`), 0o644)
+		}
+		return tmux.Window{ID: "@99"}, nil
+	}
+	t.Cleanup(func() { newWindow = original })
+
+	recorder := newRecorder()
+	recorder.known["abc123"] = "worker"
+	r := scout(t)
+	r.Record = recorder
+
+	runDir := filepath.Join(r.StateDir, "runs", "abc123")
+	os.MkdirAll(runDir, 0o755)
+	os.WriteFile(filepath.Join(runDir, "session.jsonl"), []byte("{}\n"), 0o644)
+
+	if _, err := r.Run(context.Background(), protocol.Request{
+		Op: protocol.OpResume, Session: "abc123", Answer: "address the review", Name: "worker #4", Issue: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if opts.Env[EnvAgent] != "worker" {
+		t.Errorf("%s = %q, want the agent it has always been", EnvAgent, opts.Env[EnvAgent])
+	}
+	if opts.Env[EnvIssue] != "4" {
+		t.Errorf("%s = %q, want 4", EnvIssue, opts.Env[EnvIssue])
+	}
+	if opts.Name != "worker #4" {
+		t.Errorf("window name = %q, want the caller's label", opts.Name)
+	}
+}
+
+// Without a recorder there is nothing to ask, so it behaves as it always did.
+func TestResumeWithoutARecorderFallsBack(t *testing.T) {
+	var opts tmux.Options
+	original := newWindow
+	newWindow = func(o tmux.Options, _ []string) (tmux.Window, error) {
+		opts = o
+		if path := o.Env[EnvExitFile]; path != "" {
+			os.WriteFile(path, []byte(`{"type":"done"}`), 0o644)
+		}
+		return tmux.Window{ID: "@99"}, nil
+	}
+	t.Cleanup(func() { newWindow = original })
+
+	r := scout(t)
+	runDir := filepath.Join(r.StateDir, "runs", "abc123")
+	os.MkdirAll(runDir, 0o755)
+	os.WriteFile(filepath.Join(runDir, "session.jsonl"), []byte("{}\n"), 0o644)
+
+	if _, err := r.Run(context.Background(), protocol.Request{
+		Op: protocol.OpResume, Session: "abc123", Answer: "carry on",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if opts.Env[EnvAgent] != "abc123" {
+		t.Errorf("%s = %q, want the run id as before", EnvAgent, opts.Env[EnvAgent])
 	}
 }

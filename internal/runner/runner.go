@@ -48,6 +48,9 @@ var newWindow = tmux.NewWindow
 type Recorder interface {
 	StartRun(id string, issue int64, agent, window string) error
 	FinishRun(id, status string) error
+	// RunAgent names the agent a run belongs to, so a resumed session is
+	// itself again rather than a session id.
+	RunAgent(id string) (string, error)
 }
 
 // run identifies the agent run being recorded.
@@ -147,10 +150,31 @@ func (r Runner) resume(ctx context.Context, req protocol.Request) (protocol.Resp
 	}
 
 	// A resumed agent carries on the run it stopped in the middle of, so it
-	// keeps the same id rather than starting a second one.
+	// keeps the same id rather than starting a second one — and it is still
+	// the same agent, which the run record is what remembers.
 	id := filepath.Base(runDir)
+	name := r.agentOf(id)
+
+	window := req.Name
+	if window == "" {
+		window = name
+	}
+
 	argv := []string{agent.Executable, "--session", transcript, "--", req.Answer}
-	return r.await(ctx, run{id: id, issue: req.Issue, agent: id}, runDir, id, argv)
+	return r.await(ctx, run{id: id, issue: req.Issue, agent: name}, runDir, window, argv)
+}
+
+// agentOf names the agent a run belongs to. Without a recorder there is
+// nothing to ask, so the run id stands in — which is what it always did.
+func (r Runner) agentOf(id string) string {
+	if r.Record == nil {
+		return id
+	}
+	name, err := r.Record.RunAgent(id)
+	if err != nil || name == "" {
+		return id
+	}
+	return name
 }
 
 // await opens the window, waits for it to close, and reads the result. If the
@@ -159,7 +183,7 @@ func (r Runner) await(ctx context.Context, info run, runDir, name string, argv [
 	window, err := newWindow(tmux.Options{
 		Name:       name,
 		Dir:        r.GitRoot,
-		Env:        childEnv(runDir, r.SocketPath, name, info.issue),
+		Env:        childEnv(runDir, r.SocketPath, info.agent, info.issue),
 		Background: true,
 	}, argv)
 	if err != nil {
@@ -193,12 +217,15 @@ func (r Runner) await(ctx context.Context, info run, runDir, name string, argv [
 	return r.wait(ctx, window.ID, runDir, &ignored)
 }
 
-// childEnv is what an agent is told about itself.
-func childEnv(runDir, socket, name string, issue int64) map[string]string {
+// childEnv is what an agent is told about itself. EnvAgent is the definition
+// name rather than the window title: it is what the agent signs comments
+// with, and what self-spawning is checked against, so a caller's choice of
+// display name must not change it.
+func childEnv(runDir, socket, agentName string, issue int64) map[string]string {
 	env := map[string]string{
 		EnvExitFile: filepath.Join(runDir, session.ExitFileName),
 		EnvSocket:   socket,
-		EnvAgent:    name,
+		EnvAgent:    agentName,
 	}
 	if issue != 0 {
 		env[EnvIssue] = strconv.FormatInt(issue, 10)
