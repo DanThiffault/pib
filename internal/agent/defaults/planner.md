@@ -105,8 +105,12 @@ Break the plan into sub-issues. Each sub-issue needs:
 - A clear title and body
 - `acceptance` criteria
 - `blockedBy` for anything it has to wait on
-- `parent`, pointing at the feature issue
 - Links to relevant ADRs and domain terms, in the body
+
+**Do not create an issue for the feature itself.** The goal, the scope and the criteria
+the whole feature is judged on belong on the plan, which is the record that holds them.
+A container issue would sit open forever, launch nothing, and clutter the ready set.
+Every issue you write is work someone does.
 
 How pib handles the rest:
 
@@ -160,23 +164,21 @@ before you apply is better than reading about them afterwards.
 After user confirmation, write the whole plan as one document and hand it to pib.
 
 There is no create-then-wire dance: issues refer to each other by ids local to the
-document, and pib allocates the real numbers. Write `plan.json`:
+document, and pib allocates the real numbers. Write `plan.json`. What the feature *is* goes on the plan; the issues are the work:
 
 ```json
 {
-  "plan": { "slug": "orders", "title": "Order placement" },
+  "plan": {
+    "slug": "orders",
+    "title": "Order placement",
+    "body": "## Goal\n\nCustomers can place an order.\n\n### In scope\n- …\n\n### Out of scope\n- …",
+    "acceptance": ["An order can be placed end to end", "The test suite passes"]
+  },
   "issues": [
-    {
-      "id": "feature",
-      "type": "feature",
-      "title": "Feature: order placement",
-      "body": "## Goal\n\nCustomers can place an order.\n\n### In scope\n…"
-    },
     {
       "id": "schema",
       "type": "task",
       "title": "Order schema",
-      "parent": "feature",
       "acceptance": ["Tables and migrations exist", "the test suite passes"],
       "body": "## Task: Order schema\n\n…"
     },
@@ -184,7 +186,6 @@ document, and pib allocates the real numbers. Write `plan.json`:
       "id": "order-agg",
       "type": "task",
       "title": "Implement Order Aggregate",
-      "parent": "feature",
       "blockedBy": ["schema"],
       "acceptance": ["Order aggregate handles the PlaceOrder command"],
       "body": "## Task: Implement Order Aggregate\n\n…"
@@ -193,9 +194,8 @@ document, and pib allocates the real numbers. Write `plan.json`:
       "id": "review",
       "type": "reviewer",
       "title": "Review: order placement",
-      "parent": "feature",
       "blockedBy": ["schema", "order-agg"],
-      "body": "## Review\n\nReview every task in this feature.\n\n…"
+      "body": "## Review\n\nReview every task in this plan.\n\n…"
     }
   ]
 }
@@ -209,11 +209,12 @@ pib plan apply plan.json
 
 Notes on the document:
 
-- `id` is yours, and only exists inside the document. `parent` and `blockedBy` take one
-  of those ids, or an existing issue written as `"#12"`.
+- `id` is yours, and only exists inside the document. `blockedBy` takes one of those
+  ids, or an existing issue written as `"#12"`.
 - The reviewer issue is blocked by every task, so it only becomes startable once they
   are all closed.
-- `feature` is a container type — it holds the tree together and never launches an agent.
+- `parent` exists for a task that genuinely decomposes into smaller ones. It is not how
+  issues join a plan — belonging to the plan is what the document already says.
 - Applying the same plan again is an **additive merge**: known ids update, new ids are
   created, and an issue you dropped from the document is left alone. Closed issues stay
   closed. So it is safe to fix a plan and re-apply while work is underway.
@@ -235,8 +236,8 @@ says so; start pib and retry rather than falling back to anything else.
 
 Then report back to the user:
 
-- The plan slug, and the feature issue number
-- The sub-issues with their types and what each is blocked by
+- The plan slug, and what the plan says the goal is
+- The issues with their types and what each is blocked by
 - Which issues are startable immediately
 - Anything pib warned about
 - Reminder: run `/implement` to start execution
