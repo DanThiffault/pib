@@ -269,6 +269,24 @@ It refuses an issue that cannot start, saying why: *"#3 is not ready: it is wait
 #2"*, or *"no agent is mapped to type \"feature\""*. `--force` starts it anyway, and
 `--agent <name>` runs something other than the mapped agent.
 
+To come back to an agent afterwards — because you left review comments, or because it
+stopped to ask something — follow up rather than starting again:
+
+```bash
+pib issue followup 4 --message "address the comments I left on the PR"
+```
+
+That resumes the session the agent left behind, so it still has everything it worked
+out the first time and the message can be as short as what you actually want changed.
+Each agent knows where its own feedback lives, so you do not have to say: the worker
+reads its pull request, the researcher and the prototype read the issue's activity.
+
+The same command answers an agent that stopped to ask a question — the message is the
+answer. It refuses when there is no session to continue, when an agent is still
+working, or when the issue is closed, which `--force` overrides. A worker followed up
+after its pull request has merged branches again and opens a new one rather than
+pushing to a merged branch.
+
 The agent is told its issue number in `PIB_ISSUE` and pointed at `pib issue view`, so
 the issue itself is the specification rather than whatever the task string happened to
 say.
