@@ -37,6 +37,21 @@ const pollInterval = 250 * time.Millisecond
 // started without needing a terminal.
 var newWindow = tmux.NewWindow
 
+// Recorder notes agent runs, so pib can tell which issues are being worked
+// on and offer the window an agent is in. It is optional: a runner without
+// one simply spawns agents and keeps no history.
+type Recorder interface {
+	StartRun(id string, issue int64, agent, window string) error
+	FinishRun(id, status string) error
+}
+
+// run identifies the agent run being recorded.
+type run struct {
+	id    string
+	issue int64
+	agent string
+}
+
 // Runner spawns agents for one repository.
 type Runner struct {
 	// GitRoot is the working directory agents run in.
@@ -49,6 +64,8 @@ type Runner struct {
 	SocketPath string
 	// Load resolves an agent definition. Defaults to agent.Load by name.
 	Load func(name string) (agent.Definition, error)
+	// Record notes runs as they start and finish. Optional.
+	Record Recorder
 }
 
 // ErrSelfSpawn reports an agent trying to spawn itself.
@@ -100,7 +117,9 @@ func (r Runner) spawn(ctx context.Context, req protocol.Request) (protocol.Respo
 		name = def.Name
 	}
 
-	return r.await(ctx, runDir, name, append([]string{agent.Executable}, args...))
+	return r.await(ctx,
+		run{id: runID, issue: req.Issue, agent: def.Name},
+		runDir, name, append([]string{agent.Executable}, args...))
 }
 
 func (r Runner) resume(ctx context.Context, req protocol.Request) (protocol.Response, error) {
@@ -122,13 +141,16 @@ func (r Runner) resume(ctx context.Context, req protocol.Request) (protocol.Resp
 		return protocol.Response{}, err
 	}
 
+	// A resumed agent carries on the run it stopped in the middle of, so it
+	// keeps the same id rather than starting a second one.
+	id := filepath.Base(runDir)
 	argv := []string{agent.Executable, "--session", transcript, "--", req.Answer}
-	return r.await(ctx, runDir, filepath.Base(runDir), argv)
+	return r.await(ctx, run{id: id, issue: req.Issue, agent: id}, runDir, id, argv)
 }
 
 // await opens the window, waits for it to close, and reads the result. If the
 // caller goes away the window is killed rather than left orphaned.
-func (r Runner) await(ctx context.Context, runDir, name string, argv []string) (protocol.Response, error) {
+func (r Runner) await(ctx context.Context, info run, runDir, name string, argv []string) (protocol.Response, error) {
 	window, err := newWindow(tmux.Options{
 		Name: name,
 		Dir:  r.GitRoot,
@@ -143,8 +165,38 @@ func (r Runner) await(ctx context.Context, runDir, name string, argv []string) (
 		return protocol.Response{}, err
 	}
 
-	if err := waitForWindow(ctx, window.ID); err != nil {
-		tmux.Kill(window.ID)
+	// A run pib cannot record is a run it would lose track of, so the window
+	// goes rather than being left working untracked. This is what rejects a
+	// request naming an issue that does not exist.
+	if r.Record != nil {
+		if err := r.Record.StartRun(info.id, info.issue, info.agent, window.ID); err != nil {
+			tmux.Kill(window.ID)
+			return protocol.Response{}, err
+		}
+
+		// outcome is how the run gets recorded. It stays unknown unless the
+		// agent gets far enough to say otherwise — a killed window and a
+		// crash both land there.
+		outcome := session.StatusUnknown
+		defer func() {
+			// Best effort: the agent's answer matters more than the
+			// bookkeeping, and a run left open is closed out when pib next
+			// opens the store.
+			_ = r.Record.FinishRun(info.id, string(outcome))
+		}()
+
+		return r.wait(ctx, window.ID, runDir, &outcome)
+	}
+
+	var ignored session.Status
+	return r.wait(ctx, window.ID, runDir, &ignored)
+}
+
+// wait blocks until the agent's window closes and reads what it left behind,
+// reporting the outcome through outcome so a deferred recorder can see it.
+func (r Runner) wait(ctx context.Context, windowID, runDir string, outcome *session.Status) (protocol.Response, error) {
+	if err := waitForWindow(ctx, windowID); err != nil {
+		tmux.Kill(windowID)
 		return protocol.Response{}, err
 	}
 
@@ -152,6 +204,7 @@ func (r Runner) await(ctx context.Context, runDir, name string, argv []string) (
 	if err != nil {
 		return protocol.Response{}, err
 	}
+	*outcome = result.Status
 
 	return protocol.Response{
 		Status:  string(result.Status),

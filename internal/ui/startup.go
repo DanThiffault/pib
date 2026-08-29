@@ -8,7 +8,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pib/internal/agent"
+	"pib/internal/config"
 	"pib/internal/extension"
+	"pib/internal/issueops"
+	"pib/internal/issues"
+	"pib/internal/pr"
 	"pib/internal/runner"
 	"pib/internal/server"
 	"pib/internal/workspace"
@@ -60,6 +64,7 @@ type agentsInstalledMsg struct {
 // serverStartedMsg reports that the socket agents call pib through is up.
 type serverStartedMsg struct {
 	server    *server.Server
+	store     *issues.Store
 	extension string
 	socket    string
 	err       error
@@ -97,8 +102,9 @@ func loadPlanner() tea.Msg {
 	return plannerLoadedMsg{planner: planner, err: err}
 }
 
-// startServer installs the pi extension and opens the socket that agents use
-// to ask pib to spawn other agents.
+// startServer installs the pi extension, opens the issue store, and opens the
+// socket. That one socket carries both kinds of request: agents asking pib to
+// spawn other agents, and the pib command line asking about issues.
 func startServer(ws workspace.Status) tea.Cmd {
 	return func() tea.Msg {
 		extensionPath, err := extension.Install(ws.Dir)
@@ -106,18 +112,39 @@ func startServer(ws workspace.Status) tea.Cmd {
 			return serverStartedMsg{err: err}
 		}
 
-		srv, err := server.Listen(ws.Dir, runner.Runner{
-			GitRoot:       ws.GitRoot,
-			StateDir:      ws.Dir,
-			ExtensionPath: extensionPath,
-			SocketPath:    server.Path(ws.Dir),
-		})
-
+		if _, err := config.SeedGlobal(); err != nil {
+			return serverStartedMsg{err: err}
+		}
+		cfg, err := config.Load(ws.Dir)
 		if err != nil {
 			return serverStartedMsg{err: err}
 		}
 
-		return serverStartedMsg{server: srv, extension: extensionPath, socket: srv.Addr()}
+		store, err := issues.Open(issues.DataDir(ws.Dir))
+		if err != nil {
+			return serverStartedMsg{err: err}
+		}
+
+		srv, err := server.Listen(ws.Dir, server.Router{
+			Agents: runner.Runner{
+				GitRoot:       ws.GitRoot,
+				StateDir:      ws.Dir,
+				ExtensionPath: extensionPath,
+				SocketPath:    server.Path(ws.Dir),
+				Record:        store,
+			},
+			Issues: issueops.Handler{
+				Store:  store,
+				Config: cfg,
+				Lookup: pr.CLI{},
+			},
+		})
+		if err != nil {
+			store.Close()
+			return serverStartedMsg{err: err}
+		}
+
+		return serverStartedMsg{server: srv, store: store, extension: extensionPath, socket: srv.Addr()}
 	}
 }
 
@@ -216,6 +243,7 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m.server = msg.server
+		m.store = msg.store
 		m.extension = msg.extension
 		m.socket = msg.socket
 		m.phase = phasePrompt

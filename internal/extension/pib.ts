@@ -10,16 +10,30 @@
 // file is embedded in the pib binary, so it must not need a build step.
 
 import net from "node:net";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const SOCKET_ENV = "PIB_SOCKET";
 const EXIT_FILE_ENV = "PIB_EXIT_FILE";
 const AGENT_ENV = "PIB_AGENT";
 
+const POINTER_FILE = ".pib/socket";
 const DEFAULT_SOCKET = ".pib/pib.sock";
 
 function socketPath(): string {
-  return process.env[SOCKET_ENV] || DEFAULT_SOCKET;
+  const fromEnv = process.env[SOCKET_ENV];
+  if (fromEnv) return fromEnv;
+
+  // pib records the socket it actually bound. It moves out of the workspace
+  // when the repository sits deep enough that the full path would exceed the
+  // kernel's limit, so the conventional location is only a last resort.
+  try {
+    const pointed = readFileSync(POINTER_FILE, "utf8").trim();
+    if (pointed) return pointed;
+  } catch {
+    // No pointer file; fall through.
+  }
+
+  return DEFAULT_SOCKET;
 }
 
 function text(body: string) {
@@ -136,6 +150,10 @@ export default function pibExtension(pi: any) {
           type: "string",
           description: "What the agent should do. Include the context it needs; it does not see this conversation.",
         },
+        issue: {
+          type: "number",
+          description: "Issue the agent is working on, so pib shows that issue as in progress while it runs.",
+        },
         session: {
           type: "string",
           description: "Session to continue, from a previous needs_input result.",
@@ -166,6 +184,7 @@ export default function pibExtension(pi: any) {
                 agent: params.agent,
                 name: params.name ?? "",
                 task: params.task ?? "",
+                issue: params.issue ?? 0,
                 caller: process.env[AGENT_ENV] ?? "",
               },
           signal,

@@ -57,6 +57,13 @@ type outcome struct {
 
 func runTool(t *testing.T, env map[string]string, tool string, args any) outcome {
 	t.Helper()
+	return runToolIn(t, "", env, tool, args)
+}
+
+// runToolIn runs the tool with a working directory, which is how the socket
+// pointer file is found.
+func runToolIn(t *testing.T, dir string, env map[string]string, tool string, args any) outcome {
+	t.Helper()
 
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node not installed")
@@ -79,6 +86,7 @@ func runTool(t *testing.T, env map[string]string, tool string, args any) outcome
 	}
 
 	cmd := exec.Command("node", script, tool, string(body))
+	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	for key, value := range env {
 		cmd.Env = append(cmd.Env, key+"="+value)
@@ -143,6 +151,55 @@ func TestPibToolRoundTripsThroughSocket(t *testing.T) {
 	}
 }
 
+func TestPibToolPassesTheIssueItIsWorkingOn(t *testing.T) {
+	fake := &fakeRunner{
+		resp:     protocol.Response{Status: "done", Text: "implemented"},
+		requests: make(chan protocol.Request, 1),
+	}
+	srv, err := server.Listen(t.TempDir(), fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	got := runTool(t,
+		map[string]string{"PIB_SOCKET": srv.Addr()},
+		"pib",
+		map[string]any{"agent": "worker", "task": "implement it", "issue": 7})
+
+	if got.Error != "" {
+		t.Fatalf("tool errored: %s", got.Error)
+	}
+
+	req := <-fake.requests
+	if req.Issue != 7 {
+		t.Errorf("Issue = %d, want 7", req.Issue)
+	}
+}
+
+func TestPibToolLeavesTheIssueOutWhenThereIsNone(t *testing.T) {
+	fake := &fakeRunner{
+		resp:     protocol.Response{Status: "done", Text: "mapped it"},
+		requests: make(chan protocol.Request, 1),
+	}
+	srv, err := server.Listen(t.TempDir(), fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	if got := runTool(t,
+		map[string]string{"PIB_SOCKET": srv.Addr()},
+		"pib",
+		map[string]string{"agent": "scout", "task": "map the codebase"}); got.Error != "" {
+		t.Fatalf("tool errored: %s", got.Error)
+	}
+
+	if req := <-fake.requests; req.Issue != 0 {
+		t.Errorf("Issue = %d, want none", req.Issue)
+	}
+}
+
 func TestPibToolSurfacesNeedsInput(t *testing.T) {
 	fake := &fakeRunner{
 		resp:     protocol.Response{Status: "needs_input", Text: "which database?", Session: "run-2"},
@@ -179,6 +236,49 @@ func TestPibToolResume(t *testing.T) {
 	req := <-fake.requests
 	if req.Op != protocol.OpResume || req.Session != "run-2" || req.Answer != "postgres" {
 		t.Errorf("request = %+v, want a resume", req)
+	}
+}
+
+// With no PIB_SOCKET the extension has to find the socket itself, which is how
+// a pi session started by hand reaches pib.
+func TestPibToolFindsSocketFromPointerFile(t *testing.T) {
+	fake := &fakeRunner{
+		resp:     protocol.Response{Status: "done", Text: "found it"},
+		requests: make(chan protocol.Request, 1),
+	}
+
+	// A deep workspace forces the socket out of .pib, which is exactly when
+	// the hardcoded fallback would fail.
+	repo := t.TempDir()
+	workspace := filepath.Join(repo, ".pib")
+	deep := filepath.Join(workspace, strings.Repeat("nested-directory/", 8))
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := server.Listen(deep, fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	// pib writes the pointer beside the workspace it bound for.
+	pointer, err := server.Discover(deep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, server.PointerFileName), []byte(pointer+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runToolIn(t, repo, map[string]string{"PIB_SOCKET": ""}, "pib",
+		map[string]string{"agent": "scout", "task": "explore"})
+
+	if got.Error != "" {
+		t.Fatalf("tool errored instead of reading the pointer: %s", got.Error)
+	}
+	if !strings.Contains(got.OK, "found it") {
+		t.Errorf("result = %q, want the agent's answer", got.OK)
 	}
 }
 

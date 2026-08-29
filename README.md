@@ -96,7 +96,8 @@ On first run pib checks three things and asks before changing anything:
    `n` continues without it, `q` exits.
 3. **`~/.pib/agents/` missing** — `y` installs the default agents; `n` or `q` exits.
 
-Then it loads `~/.pib/agents/planner.md` and opens its socket.
+Then it loads `~/.pib/agents/planner.md`, writes `~/.pib/config.toml` if there isn't
+one, opens the issue store under `.pib/data/`, and opens its socket.
 
 ### Planning
 
@@ -132,9 +133,182 @@ findings. Continue it with the session it handed back:
 pib(session: "8f2c1a…", answer: "Use Postgres")
 ```
 
+Pass `issue` to say what the agent is working on, and pib shows that issue as in
+progress for as long as the agent runs:
+
+```
+pib(agent: "worker", name: "Worker", task: "Implement the order aggregate", issue: 7)
+```
+
 Sub-agents finish by calling `pib_done`; their last message before that call is what
 the caller receives. They ask with `pib_ask`. Both tools are added automatically —
 agent definitions never list them.
+
+## Issue tracking
+
+pib keeps its own issues. A plan becomes a tree of issues with dependencies between
+them, and pib works out from those what can start now. GitHub still owns pull
+requests; nothing is pushed to GitHub issues.
+
+Everything lives under `.pib/`, which is gitignored: metadata in a SQLite database,
+and one markdown file per issue beside it. The running pib is the only writer — the
+commands below are clients that reach it over the same socket agents use, so several
+agents can work at once without stepping on each other.
+
+### Applying a plan
+
+The planner writes a document and hands the whole thing over at once. pib allocates
+the issue numbers, so issues can refer to each other before they exist:
+
+```json
+{
+  "plan": { "slug": "orders", "title": "Order placement" },
+  "issues": [
+    { "id": "feature", "type": "feature", "title": "Feature: order placement" },
+    { "id": "schema", "type": "task", "title": "Order schema",
+      "parent": "feature", "body": "## Task\n\nWrite the schema.",
+      "acceptance": ["Tables exist"] },
+    { "id": "agg", "type": "task", "title": "Order aggregate",
+      "parent": "feature", "blockedBy": ["schema"] }
+  ]
+}
+```
+
+```bash
+pib plan apply plan.json     # or - to read the document from stdin
+```
+
+`id` is local to the document; `parent` and `blockedBy` take one of those ids or an
+existing issue as `"#12"`. The whole document lands in one transaction.
+
+Applying the same plan again is an **additive merge**: known ids update, new ids are
+created, and an issue you dropped from the document is left alone — never closed,
+never deleted. A closed issue stays closed. So a second planner pass is safe to run
+while workers are still going.
+
+pib warns rather than refusing. A dependency cycle, a plan with nothing startable, a
+type no agent is mapped to, a reference it could not resolve — each is reported and
+the plan is still written. Only a document pib could not write at all is rejected:
+malformed JSON, a missing plan slug or title, a duplicate id, an issue with no title
+or type.
+
+### Commands
+
+```bash
+pib plan list                  # every plan
+pib plan show orders           # a plan and the issues in it
+
+pib issue list                 # everything, with derived state
+pib issue ready                # what could start right now
+pib issue view 7
+pib issue create --plan orders --type task --title "Order schema"
+pib issue edit 7 --title "…" --add-blocked-by 3,4
+pib issue comment 7 --body "Looks right."
+pib issue link-pr 7 https://github.com/you/repo/pull/12
+pib issue close 7 --reason "superseded"
+pib issue reindex
+```
+
+Every command takes `--json`, which prints the reply and nothing else — warnings go
+to stderr in text mode and into the payload in JSON mode, so piping into `jq` is safe.
+
+A listing shows what each issue is waiting on and what would run it:
+
+```
+ISSUE  STATE    TYPE     TITLE                      NOTE
+#1     ready    feature  Feature: order placement   no agent for this type
+#2     ready    task     Order schema               worker
+#3     blocked  task     Order aggregate            waiting on #2
+```
+
+### State pib works out rather than stores
+
+Only **open** and **closed** are recorded. Everything else is derived on every read,
+so nothing can be left stale by an agent that crashed or a label nobody cleared:
+
+| | |
+|---|---|
+| **blocked** | open, and something it waits on is still open |
+| **in progress** | an agent run that has not ended |
+| **in review** | a linked pull request that has not merged or been closed |
+| **ready** | open, unblocked, nobody working on it, nothing pending |
+| **launchable** | ready, and its type maps to an agent |
+
+pib closes out any run still marked live when it opens the store, so a crash cannot
+hold an issue in progress forever.
+
+### How an issue closes
+
+There is no `Closes #N` automation any more, so pib reproduces the rule it enforced:
+
+1. A worker opens its pull request and records it with `pib issue link-pr <n> <url>`.
+   The issue is now in review and drops out of the ready set.
+2. A human merges the pull request.
+3. The next listing settles it — pib asks `gh` about linked pull requests when you
+   run `issue list`, `issue ready` or `plan show`, closes the issue whose pull
+   request merged, notes the merge as a comment, and frees whatever it was blocking.
+
+A pull request closed without merging puts the issue back in the ready set: the work
+was abandoned, so someone can pick it up again.
+
+`gh` is only consulted for that. If it is missing or the network is down, pib says so
+and carries on — issue tracking works offline, only automatic closure pauses. Checks
+are cached for 30 seconds, so a tight loop of listings does not shell out repeatedly.
+
+You can always `pib issue close <n>` by hand. Closing a task whose pull request has
+not merged is allowed and reported, because pib warns rather than blocking.
+
+### Types and agents
+
+An issue's type says which agent implements it. The mapping lives in
+`~/.pib/config.toml`, written on first run:
+
+```toml
+[types]
+feature   = ""            # a container; never launches an agent
+task      = "worker"
+research  = "researcher"
+prototype = "prototype"
+reviewer  = "reviewer"
+```
+
+A `.pib/config.toml` in the repository overrides it key by key, so one project can
+reroute a single type without restating the rest. Types are open: an issue of a type
+nobody has mapped is stored happily, it just cannot be launched, and pib says so
+wherever it appears.
+
+### The files
+
+An issue is a markdown file you can open and edit:
+
+```markdown
+---
+title: Order schema
+type: task
+acceptance:
+  - Tables exist
+---
+
+## Task
+
+Write the schema.
+
+<!-- pib:comments -->
+
+### reviewer · 2026-08-29T14:02:11Z
+
+Needs an index on the idempotency key.
+```
+
+The frontmatter is what the planner authored; state, parent and dependencies live in
+the database, so lifecycle churn never rewrites a file you have open. Frontmatter keys
+pib does not recognise are kept as they are.
+
+Edit a file by hand and pib picks it up: every read checks whether the file has moved
+on and re-reads it if so. The file wins. `pib issue reindex` forces a full re-read.
+
+Renaming an issue does not rename its file — the database holds the path, so a stale
+slug in a filename is cosmetic.
 
 ## Agent definitions
 
@@ -180,10 +354,22 @@ Everything pib writes lives under `.pib/` at the repository root, and is gitigno
 
 ```
 .pib/
+├── config.toml        # optional: this repository's type → agent overrides
+├── data/
+│   ├── pib.db         # plans, issues, dependencies, agent runs
+│   └── issues/        # one markdown file per issue
 ├── extension/pib.ts   # pi extension, written from the binary at startup
 ├── runs/<id>/         # one directory per sub-agent: transcript + exit.json
 ├── pib.sock           # socket agents call pib through
 └── socket             # the socket's real path
+```
+
+Two files live outside the repository, shared by every project:
+
+```
+~/.pib/
+├── agents/*.md        # agent definitions
+└── config.toml        # the default type → agent map
 ```
 
 `pib.sock` moves to a short path under the system temp directory when the repository
@@ -194,7 +380,11 @@ sockets. `.pib/socket` always records where it actually is.
 
 pib registers a pi extension that provides three tools. `pib` runs in the caller and
 opens a socket connection to the pib TUI, which spawns the agent and holds the
-connection until it stops — one request, one reply, no message bus. `pib_done` and
+connection until it stops — one request, one reply, no message bus.
+
+That same socket carries the issue commands. `pib issue …` and `pib plan …` are
+clients of the running pib rather than programs that open the database themselves,
+which is why parallel agents need no locking: there is only ever one writer. `pib_done` and
 `pib_ask` run in the sub-agent and write an `exit.json` sidecar before shutting down.
 
 That sidecar exists because pi cannot distinguish "task complete" from "waiting on a
@@ -205,10 +395,36 @@ zero and leaves a plausible-looking last message.
 If the caller disconnects — you interrupt the planner, or quit pib — the sub-agent's
 window is killed rather than orphaned.
 
+## The pi extension
+
+pib provides its tools through a pi extension, embedded in the binary. You do not
+install it: pib writes it to `.pib/extension/pib.ts` at startup and passes
+`--extension` to every session it spawns, so the extension always matches the binary
+that launched it.
+
+**Do not add it to `~/.pi/agent/settings.json`.** The tools are context-dependent —
+`pib` needs to know which pib to talk to, and `pib_done` / `pib_ask` only register
+inside an agent pib started. Loaded globally, they would appear in unrelated sessions
+and fail.
+
+To load it by hand while debugging, with pib already running in the repository:
+
+```bash
+pi --extension .pib/extension/pib.ts --tools read,bash,pib
+```
+
+The extension finds the socket from `PIB_SOCKET`, then `.pib/socket`, then
+`.pib/pib.sock`.
+
 ## Troubleshooting
 
-**"pib is not running (no listener at …)"** — an agent called the `pib` tool with no
-pib TUI listening for that repository. Start pib in the repository and retry.
+**"pib is not running (no listener at …)"** — an agent called the `pib` tool, or you
+ran a `pib issue` command, with no pib TUI listening for that repository. Start pib in
+the repository and retry.
+
+**"could not check the pull request … gh is not available"** — pib settles linked pull
+requests with `gh`. Install it, or ignore the warning: everything except automatic
+closure works without it, and `pib issue close` still works by hand.
 
 **A sub-agent's window sits idle and its caller never resumes** — the agent finished
 its work but didn't call `pib_done`. Close the window; the caller gets the agent's last

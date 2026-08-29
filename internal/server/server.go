@@ -26,9 +26,34 @@ const maxSocketPath = 100
 // agent started by hand can find it without guessing.
 const PointerFileName = "socket"
 
-// Runner carries out a request and blocks until the agent stops.
-type Runner interface {
+// Handler carries out a request. An agent operation blocks until the agent
+// stops; an issue operation answers immediately.
+type Handler interface {
 	Run(ctx context.Context, req protocol.Request) (protocol.Response, error)
+}
+
+// Router sends agent operations to one handler and issue operations to
+// another, so the transport stays unaware of either.
+type Router struct {
+	// Agents runs spawn and resume.
+	Agents Handler
+	// Issues runs the plan and issue operations. A nil Issues rejects them,
+	// which is what a pib with no store open should do.
+	Issues Handler
+}
+
+// Run dispatches by operation.
+func (r Router) Run(ctx context.Context, req protocol.Request) (protocol.Response, error) {
+	if req.Op.IsAgent() {
+		if r.Agents == nil {
+			return protocol.Response{}, fmt.Errorf("this pib cannot run agents")
+		}
+		return r.Agents.Run(ctx, req)
+	}
+	if r.Issues == nil {
+		return protocol.Response{}, fmt.Errorf("this pib has no issue store open")
+	}
+	return r.Issues.Run(ctx, req)
 }
 
 // Server accepts one request per connection and holds the connection open
@@ -37,7 +62,7 @@ type Server struct {
 	path     string
 	pointer  string
 	listener net.Listener
-	runner   Runner
+	handler  Handler
 
 	wg sync.WaitGroup
 
@@ -78,7 +103,7 @@ func Discover(stateDir string) (string, error) {
 
 // Listen starts serving on the workspace socket. A socket left behind by a
 // previous run is replaced, since a unix socket cannot be bound twice.
-func Listen(stateDir string, r Runner) (*Server, error) {
+func Listen(stateDir string, h Handler) (*Server, error) {
 	path := Path(stateDir)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -100,7 +125,7 @@ func Listen(stateDir string, r Runner) (*Server, error) {
 		return nil, err
 	}
 
-	s := &Server{path: path, pointer: pointer, listener: listener, runner: r}
+	s := &Server{path: path, pointer: pointer, listener: listener, handler: h}
 	s.wg.Add(1)
 	go s.accept()
 
@@ -161,7 +186,7 @@ func (s *Server) handle(conn net.Conn) {
 	defer cancel()
 	go watchClose(conn, cancel)
 
-	resp, err := s.runner.Run(ctx, req)
+	resp, err := s.handler.Run(ctx, req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return

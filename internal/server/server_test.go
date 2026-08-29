@@ -37,10 +37,10 @@ func newFake() *fakeRunner {
 	return &fakeRunner{requests: make(chan protocol.Request, 4), released: make(chan struct{})}
 }
 
-func listen(t *testing.T, r Runner) *Server {
+func listen(t *testing.T, h Handler) *Server {
 	t.Helper()
 
-	srv, err := Listen(t.TempDir(), r)
+	srv, err := Listen(t.TempDir(), h)
 	if err != nil {
 		t.Fatal(err)
 	}

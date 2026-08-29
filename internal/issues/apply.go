@@ -1,0 +1,534 @@
+package issues
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// Document is a whole plan, as the planner hands it over: a plan and the
+// issues that implement it, referring to each other by ids local to the
+// document. pib allocates the real numbers, so nothing has to be created
+// before it can be referred to.
+type Document struct {
+	Plan   DocPlan    `json:"plan"`
+	Issues []DocIssue `json:"issues"`
+}
+
+// DocPlan identifies the plan the issues belong to.
+type DocPlan struct {
+	Slug       string `json:"slug"`
+	Title      string `json:"title"`
+	PlannerRun string `json:"plannerRun,omitempty"`
+}
+
+// DocIssue is one issue in a document. Parent and BlockedBy hold either an
+// id from this document or an existing issue written as "#12".
+type DocIssue struct {
+	ID         string   `json:"id"`
+	Type       string   `json:"type"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body,omitempty"`
+	Acceptance []string `json:"acceptance,omitempty"`
+	Parent     string   `json:"parent,omitempty"`
+	BlockedBy  []string `json:"blockedBy,omitempty"`
+}
+
+// ApplyOptions tunes the checks Apply runs.
+type ApplyOptions struct {
+	// KnownType reports whether pib has a type mapped to an agent. When it
+	// is nil, unmapped types are not reported. The store deliberately does
+	// not read the configuration itself.
+	KnownType func(string) bool
+}
+
+// ApplyResult is what a document did.
+type ApplyResult struct {
+	Plan    Plan    `json:"plan"`
+	Created []int64 `json:"created,omitempty"`
+	Updated []int64 `json:"updated,omitempty"`
+	// Warnings are problems pib wrote anyway. A plan is applied even when
+	// it is imperfect; the planner sees these and can fix them in place.
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// ParseDocument reads a plan document. Unknown fields are ignored, so a
+// document written by a newer pib still applies.
+func ParseDocument(body []byte) (Document, error) {
+	var doc Document
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return Document{}, fmt.Errorf("reading the plan document: %w", err)
+	}
+	return doc, doc.check()
+}
+
+// check rejects a document that cannot be written at all. Everything else is
+// reported as a warning once the plan is in.
+func (d Document) check() error {
+	if strings.TrimSpace(d.Plan.Slug) == "" {
+		return errors.New("the plan needs a slug")
+	}
+	if strings.TrimSpace(d.Plan.Title) == "" {
+		return errors.New("the plan needs a title")
+	}
+
+	seen := make(map[string]bool, len(d.Issues))
+	for i, issue := range d.Issues {
+		if strings.TrimSpace(issue.ID) == "" {
+			return fmt.Errorf("issue %d has no id; ids are how the document refers to itself", i+1)
+		}
+		if seen[issue.ID] {
+			return fmt.Errorf("two issues share the id %q", issue.ID)
+		}
+		seen[issue.ID] = true
+
+		if err := checkFields(issue.Title, issue.Type); err != nil {
+			return fmt.Errorf("issue %q: %w", issue.ID, err)
+		}
+	}
+	return nil
+}
+
+// Apply writes a document to the store in one transaction.
+//
+// The merge is additive. An id already in the plan updates that issue, an id
+// pib has not seen creates one, and an issue missing from the document is
+// left exactly as it is — never closed, never deleted. A closed issue stays
+// closed. That makes a second planner pass safe to run while workers are
+// still in flight.
+func (s *Store) Apply(doc Document, opts ApplyOptions) (ApplyResult, error) {
+	if err := doc.check(); err != nil {
+		return ApplyResult{}, err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	defer tx.Rollback()
+
+	var written []string
+	defer func() {
+		// Files created for a transaction that never committed have no row
+		// to belong to.
+		for _, path := range written {
+			if _, statErr := os.Stat(path); statErr == nil && err != nil {
+				os.Remove(path)
+			}
+		}
+	}()
+
+	result := ApplyResult{}
+	result.Plan, err = upsertPlan(tx, doc.Plan)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+
+	// Pass one: every issue exists and has a number, so pass two can wire
+	// references in any order the document happens to use.
+	local, err := existingLocalIDs(tx, result.Plan.ID)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+
+	for _, item := range doc.Issues {
+		if number, ok := local[item.ID]; ok {
+			changed, updateErr := s.updateFromDoc(tx, number, item)
+			if updateErr != nil {
+				err = updateErr
+				return ApplyResult{}, err
+			}
+			if changed {
+				result.Updated = append(result.Updated, number)
+			}
+			continue
+		}
+
+		number, rel, insertErr := s.insert(tx, result.Plan.ID, NewIssue{
+			LocalID:    item.ID,
+			Type:       item.Type,
+			Title:      item.Title,
+			Body:       item.Body,
+			Acceptance: item.Acceptance,
+		})
+		if insertErr != nil {
+			err = wrapRef(insertErr)
+			return ApplyResult{}, err
+		}
+		written = append(written, s.abs(rel))
+		local[item.ID] = number
+		result.Created = append(result.Created, number)
+	}
+
+	// Pass two: parents and blocked-by edges, now that every id resolves.
+	for _, item := range doc.Issues {
+		number := local[item.ID]
+
+		if item.Parent != "" {
+			parent, warning, ok := resolveRef(tx, item.Parent, local, result.Plan.ID)
+			if warning != "" {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("%q: parent %s", item.ID, warning))
+			}
+			switch {
+			case !ok:
+				// Already reported; there is nothing to point at.
+			case parent == number:
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("%q cannot be its own parent; the parent was dropped", item.ID))
+			default:
+				if _, err = tx.Exec(`UPDATE issues SET parent = ? WHERE number = ?`, parent, number); err != nil {
+					return ApplyResult{}, err
+				}
+			}
+		}
+
+		for _, ref := range item.BlockedBy {
+			blocker, warning, ok := resolveRef(tx, ref, local, result.Plan.ID)
+			if warning != "" {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("%q: blocked-by %s", item.ID, warning))
+			}
+			if !ok {
+				continue
+			}
+			if blocker == number {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("%q cannot block itself; the dependency was dropped", item.ID))
+				continue
+			}
+			if _, err = tx.Exec(
+				`INSERT OR IGNORE INTO deps (blocked, blocker) VALUES (?, ?)`, number, blocker); err != nil {
+				return ApplyResult{}, err
+			}
+		}
+	}
+
+	graphWarnings, err := inspect(tx, result.Plan.ID, doc, opts)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	result.Warnings = append(result.Warnings, graphWarnings...)
+
+	if err = tx.Commit(); err != nil {
+		return ApplyResult{}, err
+	}
+	return result, nil
+}
+
+// upsertPlan finds the plan by slug or creates it. A re-apply refreshes the
+// title, which is a change rather than a removal.
+func upsertPlan(tx *sql.Tx, doc DocPlan) (Plan, error) {
+	var (
+		plan    Plan
+		created string
+		run     sql.NullString
+	)
+	err := tx.QueryRow(
+		`SELECT id, slug, title, created_at, planner_run FROM plans WHERE slug = ?`, doc.Slug).
+		Scan(&plan.ID, &plan.Slug, &plan.Title, &created, &run)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		stamp := format(now())
+		res, insertErr := tx.Exec(
+			`INSERT INTO plans (slug, title, created_at, planner_run) VALUES (?, ?, ?, ?)`,
+			doc.Slug, doc.Title, stamp, nullable(doc.PlannerRun))
+		if insertErr != nil {
+			return Plan{}, insertErr
+		}
+		id, idErr := res.LastInsertId()
+		if idErr != nil {
+			return Plan{}, idErr
+		}
+		return Plan{ID: id, Slug: doc.Slug, Title: doc.Title, CreatedAt: parseTime(stamp), PlannerRun: doc.PlannerRun}, nil
+	}
+	if err != nil {
+		return Plan{}, err
+	}
+
+	plan.CreatedAt = parseTime(created)
+	plan.PlannerRun = run.String
+	if doc.PlannerRun != "" {
+		plan.PlannerRun = doc.PlannerRun
+	}
+	plan.Title = doc.Title
+	if _, err := tx.Exec(`UPDATE plans SET title = ?, planner_run = ? WHERE id = ?`,
+		plan.Title, nullable(plan.PlannerRun), plan.ID); err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
+}
+
+// existingLocalIDs maps the document ids a plan already knows to numbers.
+func existingLocalIDs(tx *sql.Tx, planID int64) (map[string]int64, error) {
+	rows, err := tx.Query(
+		`SELECT local_id, number FROM issues WHERE plan_id = ? AND local_id IS NOT NULL`, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	local := map[string]int64{}
+	for rows.Next() {
+		var (
+			id     string
+			number int64
+		)
+		if err := rows.Scan(&id, &number); err != nil {
+			return nil, err
+		}
+		local[id] = number
+	}
+	return local, rows.Err()
+}
+
+// updateFromDoc refreshes an issue the document already knows about. A closed
+// issue keeps its state: applying a plan again never reopens work.
+func (s *Store) updateFromDoc(tx *sql.Tx, number int64, item DocIssue) (bool, error) {
+	var rel string
+	if err := tx.QueryRow(`SELECT path FROM issues WHERE number = ?`, number).Scan(&rel); err != nil {
+		return false, err
+	}
+
+	file, err := ReadFile(s.abs(rel))
+	if err != nil {
+		return false, err
+	}
+
+	changed := false
+	if file.Title != item.Title {
+		file.Title, changed = item.Title, true
+	}
+	if file.Type != item.Type {
+		file.Type, changed = item.Type, true
+	}
+	if item.Body != "" && file.Body != item.Body {
+		file.Body, changed = item.Body, true
+	}
+	if item.Acceptance != nil && !equalLists(file.Acceptance, item.Acceptance) {
+		file.Acceptance, changed = item.Acceptance, true
+	}
+	if !changed {
+		return false, nil
+	}
+
+	if err := WriteFile(s.abs(rel), file); err != nil {
+		return false, err
+	}
+	acceptance, err := encodeList(file.Acceptance)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(
+		`UPDATE issues SET title = ?, type = ?, acceptance = ?, updated_at = ? WHERE number = ?`,
+		file.Title, file.Type, acceptance, format(now()), number); err != nil {
+		return false, err
+	}
+	return true, setPath(tx, number, rel, s.abs(rel))
+}
+
+// resolveRef turns a document reference into an issue number. A reference is
+// either an id from this document or an existing issue as "#12". A reference
+// that cannot be resolved is reported and dropped: there is no row to point
+// a dependency at.
+func resolveRef(tx *sql.Tx, ref string, local map[string]int64, planID int64) (int64, string, bool) {
+	ref = strings.TrimSpace(ref)
+
+	if number, ok := local[ref]; ok {
+		return number, "", true
+	}
+
+	if !strings.HasPrefix(ref, "#") {
+		return 0, fmt.Sprintf("%q is not an id in this document; the reference was dropped", ref), false
+	}
+
+	number, err := strconv.ParseInt(strings.TrimPrefix(ref, "#"), 10, 64)
+	if err != nil {
+		return 0, fmt.Sprintf("%q is not an issue number; the reference was dropped", ref), false
+	}
+
+	var owner int64
+	switch err := tx.QueryRow(`SELECT plan_id FROM issues WHERE number = ?`, number).Scan(&owner); {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, fmt.Sprintf("issue #%d does not exist; the reference was dropped", number), false
+	case err != nil:
+		return 0, fmt.Sprintf("issue #%d could not be read; the reference was dropped", number), false
+	case owner != planID:
+		return number, fmt.Sprintf("issue #%d belongs to another plan", number), true
+	}
+	return number, "", true
+}
+
+// inspect reports what is wrong with the plan that was just written. None of
+// it blocks the write; each of these can graduate to a hard error later
+// without changing the shape of anything.
+func inspect(tx *sql.Tx, planID int64, doc Document, opts ApplyOptions) ([]string, error) {
+	var warnings []string
+
+	if opts.KnownType != nil {
+		reported := map[string]bool{}
+		for _, item := range doc.Issues {
+			if opts.KnownType(item.Type) || reported[item.Type] {
+				continue
+			}
+			reported[item.Type] = true
+			warnings = append(warnings,
+				fmt.Sprintf("no agent is mapped to type %q; those issues cannot be launched", item.Type))
+		}
+	}
+
+	blockers, states, err := graph(tx, planID)
+	if err != nil {
+		return nil, err
+	}
+
+	if cycle := findCycle(blockers); len(cycle) > 0 {
+		warnings = append(warnings,
+			fmt.Sprintf("the dependency graph has a cycle (%s); nothing in it can ever start", renderCycle(cycle)))
+	}
+
+	open, startable := 0, 0
+	for number, state := range states {
+		if state != StateOpen {
+			continue
+		}
+		open++
+		blocked := false
+		for _, blocker := range blockers[number] {
+			if states[blocker] == StateOpen {
+				blocked = true
+				break
+			}
+		}
+		if !blocked {
+			startable++
+		}
+	}
+	if open > 0 && startable == 0 {
+		warnings = append(warnings, "no issue in this plan can start; every open issue is blocked")
+	}
+
+	return warnings, nil
+}
+
+// graph loads a plan's dependency edges and issue states.
+func graph(tx *sql.Tx, planID int64) (map[int64][]int64, map[int64]State, error) {
+	states := map[int64]State{}
+	rows, err := tx.Query(`SELECT number, state FROM issues WHERE plan_id = ?`, planID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var (
+			number int64
+			state  string
+		)
+		if err := rows.Scan(&number, &state); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		states[number] = State(state)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	blockers := map[int64][]int64{}
+	rows, err = tx.Query(
+		`SELECT blocked, blocker FROM deps WHERE blocked IN (SELECT number FROM issues WHERE plan_id = ?)`,
+		planID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var blocked, blocker int64
+		if err := rows.Scan(&blocked, &blocker); err != nil {
+			return nil, nil, err
+		}
+		blockers[blocked] = append(blockers[blocked], blocker)
+	}
+	for number := range blockers {
+		sort.Slice(blockers[number], func(i, j int) bool { return blockers[number][i] < blockers[number][j] })
+	}
+
+	return blockers, states, rows.Err()
+}
+
+// findCycle returns one cycle in the blocked-by graph, or nil. Reporting a
+// single concrete loop is more use than counting them.
+func findCycle(blockers map[int64][]int64) []int64 {
+	const (
+		unvisited = 0
+		active    = 1
+		done      = 2
+	)
+	mark := map[int64]int{}
+	var stack []int64
+
+	var walk func(int64) []int64
+	walk = func(node int64) []int64 {
+		mark[node] = active
+		stack = append(stack, node)
+
+		for _, next := range blockers[node] {
+			switch mark[next] {
+			case active:
+				for i, seen := range stack {
+					if seen == next {
+						return append([]int64(nil), stack[i:]...)
+					}
+				}
+			case unvisited:
+				if cycle := walk(next); cycle != nil {
+					return cycle
+				}
+			}
+		}
+
+		stack = stack[:len(stack)-1]
+		mark[node] = done
+		return nil
+	}
+
+	nodes := make([]int64, 0, len(blockers))
+	for node := range blockers {
+		nodes = append(nodes, node)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i] < nodes[j] })
+
+	for _, node := range nodes {
+		if mark[node] == unvisited {
+			if cycle := walk(node); cycle != nil {
+				return cycle
+			}
+		}
+	}
+	return nil
+}
+
+func renderCycle(cycle []int64) string {
+	parts := make([]string, 0, len(cycle)+1)
+	for _, number := range cycle {
+		parts = append(parts, fmt.Sprintf("#%d", number))
+	}
+	return strings.Join(append(parts, parts[0]), " → ")
+}
+
+func equalLists(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

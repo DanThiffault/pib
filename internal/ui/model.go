@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"pib/internal/agent"
+	"pib/internal/issues"
 	"pib/internal/server"
 	"pib/internal/workspace"
 )
@@ -49,18 +50,26 @@ type Model struct {
 	input     textarea.Model
 	notice    string
 	server    *server.Server
+	store     *issues.Store
 	extension string
 	socket    string
 	agentsDir string
 	installed []string
 }
 
-// Close releases the agent server. It is safe to call when none was started.
+// Close releases the socket and the issue store. It is safe to call when
+// neither was opened.
 func (m Model) Close() error {
-	if m.server == nil {
-		return nil
+	var err error
+	if m.server != nil {
+		err = m.server.Close()
 	}
-	return m.server.Close()
+	if m.store != nil {
+		if closeErr := m.store.Close(); err == nil {
+			err = closeErr
+		}
+	}
+	return err
 }
 
 func NewModel() Model {
