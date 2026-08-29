@@ -84,7 +84,7 @@ var launchPlanner = func(cfg launchConfig) tea.Cmd {
 	})
 }
 
-func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateTabPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case sessionOpenedMsg:
 		if msg.err != nil {
@@ -146,7 +146,7 @@ func (m Model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) promptView() string {
+func (m Model) tabPlanView() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render("pib") + "\n\n")

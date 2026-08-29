@@ -67,6 +67,7 @@ type serverStartedMsg struct {
 	store     *issues.Store
 	extension string
 	socket    string
+	config    config.Config
 	err       error
 }
 
@@ -144,7 +145,7 @@ func startServer(ws workspace.Status) tea.Cmd {
 			return serverStartedMsg{err: err}
 		}
 
-		return serverStartedMsg{server: srv, store: store, extension: extensionPath, socket: srv.Addr()}
+		return serverStartedMsg{server: srv, store: store, extension: extensionPath, socket: srv.Addr(), config: cfg}
 	}
 }
 
@@ -246,6 +247,7 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		m.store = msg.store
 		m.extension = msg.extension
 		m.socket = msg.socket
+		m.cfg = msg.config
 		m.phase = phasePrompt
 		return m, m.input.Focus(), true
 

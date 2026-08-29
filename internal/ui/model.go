@@ -1,11 +1,15 @@
 package ui
 
 import (
+	"strings"
+
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"pib/internal/agent"
+	"pib/internal/config"
 	"pib/internal/issues"
 	"pib/internal/server"
 	"pib/internal/workspace"
@@ -35,6 +39,40 @@ var (
 	noticeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#5FAF5F")).
 			MarginLeft(2)
+
+	activeTabStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#7D56F4")).
+			Padding(0, 2)
+
+	inactiveTabStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#666666")).
+			Padding(0, 2)
+
+	tabBarStyle = lipgloss.NewStyle().
+			MarginLeft(2).
+			MarginBottom(1)
+)
+
+var (
+	tabKeys  = key.NewBinding(key.WithKeys("tab"))
+	tab1Keys = key.NewBinding(key.WithKeys("1"))
+	tab2Keys = key.NewBinding(key.WithKeys("2"))
+)
+
+type tab int
+
+const (
+	tabPlan tab = iota
+	tabPlans
+)
+
+type plansView int
+
+const (
+	viewPlanList plansView = iota
+	viewPlanDetail
 )
 
 type Model struct {
@@ -55,6 +93,15 @@ type Model struct {
 	socket    string
 	agentsDir string
 	installed []string
+
+	currentTab   tab
+	plansView    plansView
+	plans        []issues.Plan
+	plansErr     error
+	plansLoading bool
+	planCursor   int
+	issueCursor  int
+	cfg          config.Config
 }
 
 // Close releases the socket and the issue store. It is safe to call when
@@ -107,12 +154,78 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	return m.updatePrompt(msg)
+	if m.phase != phasePrompt {
+		return m, nil
+	}
+
+	// Global tab switching.
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch {
+		case key.Matches(keyMsg, tabKeys):
+			m = m.switchTab()
+			return m.maybeLoadPlans()
+		case key.Matches(keyMsg, tab1Keys):
+			m.currentTab = tabPlan
+			return m, nil
+		case key.Matches(keyMsg, tab2Keys):
+			m.currentTab = tabPlans
+			return m.maybeLoadPlans()
+		}
+	}
+
+	switch m.currentTab {
+	case tabPlan:
+		return m.updateTabPlan(msg)
+	case tabPlans:
+		return m.updateTabPlans(msg)
+	default:
+		return m, nil
+	}
 }
 
 func (m Model) View() string {
 	if m.phase != phasePrompt {
 		return m.startupView()
 	}
-	return m.promptView()
+
+	var b strings.Builder
+	b.WriteString(m.tabBarView() + "\n")
+	switch m.currentTab {
+	case tabPlan:
+		b.WriteString(m.tabPlanView())
+	case tabPlans:
+		b.WriteString(m.tabPlansView())
+	}
+	return b.String()
+}
+
+func (m Model) switchTab() Model {
+	switch m.currentTab {
+	case tabPlan:
+		m.currentTab = tabPlans
+	case tabPlans:
+		m.currentTab = tabPlan
+	}
+	return m
+}
+
+func (m Model) maybeLoadPlans() (tea.Model, tea.Cmd) {
+	if m.currentTab == tabPlans && len(m.plans) == 0 && !m.plansLoading && m.plansErr == nil {
+		m.plansLoading = true
+		return m, loadPlans(m.store)
+	}
+	return m, nil
+}
+
+func (m Model) tabBarView() string {
+	var tabs []string
+	for i, label := range []string{"Plan", "Plans"} {
+		t := tab(i)
+		if t == m.currentTab {
+			tabs = append(tabs, activeTabStyle.Render(label))
+		} else {
+			tabs = append(tabs, inactiveTabStyle.Render(label))
+		}
+	}
+	return tabBarStyle.Render(lipgloss.JoinHorizontal(lipgloss.Top, tabs...))
 }
