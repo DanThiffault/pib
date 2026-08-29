@@ -162,24 +162,32 @@ the issue numbers, so issues can refer to each other before they exist:
 
 ```json
 {
-  "plan": { "slug": "orders", "title": "Order placement" },
+  "plan": {
+    "slug": "orders",
+    "title": "Order placement",
+    "body": "## Goal\n\nCustomers can place an order.",
+    "acceptance": ["An order can be placed end to end"]
+  },
   "issues": [
-    { "id": "feature", "type": "feature", "title": "Feature: order placement" },
     { "id": "schema", "type": "task", "title": "Order schema",
-      "parent": "feature", "body": "## Task\n\nWrite the schema.",
-      "acceptance": ["Tables exist"] },
+      "body": "## Task\n\nWrite the schema.", "acceptance": ["Tables exist"] },
     { "id": "agg", "type": "task", "title": "Order aggregate",
-      "parent": "feature", "blockedBy": ["schema"] }
+      "blockedBy": ["schema"] }
   ]
 }
 ```
+
+What the feature *is* — the goal, the scope, the criteria the whole thing is judged on
+— belongs on the plan. Every issue is work someone does; there is no container issue
+for the feature itself, which would launch nothing and never close.
 
 ```bash
 pib plan apply plan.json     # or - to read the document from stdin
 ```
 
-`id` is local to the document; `parent` and `blockedBy` take one of those ids or an
-existing issue as `"#12"`. The whole document lands in one transaction.
+`id` is local to the document; `blockedBy` takes one of those ids or an existing issue
+as `"#12"`. The whole document lands in one transaction. (`parent` exists too, for a
+task that genuinely decomposes — it is not how issues join a plan.)
 
 Applying the same plan again is an **additive merge**: known ids update, new ids are
 created, and an issue you dropped from the document is left alone — never closed,
@@ -312,7 +320,26 @@ wherever it appears.
 
 ### The files
 
-An issue is a markdown file you can open and edit:
+A plan and an issue are both markdown files you can open and edit. The plan holds what
+is being built:
+
+```markdown
+---
+title: Order placement
+type: plan
+acceptance:
+  - An order can be placed end to end
+---
+
+## Goal
+
+Customers can place an order.
+
+### In scope
+- …
+```
+
+And an issue holds one piece of the work:
 
 ```markdown
 ---
@@ -390,6 +417,7 @@ Everything pib writes lives under `.pib/` at the repository root, and is gitigno
 ├── config.toml        # optional: this repository's type → agent overrides
 ├── data/
 │   ├── pib.db         # plans, issues, dependencies, agent runs
+│   ├── plans/         # one markdown file per plan: its goal and scope
 │   └── issues/        # one markdown file per issue
 ├── extension/pib.ts   # pi extension, written from the binary at startup
 ├── runs/<id>/         # one directory per sub-agent: transcript + exit.json
