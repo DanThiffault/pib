@@ -202,6 +202,7 @@ pib issue list                 # everything, with derived state
 pib issue ready                # what could start right now
 pib issue view 7
 pib issue create --plan orders --type task --title "Order schema"
+pib issue start 7              # run the agent that implements it, and wait
 pib issue edit 7 --title "…" --add-blocked-by 3,4
 pib issue comment 7 --body "Looks right."
 pib issue link-pr 7 https://github.com/you/repo/pull/12
@@ -257,6 +258,20 @@ are cached for 30 seconds, so a tight loop of listings does not shell out repeat
 
 You can always `pib issue close <n>` by hand. Closing a task whose pull request has
 not merged is allowed and reported, because pib warns rather than blocking.
+
+### Running the work
+
+`pib issue start <n>` runs the agent an issue's type maps to, and blocks until it
+stops — the same path an agent takes when it delegates, so the run is recorded and the
+issue reads as in progress while it works.
+
+It refuses an issue that cannot start, saying why: *"#3 is not ready: it is waiting on
+#2"*, or *"no agent is mapped to type \"feature\""*. `--force` starts it anyway, and
+`--agent <name>` runs something other than the mapped agent.
+
+The agent is told its issue number in `PIB_ISSUE` and pointed at `pib issue view`, so
+the issue itself is the specification rather than whatever the task string happened to
+say.
 
 ### Types and agents
 
