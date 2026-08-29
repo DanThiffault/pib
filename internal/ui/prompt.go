@@ -121,9 +121,6 @@ func (m Model) updateTabPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch {
-		case key.Matches(msg, cancelKeys):
-			return m, tea.Quit
-
 		case key.Matches(msg, submitKeys):
 			description := strings.TrimSpace(m.input.Value())
 			if description == "" {

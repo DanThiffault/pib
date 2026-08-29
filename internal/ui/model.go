@@ -47,8 +47,8 @@ var (
 			Padding(0, 2)
 
 	inactiveTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#666666")).
-			Padding(0, 2)
+				Foreground(lipgloss.Color("#666666")).
+				Padding(0, 2)
 
 	tabBarStyle = lipgloss.NewStyle().
 			MarginLeft(2).
@@ -158,18 +158,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Global tab switching.
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		switch {
-		case key.Matches(keyMsg, tabKeys):
+		// Quitting works from every tab, not just the one that used to be
+		// the whole interface.
+		if key.Matches(keyMsg, cancelKeys) {
+			return m, tea.Quit
+		}
+
+		// Tab always switches: it is not a character the prompt can hold.
+		if key.Matches(keyMsg, tabKeys) {
 			m = m.switchTab()
 			return m.maybeLoadPlans()
-		case key.Matches(keyMsg, tab1Keys):
-			m.currentTab = tabPlan
-			return m, nil
-		case key.Matches(keyMsg, tab2Keys):
-			m.currentTab = tabPlans
-			return m.maybeLoadPlans()
+		}
+
+		// The number keys are shortcuts only where they are not also text.
+		// While the prompt has focus they belong to whoever is typing — a
+		// description mentioning "v2" must not switch tabs and swallow the
+		// rest of the sentence.
+		if !m.input.Focused() {
+			switch {
+			case key.Matches(keyMsg, tab1Keys):
+				m.currentTab = tabPlan
+				return m, m.input.Focus()
+			case key.Matches(keyMsg, tab2Keys):
+				m.currentTab = tabPlans
+				return m.maybeLoadPlans()
+			}
 		}
 	}
 
@@ -199,10 +213,14 @@ func (m Model) View() string {
 	return b.String()
 }
 
+// switchTab moves to the next tab. The prompt gives up focus on the way out
+// and takes it back on the way in, which is what lets the number shortcuts
+// work on every tab but the one being typed into.
 func (m Model) switchTab() Model {
 	switch m.currentTab {
 	case tabPlan:
 		m.currentTab = tabPlans
+		m.input.Blur()
 	case tabPlans:
 		m.currentTab = tabPlan
 	}
@@ -210,7 +228,10 @@ func (m Model) switchTab() Model {
 }
 
 func (m Model) maybeLoadPlans() (tea.Model, tea.Cmd) {
-	if m.currentTab == tabPlans && len(m.plans) == 0 && !m.plansLoading && m.plansErr == nil {
+	if m.currentTab == tabPlan {
+		return m, m.input.Focus()
+	}
+	if len(m.plans) == 0 && !m.plansLoading && m.plansErr == nil {
 		m.plansLoading = true
 		return m, loadPlans(m.store)
 	}
