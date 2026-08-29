@@ -196,7 +196,7 @@ or type.
 
 ```bash
 pib plan list                  # every plan
-pib plan show orders           # a plan and the issues in it
+pib plan view orders           # a plan and the issues in it
 
 pib issue list                 # everything, with derived state
 pib issue ready                # what could start right now
@@ -245,7 +245,7 @@ There is no `Closes #N` automation any more, so pib reproduces the rule it enfor
    The issue is now in review and drops out of the ready set.
 2. A human merges the pull request.
 3. The next listing settles it — pib asks `gh` about linked pull requests when you
-   run `issue list`, `issue ready` or `plan show`, closes the issue whose pull
+   run `issue list`, `issue ready` or `plan view`, closes the issue whose pull
    request merged, notes the merge as a comment, and frees whatever it was blocking.
 
 A pull request closed without merging puts the issue back in the ready set: the work

@@ -30,7 +30,7 @@ func TestRouterSplitsAgentOperationsFromIssueOperations(t *testing.T) {
 		protocol.OpResume:       "agents",
 		protocol.OpPlanApply:    "issues",
 		protocol.OpPlanList:     "issues",
-		protocol.OpPlanShow:     "issues",
+		protocol.OpPlanView:     "issues",
 		protocol.OpIssueCreate:  "issues",
 		protocol.OpIssueList:    "issues",
 		protocol.OpIssueView:    "issues",

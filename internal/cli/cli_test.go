@@ -180,14 +180,14 @@ func TestPlanListAndShow(t *testing.T) {
 		t.Errorf("plan list = %q", out)
 	}
 
-	out = h.ok(t, "plan", "show", "orders")
+	out = h.ok(t, "plan", "view", "orders")
 	for _, want := range []string{"orders — Order placement", "Order schema", "Aggregate"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("plan show missing %q:\n%s", want, out)
+			t.Errorf("plan view missing %q:\n%s", want, out)
 		}
 	}
 
-	if code, _, _ := h.run(t, "plan", "show", "nope"); code != 1 {
+	if code, _, _ := h.run(t, "plan", "view", "nope"); code != 1 {
 		t.Error("showing a missing plan should fail")
 	}
 }

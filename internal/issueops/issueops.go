@@ -87,8 +87,8 @@ type (
 		Reason string `json:"reason,omitempty"`
 	}
 
-	// PlanShowParams identifies a plan.
-	PlanShowParams struct {
+	// PlanViewParams identifies a plan.
+	PlanViewParams struct {
 		Slug string `json:"slug"`
 	}
 
@@ -150,8 +150,8 @@ func (h Handler) Run(ctx context.Context, req protocol.Request) (protocol.Respon
 		return h.planApply(req)
 	case protocol.OpPlanList:
 		return h.planList()
-	case protocol.OpPlanShow:
-		return h.planShow(ctx, req)
+	case protocol.OpPlanView:
+		return h.planView(ctx, req)
 
 	case protocol.OpIssueCreate:
 		return h.issueCreate(req)
@@ -202,8 +202,8 @@ func (h Handler) planList() (protocol.Response, error) {
 	return reply(PlanList{Plans: plans})
 }
 
-func (h Handler) planShow(ctx context.Context, req protocol.Request) (protocol.Response, error) {
-	params, err := decode[PlanShowParams](req)
+func (h Handler) planView(ctx context.Context, req protocol.Request) (protocol.Response, error) {
+	params, err := decode[PlanViewParams](req)
 	if err != nil {
 		return protocol.Response{}, err
 	}

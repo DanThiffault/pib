@@ -58,7 +58,7 @@ func (a App) Run() int {
 		return a.dispatch(rest, map[string]command{
 			"apply": a.planApply,
 			"list":  a.planList,
-			"show":  a.planShow,
+			"view":  a.planView,
 		}, "plan")
 	case "issue":
 		return a.dispatch(rest, map[string]command{
@@ -154,14 +154,14 @@ func (a App) planList(args []string) error {
 	return a.renderPlanList(resp, *asJSON)
 }
 
-func (a App) planShow(args []string) error {
-	fs, asJSON := a.flags("plan show")
+func (a App) planView(args []string) error {
+	fs, asJSON := a.flags("plan view")
 	positional, err := parse(fs, args, 1, "<slug>")
 	if err != nil {
 		return err
 	}
 
-	resp, err := a.send(request(protocol.OpPlanShow, issueops.PlanShowParams{Slug: positional[0]}))
+	resp, err := a.send(request(protocol.OpPlanView, issueops.PlanViewParams{Slug: positional[0]}))
 	if err != nil {
 		return err
 	}
@@ -623,7 +623,7 @@ already running in this repository.
 
   pib plan apply <file.json>     apply a plan document, creating its issues
   pib plan list                  every plan pib knows
-  pib plan show <slug>           a plan and the issues in it
+  pib plan view <slug>           a plan and the issues in it
 
   pib issue create --plan <slug> --type <type> --title <title>
   pib issue list [--plan <slug>] [--state open|closed] [--type <type>] [--ready]

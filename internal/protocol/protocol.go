@@ -25,7 +25,7 @@ const (
 const (
 	OpPlanApply Op = "plan.apply"
 	OpPlanList  Op = "plan.list"
-	OpPlanShow  Op = "plan.show"
+	OpPlanView  Op = "plan.view"
 
 	OpIssueCreate  Op = "issue.create"
 	OpIssueList    Op = "issue.list"

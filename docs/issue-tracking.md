@@ -237,7 +237,7 @@ Server's `Runner` interface stays as it is. A new `Store` interface is added, an
 `handle` picks by op prefix. Issue ops reply immediately; the existing
 hold-the-connection-open behaviour applies only to agent ops.
 
-Ops: `plan.apply`, `plan.list`, `plan.show`, `issue.create`, `issue.list`, `issue.view`,
+Ops: `plan.apply`, `plan.list`, `plan.view`, `issue.create`, `issue.list`, `issue.view`,
 `issue.edit`, `issue.comment`, `issue.link_pr`, `issue.close`, `issue.ready`,
 `issue.reindex`.
 
@@ -252,7 +252,7 @@ is unchanged, anything else is a client that resolves the socket with
 ```
 pib plan apply <file.json>
 pib plan list
-pib plan show <slug>
+pib plan view <slug>
 
 pib issue create --plan <slug> --type task --title <t> [--body-file f]
                  [--parent n] [--blocked-by n,m] [--acceptance ...]
@@ -329,7 +329,7 @@ without changing the shape of anything.
 
 1. The worker runs `pib issue link-pr <n> <url>`. `pr_state` becomes `open` and the issue
    is now `awaiting_review` — derived, so it drops out of the ready set immediately.
-2. `issue.list`, `issue.ready` and `plan.show` reconcile first, shelling out to
+2. `issue.list`, `issue.ready` and `plan.view` reconcile first, shelling out to
    `gh pr view <url> --json state`. Results are cached with `pr_checked_at`; a check
    inside the last 30s is skipped, and lookups run bounded and in parallel.
    `mergedAt` turned out to be unnecessary — `state == "MERGED"` is the whole signal.

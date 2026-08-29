@@ -86,7 +86,7 @@ func document() map[string]any {
 	}
 }
 
-func TestPlanApplyAndShow(t *testing.T) {
+func TestPlanApplyAndView(t *testing.T) {
 	h := handler(t)
 
 	applied := into[issues.ApplyResult](t, run(t, h, protocol.OpPlanApply, document()))
@@ -102,9 +102,9 @@ func TestPlanApplyAndShow(t *testing.T) {
 		t.Errorf("plans = %+v", list.Plans)
 	}
 
-	shown := into[PlanDetail](t, run(t, h, protocol.OpPlanShow, PlanShowParams{Slug: "orders"}))
-	if len(shown.Issues) != 3 || shown.Plan.Slug != "orders" {
-		t.Errorf("plan detail = %+v", shown)
+	viewed := into[PlanDetail](t, run(t, h, protocol.OpPlanView, PlanViewParams{Slug: "orders"}))
+	if len(viewed.Issues) != 3 || viewed.Plan.Slug != "orders" {
+		t.Errorf("plan detail = %+v", viewed)
 	}
 }
 
