@@ -133,6 +133,44 @@ func (a App) renderClose(resp protocol.Response, asJSON bool) error {
 	return nil
 }
 
+// renderRun reports how an agent run ended. The statuses are the agent ones,
+// not the issue ones: an agent can finish, ask a question, fail, or be closed
+// by hand.
+func (a App) renderRun(resp protocol.Response, asJSON bool) error {
+	if asJSON {
+		body, err := json.Marshal(map[string]string{
+			"status":  resp.Status,
+			"text":    resp.Text,
+			"session": resp.Session,
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Stdout, string(body))
+		return nil
+	}
+
+	text := strings.TrimSpace(resp.Text)
+	if text == "" {
+		text = "(the agent produced no output)"
+	}
+
+	switch resp.Status {
+	case "done":
+		fmt.Fprintf(a.Stdout, "%s\n", text)
+	case "needs_input":
+		fmt.Fprintf(a.Stdout, "The agent needs an answer before it can continue:\n\n%s\n", text)
+		fmt.Fprintf(a.Stderr, "\nAnswer it from a pib session with the session id %s.\n", resp.Session)
+	case "error":
+		fmt.Fprintf(a.Stdout, "The agent failed:\n\n%s\n", text)
+	default:
+		fmt.Fprintf(a.Stdout,
+			"The agent stopped without reporting a result — it was probably closed by hand. "+
+				"Its last message was:\n\n%s\n", text)
+	}
+	return nil
+}
+
 func (a App) renderReindex(resp protocol.Response, asJSON bool) error {
 	var result issueops.ReindexResult
 	if done, err := a.decode(resp, asJSON, &result); done || err != nil {

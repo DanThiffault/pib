@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"pib/internal/config"
 	"pib/internal/issueops"
 	"pib/internal/issues"
+	"pib/internal/protocol"
 	"pib/internal/server"
 )
 
@@ -19,6 +21,23 @@ import (
 type harness struct {
 	socket string
 	dir    string
+	agents *fakeAgents
+}
+
+// fakeAgents stands in for the runner: it records the spawn and answers as a
+// finished agent would.
+type fakeAgents struct {
+	requests []protocol.Request
+	resp     protocol.Response
+	err      error
+}
+
+func (f *fakeAgents) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
+	f.requests = append(f.requests, req)
+	if f.err != nil {
+		return protocol.Response{}, f.err
+	}
+	return f.resp, nil
 }
 
 const planDocument = `{
@@ -53,7 +72,9 @@ func setup(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 
+	agents := &fakeAgents{resp: protocol.Response{Status: "done", Text: "implemented it", Session: "run-1"}}
 	srv, err := server.Listen(t.TempDir(), server.Router{
+		Agents: agents,
 		Issues: issueops.Handler{Store: store, Config: cfg},
 	})
 	if err != nil {
@@ -61,7 +82,7 @@ func setup(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { srv.Close() })
 
-	return &harness{socket: srv.Addr(), dir: dir}
+	return &harness{socket: srv.Addr(), dir: dir, agents: agents}
 }
 
 // run invokes the command line and returns what a user would see.
@@ -426,5 +447,91 @@ func TestNoListenerSaysHowToFixIt(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "pib is not running") || !strings.Contains(stderr, "Start pib in this repository") {
 		t.Errorf("stderr = %q", stderr)
+	}
+}
+
+func TestIssueStartRunsTheMappedAgent(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+
+	code, stdout, stderr := h.run(t, "issue", "start", "2")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "implemented it") {
+		t.Errorf("stdout = %q, want the agent's answer", stdout)
+	}
+	if !strings.Contains(stderr, "Starting worker on #2") {
+		t.Errorf("stderr = %q, want it to say what it started", stderr)
+	}
+
+	if len(h.agents.requests) != 1 {
+		t.Fatalf("spawned %d agents", len(h.agents.requests))
+	}
+	req := h.agents.requests[0]
+	if req.Op != protocol.OpSpawn || req.Agent != "worker" {
+		t.Errorf("request = %+v, want a worker spawn", req)
+	}
+	if req.Issue != 2 {
+		t.Errorf("Issue = %d, want 2 so the run is recorded against it", req.Issue)
+	}
+	if !strings.Contains(req.Task, "pib issue view 2") || !strings.Contains(req.Task, "PIB_ISSUE") {
+		t.Errorf("task = %q, want it pointed at the issue", req.Task)
+	}
+}
+
+func TestIssueStartRefusesWhatCannotRun(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+
+	// #3 waits on #2.
+	code, _, stderr := h.run(t, "issue", "start", "3")
+	if code != 1 || !strings.Contains(stderr, "waiting on #2") {
+		t.Errorf("starting a blocked issue gave %d: %s", code, stderr)
+	}
+	if len(h.agents.requests) != 0 {
+		t.Error("a blocked issue was started anyway")
+	}
+
+	// #1 is a container, so nothing is mapped to run it.
+	code, _, stderr = h.run(t, "issue", "start", "1")
+	if code != 1 || !strings.Contains(stderr, `no agent is mapped to type "feature"`) {
+		t.Errorf("starting a container gave %d: %s", code, stderr)
+	}
+}
+
+func TestIssueStartCanBeForcedAndOverridden(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+
+	if code, _, stderr := h.run(t, "issue", "start", "3", "--force"); code != 0 {
+		t.Fatalf("--force exit %d: %s", code, stderr)
+	}
+	if h.agents.requests[0].Issue != 3 {
+		t.Errorf("request = %+v", h.agents.requests[0])
+	}
+
+	if code, _, stderr := h.run(t, "issue", "start", "1", "--agent", "scout"); code != 0 {
+		t.Fatalf("--agent exit %d: %s", code, stderr)
+	}
+	if got := h.agents.requests[1].Agent; got != "scout" {
+		t.Errorf("agent = %q, want the override", got)
+	}
+}
+
+func TestIssueStartReportsAnAgentThatStopped(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+	h.agents.resp = protocol.Response{Status: "needs_input", Text: "Postgres or SQLite?", Session: "run-9"}
+
+	code, stdout, stderr := h.run(t, "issue", "start", "2")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "needs an answer") || !strings.Contains(stdout, "Postgres or SQLite?") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "run-9") {
+		t.Errorf("stderr = %q, want the session to resume from", stderr)
 	}
 }

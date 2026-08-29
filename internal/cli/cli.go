@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"pib/internal/issueops"
+	"pib/internal/issues"
 	"pib/internal/protocol"
 	"pib/internal/server"
 	"pib/internal/workspace"
@@ -63,6 +64,7 @@ func (a App) Run() int {
 	case "issue":
 		return a.dispatch(rest, map[string]command{
 			"create":  a.issueCreate,
+			"start":   a.issueStart,
 			"list":    a.issueList,
 			"ready":   a.issueReady,
 			"view":    a.issueView,
@@ -244,6 +246,89 @@ func (a App) issueReady(args []string) error {
 		return err
 	}
 	return a.renderList(resp, *asJSON)
+}
+
+// issueStart runs the agent that implements an issue, and blocks until it
+// stops — the same path an agent takes when it delegates, so the run is
+// recorded and the issue reads as in progress while it works.
+func (a App) issueStart(args []string) error {
+	fs, asJSON := a.flags("issue start")
+	var (
+		override = fs.String("agent", "", "run this agent instead of the one mapped to the issue's type")
+		force    = fs.Bool("force", false, "start even when the issue is not ready")
+	)
+
+	positional, err := parse(fs, args, 1, "<number>")
+	if err != nil {
+		return err
+	}
+	number, err := numberOf(positional[0])
+	if err != nil {
+		return err
+	}
+
+	resp, err := a.send(request(protocol.OpIssueView, issueops.ViewParams{Number: number}))
+	if err != nil {
+		return err
+	}
+	var detail issueops.IssueDetail
+	if err := json.Unmarshal(resp.Payload, &detail); err != nil {
+		return err
+	}
+
+	agent := *override
+	if agent == "" {
+		agent = detail.Issue.Agent
+	}
+	if agent == "" {
+		return fmt.Errorf(
+			"no agent is mapped to type %q — add one to config.toml, or pass --agent", detail.Issue.Type)
+	}
+	if !*force && !detail.Issue.Ready {
+		return fmt.Errorf("#%d is not ready: %s. Pass --force to start anyway", number, blocking(detail.Issue))
+	}
+
+	if !*asJSON {
+		fmt.Fprintf(a.Stderr, "Starting %s on #%d — %s\n", agent, number, detail.Issue.Title)
+	}
+
+	resp, err = a.send(protocol.Request{
+		Op:    protocol.OpSpawn,
+		Agent: agent,
+		Name:  fmt.Sprintf("%s #%d", agent, number),
+		Task:  briefing(number, detail.Issue.Title),
+		Issue: number,
+	})
+	if err != nil {
+		return err
+	}
+	return a.renderRun(resp, *asJSON)
+}
+
+// briefing is what the agent is started with. It is deliberately thin: the
+// issue is the specification, and every agent's first step is to read it.
+func briefing(number int64, title string) string {
+	return fmt.Sprintf(
+		"Work pib issue #%d: %s\n\n"+
+			"Read it first with `pib issue view %d` — that is your specification, "+
+			"including its acceptance criteria. Your issue number is also in PIB_ISSUE.",
+		number, title, number)
+}
+
+// blocking says in one phrase why an issue cannot start.
+func blocking(issue issues.Status) string {
+	switch {
+	case issue.State == issues.StateClosed:
+		return "it is closed"
+	case issue.InProgress:
+		return "an agent is already working on it"
+	case issue.AwaitingReview:
+		return "it is waiting on " + issue.PRURL
+	case issue.Blocked:
+		return "it is waiting on " + render(issue.OpenBlockers)
+	default:
+		return "unknown"
+	}
 }
 
 func (a App) issueView(args []string) error {
@@ -489,7 +574,11 @@ func (a App) send(req protocol.Request) (protocol.Response, error) {
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return protocol.Response{}, err
 	}
-	conn.SetReadDeadline(time.Now().Add(2 * time.Minute))
+	// Issue operations answer immediately. An agent run holds the connection
+	// for as long as the agent takes, which is not something to time out.
+	if !req.Op.IsAgent() {
+		conn.SetReadDeadline(time.Now().Add(2 * time.Minute))
+	}
 
 	var resp protocol.Response
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
@@ -626,6 +715,7 @@ already running in this repository.
   pib plan view <slug>           a plan and the issues in it
 
   pib issue create --plan <slug> --type <type> --title <title>
+  pib issue start <number>       run the agent that implements it, and wait
   pib issue list [--plan <slug>] [--state open|closed] [--type <type>] [--ready]
   pib issue ready [--plan <slug>]
   pib issue view <number>
