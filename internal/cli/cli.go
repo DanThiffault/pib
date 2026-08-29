@@ -63,16 +63,17 @@ func (a App) Run() int {
 		}, "plan")
 	case "issue":
 		return a.dispatch(rest, map[string]command{
-			"create":  a.issueCreate,
-			"start":   a.issueStart,
-			"list":    a.issueList,
-			"ready":   a.issueReady,
-			"view":    a.issueView,
-			"edit":    a.issueEdit,
-			"comment": a.issueComment,
-			"link-pr": a.issueLinkPR,
-			"close":   a.issueClose,
-			"reindex": a.issueReindex,
+			"create":   a.issueCreate,
+			"start":    a.issueStart,
+			"followup": a.issueFollowup,
+			"list":     a.issueList,
+			"ready":    a.issueReady,
+			"view":     a.issueView,
+			"edit":     a.issueEdit,
+			"comment":  a.issueComment,
+			"link-pr":  a.issueLinkPR,
+			"close":    a.issueClose,
+			"reindex":  a.issueReindex,
 		}, "issue")
 	default:
 		fmt.Fprintf(a.Stderr, "pib: unknown command %q\n\n", group)
@@ -298,6 +299,75 @@ func (a App) issueStart(args []string) error {
 		Name:  fmt.Sprintf("%s #%d", agent, number),
 		Task:  briefing(number, detail.Issue.Title),
 		Issue: number,
+	})
+	if err != nil {
+		return err
+	}
+	return a.renderRun(resp, *asJSON)
+}
+
+// issueFollowup puts a message to the agent that last worked an issue,
+// resuming its session rather than starting a new one. The agent still has
+// everything it worked out the first time, so a followup can be as short as
+// what you actually want changed.
+//
+// It is also how an agent that stopped to ask something gets its answer:
+// same mechanism, and the message is the answer.
+func (a App) issueFollowup(args []string) error {
+	fs, asJSON := a.flags("issue followup")
+	var (
+		message     = fs.String("message", "", "what you want the agent to do")
+		messageFile = fs.String("message-file", "", "read the message from a file, or - for standard input")
+		force       = fs.Bool("force", false, "follow up even when the issue is closed")
+	)
+
+	positional, err := parse(fs, args, 1, "<number>")
+	if err != nil {
+		return err
+	}
+	number, err := numberOf(positional[0])
+	if err != nil {
+		return err
+	}
+
+	text, err := a.body(*message, *messageFile)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(text) == "" {
+		return usagef("--message or --message-file is required")
+	}
+
+	resp, err := a.send(request(protocol.OpIssueView, issueops.ViewParams{Number: number}))
+	if err != nil {
+		return err
+	}
+	var detail issueops.IssueDetail
+	if err := json.Unmarshal(resp.Payload, &detail); err != nil {
+		return err
+	}
+
+	if len(detail.Runs) == 0 {
+		return fmt.Errorf("#%d has never been worked on. Use `pib issue start %d`", number, number)
+	}
+	last := detail.Runs[len(detail.Runs)-1]
+	if last.EndedAt.IsZero() {
+		return fmt.Errorf("an agent is already working on #%d", number)
+	}
+	if detail.Issue.State == issues.StateClosed && !*force {
+		return fmt.Errorf("#%d is closed. Pass --force to follow up anyway", number)
+	}
+
+	if !*asJSON {
+		fmt.Fprintf(a.Stderr, "Following up with %s on #%d — %s\n", last.Agent, number, detail.Issue.Title)
+	}
+
+	resp, err = a.send(protocol.Request{
+		Op:      protocol.OpResume,
+		Session: last.ID,
+		Answer:  text,
+		Name:    fmt.Sprintf("%s #%d", last.Agent, number),
+		Issue:   number,
 	})
 	if err != nil {
 		return err
@@ -716,6 +786,8 @@ already running in this repository.
 
   pib issue create --plan <slug> --type <type> --title <title>
   pib issue start <number>       run the agent that implements it, and wait
+  pib issue followup <number> --message <text>
+                                 put a message to the agent that last worked it
   pib issue list [--plan <slug>] [--state open|closed] [--type <type>] [--ready]
   pib issue ready [--plan <slug>]
   pib issue view <number>

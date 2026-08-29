@@ -22,20 +22,36 @@ type harness struct {
 	socket string
 	dir    string
 	agents *fakeAgents
+	store  *issues.Store
 }
 
 // fakeAgents stands in for the runner: it records the spawn and answers as a
-// finished agent would.
+// finished agent would, including writing the run row the real runner writes
+// — which is what a followup later looks for.
 type fakeAgents struct {
 	requests []protocol.Request
 	resp     protocol.Response
 	err      error
+	store    *issues.Store
 }
 
 func (f *fakeAgents) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
 	f.requests = append(f.requests, req)
 	if f.err != nil {
 		return protocol.Response{}, f.err
+	}
+
+	if id := f.resp.Session; id != "" && f.store != nil {
+		agent := req.Agent
+		if agent == "" {
+			agent, _ = f.store.RunAgent(id)
+		}
+		if err := f.store.StartRun(id, req.Issue, agent, "@1"); err != nil {
+			return protocol.Response{}, err
+		}
+		if err := f.store.FinishRun(id, f.resp.Status); err != nil {
+			return protocol.Response{}, err
+		}
 	}
 	return f.resp, nil
 }
@@ -72,7 +88,10 @@ func setup(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 
-	agents := &fakeAgents{resp: protocol.Response{Status: "done", Text: "implemented it", Session: "run-1"}}
+	agents := &fakeAgents{
+		resp:  protocol.Response{Status: "done", Text: "implemented it", Session: "run-1"},
+		store: store,
+	}
 	srv, err := server.Listen(t.TempDir(), server.Router{
 		Agents: agents,
 		Issues: issueops.Handler{Store: store, Config: cfg},
@@ -82,7 +101,7 @@ func setup(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { srv.Close() })
 
-	return &harness{socket: srv.Addr(), dir: dir, agents: agents}
+	return &harness{socket: srv.Addr(), dir: dir, agents: agents, store: store}
 }
 
 // run invokes the command line and returns what a user would see.
@@ -533,5 +552,117 @@ func TestIssueStartReportsAnAgentThatStopped(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "run-9") {
 		t.Errorf("stderr = %q, want the session to resume from", stderr)
+	}
+}
+
+// worked runs an agent against an issue so there is a session to follow up.
+func (h *harness) worked(t *testing.T, number string) {
+	t.Helper()
+	h.ok(t, "issue", "start", number)
+}
+
+func TestFollowupResumesTheLastRun(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+	h.worked(t, "2")
+
+	h.agents.resp = protocol.Response{Status: "done", Text: "addressed the comments"}
+	code, stdout, stderr := h.run(t, "issue", "followup", "2",
+		"--message", "address the comments I left on the PR")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "addressed the comments") {
+		t.Errorf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "Following up with worker on #2") {
+		t.Errorf("stderr = %q", stderr)
+	}
+
+	if len(h.agents.requests) != 2 {
+		t.Fatalf("%d requests, want the start and the followup", len(h.agents.requests))
+	}
+	req := h.agents.requests[1]
+	if req.Op != protocol.OpResume {
+		t.Errorf("op = %q, want a resume", req.Op)
+	}
+	if req.Session != "run-1" {
+		t.Errorf("session = %q, want the id of the run being continued", req.Session)
+	}
+	if req.Answer != "address the comments I left on the PR" {
+		t.Errorf("answer = %q", req.Answer)
+	}
+	if req.Issue != 2 || req.Name != "worker #2" {
+		t.Errorf("request = %+v", req)
+	}
+}
+
+func TestFollowupTakesAMessageFile(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+	h.worked(t, "2")
+
+	code, _, stderr := h.input(t, "the review is on the PR", "issue", "followup", "2", "--message-file", "-")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if got := h.agents.requests[1].Answer; got != "the review is on the PR" {
+		t.Errorf("answer = %q", got)
+	}
+}
+
+func TestFollowupRefusesWhatItCannotContinue(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+
+	// Never worked on.
+	code, _, stderr := h.run(t, "issue", "followup", "2", "--message", "hello")
+	if code != 1 || !strings.Contains(stderr, "never been worked on") {
+		t.Errorf("followup on an unworked issue gave %d: %s", code, stderr)
+	}
+	if len(h.agents.requests) != 0 {
+		t.Error("it resumed something anyway")
+	}
+
+	// No message.
+	h.worked(t, "2")
+	if code, _, _ := h.run(t, "issue", "followup", "2"); code != 2 {
+		t.Errorf("a followup with no message gave %d, want a usage error", code)
+	}
+}
+
+func TestFollowupRefusesAClosedIssueUnlessForced(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+	h.worked(t, "2")
+	h.ok(t, "issue", "close", "2")
+
+	code, _, stderr := h.run(t, "issue", "followup", "2", "--message", "one more thing")
+	if code != 1 || !strings.Contains(stderr, "is closed") {
+		t.Errorf("followup on a closed issue gave %d: %s", code, stderr)
+	}
+
+	before := len(h.agents.requests)
+	if code, _, stderr := h.run(t, "issue", "followup", "2", "--message", "one more thing", "--force"); code != 0 {
+		t.Fatalf("--force exit %d: %s", code, stderr)
+	}
+	if len(h.agents.requests) != before+1 {
+		t.Error("--force did not resume the session")
+	}
+}
+
+func TestFollowupWaitsForALiveRun(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+	h.worked(t, "2")
+
+	// A run that started and has not ended.
+	if err := h.store.StartRun("run-live", 2, "worker", "@7"); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, stderr := h.run(t, "issue", "followup", "2", "--message", "hurry up")
+	if code != 1 || !strings.Contains(stderr, "already working on #2") {
+		t.Errorf("followup during a live run gave %d: %s", code, stderr)
 	}
 }
