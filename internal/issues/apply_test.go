@@ -1,6 +1,8 @@
 package issues
 
 import (
+	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -401,5 +403,101 @@ func TestFindCycle(t *testing.T) {
 	}
 	if cycle := findCycle(map[int64][]int64{5: {6}, 6: {5}, 1: {2}}); len(cycle) != 2 {
 		t.Errorf("findCycle returned %v, want the two-node loop", cycle)
+	}
+}
+
+func TestPlanCarriesItsOwnGoal(t *testing.T) {
+	store := open(t)
+
+	d := doc()
+	d.Plan.Body = "## Goal\n\nCustomers can place an order."
+	d.Plan.Acceptance = []string{"An order can be placed end to end"}
+	result := applied(t, store, d, ApplyOptions{})
+
+	if result.Plan.Path == "" {
+		t.Error("the plan has no file")
+	}
+	if !reflect.DeepEqual(result.Plan.Acceptance, []string{"An order can be placed end to end"}) {
+		t.Errorf("acceptance = %v", result.Plan.Acceptance)
+	}
+
+	file, err := store.PlanContent("orders")
+	if err != nil {
+		t.Fatalf("PlanContent: %v", err)
+	}
+	if file.Body != "## Goal\n\nCustomers can place an order." {
+		t.Errorf("body = %q", file.Body)
+	}
+
+	plan, err := store.Plan("orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Acceptance) != 1 || plan.Title != "Order placement" {
+		t.Errorf("plan = %+v", plan)
+	}
+}
+
+func TestReapplyKeepsProseTheDocumentOmits(t *testing.T) {
+	store := open(t)
+
+	d := doc()
+	d.Plan.Body = "## Goal\n\nThe original goal."
+	d.Plan.Acceptance = []string{"It works"}
+	applied(t, store, d, ApplyOptions{})
+
+	// A second pass that says nothing about the goal must not erase it.
+	bare := doc()
+	bare.Plan.Title = "Order placement, revised"
+	applied(t, store, bare, ApplyOptions{})
+
+	file, err := store.PlanContent("orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Body != "## Goal\n\nThe original goal." {
+		t.Errorf("body = %q, want the goal kept", file.Body)
+	}
+	if file.Title != "Order placement, revised" {
+		t.Errorf("title = %q, want the new one", file.Title)
+	}
+
+	plan, err := store.Plan("orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Acceptance) != 1 {
+		t.Errorf("acceptance = %v, want it kept", plan.Acceptance)
+	}
+}
+
+func TestAHandEditedPlanFileWins(t *testing.T) {
+	store := open(t)
+	d := doc()
+	d.Plan.Body = "## Goal\n\nOriginal."
+	applied(t, store, d, ApplyOptions{})
+
+	plan, err := store.Plan("orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Dir(), plan.Path)
+
+	file, err := ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.Title = "Rewritten by hand"
+	file.Acceptance = []string{"a new criterion"}
+	if err := WriteFile(path, file); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err = store.Plan("orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Title != "Rewritten by hand" || len(plan.Acceptance) != 1 {
+		t.Errorf("plan = %+v, want the file's content", plan)
 	}
 }

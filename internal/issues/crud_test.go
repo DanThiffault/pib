@@ -24,7 +24,7 @@ func freeze(t *testing.T, iso string) {
 func planned(t *testing.T) *Store {
 	t.Helper()
 	store := open(t)
-	if _, err := store.CreatePlan("orders", "Order placement", ""); err != nil {
+	if _, err := store.CreatePlan(NewPlan{Slug: "orders", Title: "Order placement", PlannerRun: ""}); err != nil {
 		t.Fatalf("CreatePlan: %v", err)
 	}
 	return store
@@ -44,7 +44,7 @@ func TestCreatePlanAndLookUp(t *testing.T) {
 	freeze(t, "2026-08-29T12:00:00Z")
 	store := open(t)
 
-	plan, err := store.CreatePlan("orders", "Order placement", "run-abc")
+	plan, err := store.CreatePlan(NewPlan{Slug: "orders", Title: "Order placement", PlannerRun: "run-abc"})
 	if err != nil {
 		t.Fatalf("CreatePlan: %v", err)
 	}
@@ -55,14 +55,14 @@ func TestCreatePlanAndLookUp(t *testing.T) {
 		t.Errorf("created at %v", plan.CreatedAt)
 	}
 
-	if _, err := store.CreatePlan("orders", "Duplicate", ""); !errors.Is(err, ErrExists) {
+	if _, err := store.CreatePlan(NewPlan{Slug: "orders", Title: "Duplicate", PlannerRun: ""}); !errors.Is(err, ErrExists) {
 		t.Errorf("duplicate slug gave %v, want ErrExists", err)
 	}
 	if _, err := store.Plan("nope"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing plan gave %v, want ErrNotFound", err)
 	}
 
-	if _, err := store.CreatePlan("second", "Another", ""); err != nil {
+	if _, err := store.CreatePlan(NewPlan{Slug: "second", Title: "Another", PlannerRun: ""}); err != nil {
 		t.Fatal(err)
 	}
 	plans, err := store.Plans()
@@ -144,7 +144,7 @@ func TestCreateRejectsWhatCannotBeWritten(t *testing.T) {
 		t.Errorf("duplicate local id gave %v, want ErrExists", err)
 	}
 	// The same local id in another plan is fine — ids are plan-local.
-	if _, err := store.CreatePlan("other", "Other", ""); err != nil {
+	if _, err := store.CreatePlan(NewPlan{Slug: "other", Title: "Other", PlannerRun: ""}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Create(NewIssue{Plan: "other", LocalID: "dup", Type: "task", Title: "Three"}); err != nil {
@@ -320,7 +320,7 @@ func TestEditBodyTypeAndAcceptance(t *testing.T) {
 
 func TestListFilters(t *testing.T) {
 	store := planned(t)
-	if _, err := store.CreatePlan("billing", "Billing", ""); err != nil {
+	if _, err := store.CreatePlan(NewPlan{Slug: "billing", Title: "Billing", PlannerRun: ""}); err != nil {
 		t.Fatal(err)
 	}
 

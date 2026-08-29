@@ -317,7 +317,7 @@ func TestAgentExplainsWhyAnIssueCannotRun(t *testing.T) {
 
 func TestStatusFiltersByPlanStateAndType(t *testing.T) {
 	store := fixture(t)
-	if _, err := store.CreatePlan("billing", "Billing", ""); err != nil {
+	if _, err := store.CreatePlan(NewPlan{Slug: "billing", Title: "Billing", PlannerRun: ""}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Create(NewIssue{Plan: "billing", Type: "research", Title: "Compare"}); err != nil {
