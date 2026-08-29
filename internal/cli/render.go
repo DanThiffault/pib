@@ -60,7 +60,19 @@ func (a App) renderPlanDetail(resp protocol.Response, asJSON bool) error {
 		return err
 	}
 
-	fmt.Fprintf(a.Stdout, "%s — %s\n\n", result.Plan.Slug, result.Plan.Title)
+	fmt.Fprintf(a.Stdout, "%s — %s\n", result.Plan.Slug, result.Plan.Title)
+
+	if len(result.Plan.Acceptance) > 0 {
+		fmt.Fprintln(a.Stdout, "\nAcceptance")
+		for _, criterion := range result.Plan.Acceptance {
+			fmt.Fprintf(a.Stdout, "  - %s\n", criterion)
+		}
+	}
+	if body := strings.TrimSpace(result.Body); body != "" {
+		fmt.Fprintf(a.Stdout, "\n%s\n", body)
+	}
+
+	fmt.Fprintln(a.Stdout)
 	a.issueTable(result.Issues)
 	a.warn(result.Warnings)
 	return nil

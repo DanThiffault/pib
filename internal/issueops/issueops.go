@@ -120,9 +120,10 @@ type (
 		Plans []issues.Plan `json:"plans"`
 	}
 
-	// PlanDetail is a plan and the issues in it.
+	// PlanDetail is a plan, what it is for, and the issues in it.
 	PlanDetail struct {
 		Plan     issues.Plan     `json:"plan"`
+		Body     string          `json:"body,omitempty"`
 		Issues   []issues.Status `json:"issues"`
 		Warnings []string        `json:"warnings,omitempty"`
 	}
@@ -223,7 +224,13 @@ func (h Handler) planView(ctx context.Context, req protocol.Request) (protocol.R
 	if err != nil {
 		return protocol.Response{}, err
 	}
-	return reply(PlanDetail{Plan: plan, Issues: list, Warnings: warnings})
+
+	file, err := h.Store.PlanContent(params.Slug)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+
+	return reply(PlanDetail{Plan: plan, Body: file.Body, Issues: list, Warnings: warnings})
 }
 
 func (h Handler) issueCreate(req protocol.Request) (protocol.Response, error) {
