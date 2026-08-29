@@ -103,13 +103,13 @@ type Model struct {
 	agentsDir string
 	installed []string
 
-	currentTab   tab
-	plansView    plansView
-	plans        []issues.Plan
-	plansErr     error
-	plansLoading bool
-	planCursor   int
-	issueCursor  int
+	currentTab          tab
+	plansView           plansView
+	plans               []issues.Plan
+	plansErr            error
+	plansLoading        bool
+	planCursor          int
+	issueCursor         int
 	planCounts          map[string]issues.PlanCounts
 	planIssues          []issues.Status
 	planIssuesLoading   bool

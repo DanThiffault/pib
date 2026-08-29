@@ -65,6 +65,15 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.planCursor = 0
 		return m, nil
 	case planIssuesLoadedMsg:
+		// A response for a plan the user has already left is stale. Nothing
+		// downstream would catch it: every key in the detail view returns
+		// before the end of this function, so the wrong plan's issues would
+		// stay on screen until a resize. Leaving a plan always starts a fresh
+		// load, so there is a live response still coming for what is on
+		// screen and the loading flag will clear with it.
+		if msg.planSlug != m.currentPlanSlug() {
+			return m, nil
+		}
 		m.planIssuesLoading = false
 		m.planIssuesLoadedFor = msg.planSlug
 		if msg.err != nil {
@@ -128,18 +137,15 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, loadPlans(m.store)
 	}
 
-	if m.plansView == viewPlanDetail && !m.planIssuesLoading && m.planIssuesErr == nil {
-		currentSlug := ""
-		if m.planCursor < len(m.plans) {
-			currentSlug = m.plans[m.planCursor].Slug
-		}
-		if m.planIssuesLoadedFor != currentSlug {
-			m.planIssuesLoading = true
-			return m, loadPlanIssues(m.store, currentSlug, m.cfg)
-		}
-	}
-
 	return m, nil
+}
+
+// currentPlanSlug is the plan the cursor is on, empty when there is none.
+func (m Model) currentPlanSlug() string {
+	if m.planCursor >= len(m.plans) {
+		return ""
+	}
+	return m.plans[m.planCursor].Slug
 }
 
 func (m Model) tabPlansView() string {
@@ -176,38 +182,37 @@ func (m Model) planListTwoPaneView() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "│", rightPane)
 }
 
-func (m Model) planListPane(w, h int) string {
-	header := lipgloss.NewStyle().Bold(true).Width(w).Render("Plans")
-
-	maxItems := h - 1
-	if maxItems < 1 {
-		maxItems = 1
+// listPane renders the left pane of a two-pane view: a bold header above a
+// window of labels, scrolled to keep the cursor in view and padded out to h.
+//
+// Every row is exactly one line, which is what makes the arithmetic here
+// honest. The row styles pad on the left, so a label is truncated to what is
+// left of the pane after that padding; truncating to the full width pushes
+// the row past w and wraps it onto a second line, and then the pane holds
+// fewer rows than this thinks it does and the cursor can sit below its floor.
+func listPane(header string, labels []string, cursor, w, h int) string {
+	rows := h - 1 // the header takes one
+	if rows < 1 {
+		rows = 1
 	}
 
 	start := 0
-	if m.planCursor >= maxItems {
-		start = m.planCursor - maxItems + 1
+	if cursor >= rows {
+		start = cursor - rows + 1
 	}
-	end := start + maxItems
-	if end > len(m.plans) {
-		end = len(m.plans)
+	end := start + rows
+	if end > len(labels) {
+		end = len(labels)
 	}
 
-	var lines []string
-	lines = append(lines, header)
+	lines := []string{lipgloss.NewStyle().Bold(true).Width(w).Render(header)}
 	for i := start; i < end; i++ {
-		cursor := "  "
-		label := m.plans[i].Slug
-		var line string
-		if i == m.planCursor {
-			line = selectedItemStyle.Width(w).Render(truncate(cursor+"> "+label, w))
-		} else {
-			line = itemStyle.Width(w).Render(truncate(cursor+"  "+label, w))
+		style, marker := itemStyle, "    "
+		if i == cursor {
+			style, marker = selectedItemStyle, "  > "
 		}
-		lines = append(lines, line)
+		lines = append(lines, style.Width(w).Render(truncate(marker+labels[i], w-style.GetPaddingLeft())))
 	}
-
-	// Pad remaining height
 	for len(lines) < h {
 		lines = append(lines, strings.Repeat(" ", w))
 	}
@@ -215,6 +220,14 @@ func (m Model) planListPane(w, h int) string {
 	return lipgloss.NewStyle().Width(w).Height(h).Render(
 		lipgloss.JoinVertical(lipgloss.Left, lines...),
 	)
+}
+
+func (m Model) planListPane(w, h int) string {
+	labels := make([]string, len(m.plans))
+	for i, plan := range m.plans {
+		labels[i] = plan.Slug
+	}
+	return listPane("Plans", labels, m.planCursor, w, h)
 }
 
 func (m Model) planMetadataPane(w, h int) string {
@@ -262,44 +275,11 @@ func (m Model) planDetailTwoPaneView() string {
 }
 
 func (m Model) issueListPane(w, h int) string {
-	header := lipgloss.NewStyle().Bold(true).Width(w).Render("Issues")
-
-	maxItems := h - 1
-	if maxItems < 1 {
-		maxItems = 1
+	labels := make([]string, len(m.planIssues))
+	for i, issue := range m.planIssues {
+		labels[i] = fmt.Sprintf("#%d %s", issue.Number, issue.Title)
 	}
-
-	start := 0
-	if m.issueCursor >= maxItems {
-		start = m.issueCursor - maxItems + 1
-	}
-	end := start + maxItems
-	if end > len(m.planIssues) {
-		end = len(m.planIssues)
-	}
-
-	var lines []string
-	lines = append(lines, header)
-	for i := start; i < end; i++ {
-		cursor := "  "
-		issue := m.planIssues[i]
-		label := fmt.Sprintf("#%d %s", issue.Number, issue.Title)
-		var line string
-		if i == m.issueCursor {
-			line = selectedItemStyle.Width(w).Render(truncate(cursor+"> "+label, w))
-		} else {
-			line = itemStyle.Width(w).Render(truncate(cursor+"  "+label, w))
-		}
-		lines = append(lines, line)
-	}
-
-	for len(lines) < h {
-		lines = append(lines, strings.Repeat(" ", w))
-	}
-
-	return lipgloss.NewStyle().Width(w).Height(h).Render(
-		lipgloss.JoinVertical(lipgloss.Left, lines...),
-	)
+	return listPane("Issues", labels, m.issueCursor, w, h)
 }
 
 func (m Model) issuePreviewPane(w, h int) string {
