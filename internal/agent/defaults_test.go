@@ -155,21 +155,35 @@ func TestPlannerExampleDocumentApplies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the planner's example document does not apply: %v", err)
 	}
-	if len(result.Created) != 4 {
-		t.Errorf("created %v, want the four issues in the example", result.Created)
+	if len(result.Created) != 3 {
+		t.Errorf("created %v, want the three issues in the example", result.Created)
 	}
 	if len(result.Warnings) != 0 {
 		t.Errorf("the example applies with warnings: %v", result.Warnings)
 	}
 
-	// The reviewer waits on the tasks, so only the feature and the first
-	// task can start — which is what the example is demonstrating.
+	// What the feature is belongs on the plan. An issue for it would launch
+	// nothing and never close.
+	if doc.Plan.Body == "" || len(doc.Plan.Acceptance) == 0 {
+		t.Error("the example plan carries no goal or criteria of its own")
+	}
+	for _, item := range doc.Issues {
+		if item.Type == "feature" {
+			t.Errorf("the example still creates a container issue %q", item.ID)
+		}
+		if item.Parent != "" {
+			t.Errorf("%q sets a parent; belonging to a plan is not what parent is for", item.ID)
+		}
+	}
+
+	// Only the first task can start: the second waits on it, and the
+	// reviewer waits on both.
 	ready, err := store.Ready(issues.Filter{}, issues.StatusOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ready) != 2 {
-		t.Errorf("%d issues are ready, want the feature and the unblocked task", len(ready))
+	if len(ready) != 1 {
+		t.Errorf("%d issues are ready, want only the unblocked task", len(ready))
 	}
 }
 
