@@ -501,3 +501,131 @@ func TestAHandEditedPlanFileWins(t *testing.T) {
 		t.Errorf("plan = %+v, want the file's content", plan)
 	}
 }
+
+// reviewNumber is the review issue in a plan, or 0 if there is none.
+func reviewNumber(t *testing.T, s *Store) int64 {
+	t.Helper()
+	list, err := s.List(Filter{Plan: "orders"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, issue := range list {
+		if issue.LocalID == ReviewLocalID {
+			return issue.Number
+		}
+	}
+	return 0
+}
+
+func TestApplyGatesANewPlanBehindAReview(t *testing.T) {
+	store := open(t)
+	if _, err := store.Apply(doc(), ApplyOptions{Review: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	review := reviewNumber(t, store)
+	if review == 0 {
+		t.Fatal("no review issue was added")
+	}
+
+	statuses, err := store.Statuses(Filter{Plan: "orders"}, StatusOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range statuses {
+		if s.Number == review {
+			if !s.Ready {
+				t.Errorf("the review is not ready; nothing could start it: %+v", s)
+			}
+			if s.Type != ReviewType {
+				t.Errorf("review type = %q, want %q", s.Type, ReviewType)
+			}
+			continue
+		}
+		if s.Ready {
+			t.Errorf("#%d (%s) is ready before the review closed", s.Number, s.Title)
+		}
+	}
+
+	// Roots only. The aggregate already waits on the schema, so an edge from
+	// the review to it would be redundant.
+	agg, err := store.Issue(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(agg.BlockedBy); got != 1 {
+		t.Errorf("#2 has %d blockers (%v), want just the schema", got, agg.BlockedBy)
+	}
+}
+
+func TestClosingTheReviewReleasesThePlan(t *testing.T) {
+	store := open(t)
+	if _, err := store.Apply(doc(), ApplyOptions{Review: true}); err != nil {
+		t.Fatal(err)
+	}
+	review := reviewNumber(t, store)
+
+	if _, _, err := store.CloseIssue(review, "looks fine"); err != nil {
+		t.Fatal(err)
+	}
+
+	ready, err := store.Ready(Filter{Plan: "orders"}, StatusOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ready) == 0 {
+		t.Fatal("closing the review released nothing")
+	}
+	for _, s := range ready {
+		if s.Number == review {
+			t.Error("the closed review is still listed as ready")
+		}
+	}
+}
+
+func TestApplyAddsNoReviewWhenItIsOff(t *testing.T) {
+	store := open(t)
+	if _, err := store.Apply(doc(), ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if n := reviewNumber(t, store); n != 0 {
+		t.Errorf("a review issue (#%d) was added with Review off", n)
+	}
+}
+
+// A plan already underway must not gain a gate: it would block issues someone
+// is working, and the plan has already been reviewed.
+func TestReapplyDoesNotAddASecondReview(t *testing.T) {
+	store := open(t)
+	if _, err := store.Apply(doc(), ApplyOptions{Review: true}); err != nil {
+		t.Fatal(err)
+	}
+	first := reviewNumber(t, store)
+
+	amended := doc()
+	amended.Issues = append(amended.Issues, DocIssue{
+		ID: "docs", Type: "task", Title: "Write the docs",
+	})
+	result, err := store.Apply(amended, ApplyOptions{Review: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Created) != 1 {
+		t.Errorf("created %v, want only the new task", result.Created)
+	}
+	if got := reviewNumber(t, store); got != first {
+		t.Errorf("review is now #%d, was #%d", got, first)
+	}
+}
+
+// The gate goes on a plan that has none of its issues yet, even when the plan
+// row itself already exists.
+func TestApplyToAnEmptyExistingPlanStillGates(t *testing.T) {
+	store := planned(t)
+	if _, err := store.Apply(doc(), ApplyOptions{Review: true}); err != nil {
+		t.Fatal(err)
+	}
+	if reviewNumber(t, store) == 0 {
+		t.Error("an existing but empty plan got no review")
+	}
+}

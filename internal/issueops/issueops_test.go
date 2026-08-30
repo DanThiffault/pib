@@ -25,7 +25,10 @@ func handler(t *testing.T) Handler {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, config.FileName)
-	body := "[types]\nfeature = \"\"\ntask = \"worker\"\nresearch = \"researcher\"\n"
+	// Review off: these tests are about the operations, not the review gate,
+	// and an extra issue blocking every root would rewrite every expectation.
+	body := "[types]\nfeature = \"\"\ntask = \"worker\"\nresearch = \"researcher\"\n" +
+		"[plan]\nreview = false\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

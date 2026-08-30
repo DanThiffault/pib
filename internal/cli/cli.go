@@ -173,10 +173,10 @@ func (a App) planView(args []string) error {
 	return a.renderPlanDetail(resp, *asJSON)
 }
 
-// planReview turns a reviewer loose on the plan itself, before any of it is
-// worked. It is the counterpart to the recheck pib runs on its own when an
-// issue closes: this one runs once, by hand, while changing an issue is still
-// free.
+// planReview turns a reviewer loose on the plan itself. Applying a new plan
+// already adds a review issue that gates it, so this is the way to run another
+// one: on a plan that predates the gate, or again after acting on what the
+// first review found.
 func (a App) planReview(args []string) error {
 	fs, asJSON := a.flags("plan review")
 	positional, err := parse(fs, args, 1, "<slug>")

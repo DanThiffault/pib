@@ -238,6 +238,11 @@ Then apply it:
 pib plan apply /tmp/pib-plan-<slug>.json
 ```
 
+pib adds one issue you did not write: a review of the plan itself, which every
+issue with no other blocker waits on. Do not write your own — it appears on a plan
+that had no issues before, and a second one would sit there blocking nothing. Tell
+the user their plan starts with a review, and that closing it releases the rest.
+
 Notes on the document:
 
 - `id` is yours, and only exists inside the document. `blockedBy` takes one of those

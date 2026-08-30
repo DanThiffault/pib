@@ -96,15 +96,19 @@ func TestBriefingNamesTheTypeAndPlan(t *testing.T) {
 	}
 }
 
-// A closing reviewer is the end of the plan; there is nothing downstream of it.
-func TestReviewerCloseLaunchesNothing(t *testing.T) {
-	s := &spy{}
-	h := &Hook{Spawn: s, Issues: lister{open: 2}}
+// Neither review is worth reacting to: a code reviewer closing ends the plan,
+// and a plan reviewer closing means the plan has not started, so nothing has
+// been produced that could contradict what is queued.
+func TestReviewClosesLaunchNothing(t *testing.T) {
+	for _, kind := range []string{"reviewer", ReviewerName} {
+		s := &spy{}
+		h := &Hook{Spawn: s, Issues: lister{open: 2}}
 
-	h.IssueClosed(closed(7, "reviewer"))
-	time.Sleep(20 * time.Millisecond)
-	if got := s.count(); got != 0 {
-		t.Errorf("launched %d rechecks after a reviewer closed, want 0", got)
+		h.IssueClosed(closed(7, kind))
+		time.Sleep(20 * time.Millisecond)
+		if got := s.count(); got != 0 {
+			t.Errorf("launched %d rechecks after a %s closed, want 0", got, kind)
+		}
 	}
 }
 

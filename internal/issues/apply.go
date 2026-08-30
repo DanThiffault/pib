@@ -50,7 +50,40 @@ type ApplyOptions struct {
 	// is nil, unmapped types are not reported. The store deliberately does
 	// not read the configuration itself.
 	KnownType func(string) bool
+	// Review adds an issue that reviews the plan before any of it is worked.
+	// It applies only to a plan that has no issues yet: adding one to a plan
+	// already underway would block work that has started.
+	Review bool
 }
+
+const (
+	// ReviewLocalID is the review issue's id within its plan. It is fixed so
+	// a re-apply cannot add a second one — (plan_id, local_id) is unique.
+	ReviewLocalID = "plan-review"
+	// ReviewType is the type the review issue carries, and so which agent
+	// runs it.
+	ReviewType = "plan-reviewer"
+)
+
+const reviewBody = `## Review this plan before any of it is worked
+
+Check every issue in this plan against the code it will change, while changing
+an issue is still free.
+
+- Does each issue name files, functions and flags that exist and mean what it
+  assumes?
+- Can two issues with no dependency between them be launched at once, and would
+  they collide if they were?
+- Can the agent behind each issue's type actually do what the issue asks?
+- Is each acceptance criterion verifiable, and by what?
+- Do the ADR paths continue the sequence already in the repository?
+
+Comment findings on the issues they affect. Do not edit or close them: report,
+and let the user decide what the plan does about it.
+
+Closing this issue releases the rest of the plan, so leave it open while
+anything you found is unresolved.
+`
 
 // ApplyResult is what a document did.
 type ApplyResult struct {
@@ -145,6 +178,10 @@ func (s *Store) Apply(doc Document, opts ApplyOptions) (ApplyResult, error) {
 		return ApplyResult{}, err
 	}
 
+	// A plan with issues already is one someone may be working. Only a plan
+	// starting from nothing gets a review gate.
+	insertReview := opts.Review && len(local) == 0
+
 	for _, item := range doc.Issues {
 		if number, ok := local[item.ID]; ok {
 			changed, updateErr := s.updateFromDoc(tx, number, item)
@@ -218,6 +255,17 @@ func (s *Store) Apply(doc Document, opts ApplyOptions) (ApplyResult, error) {
 		}
 	}
 
+	if insertReview {
+		reviewFile, reviewErr := s.addReviewIssue(tx, result.Plan.ID, &result)
+		if reviewErr != nil {
+			err = reviewErr
+			return ApplyResult{}, err
+		}
+		if reviewFile != "" {
+			written = append(written, reviewFile)
+		}
+	}
+
 	graphWarnings, err := inspect(tx, result.Plan.ID, doc, opts)
 	if err != nil {
 		return ApplyResult{}, err
@@ -228,6 +276,67 @@ func (s *Store) Apply(doc Document, opts ApplyOptions) (ApplyResult, error) {
 		return ApplyResult{}, err
 	}
 	return result, nil
+}
+
+// addReviewIssue puts a review at the head of the plan and blocks every root
+// on it, so nothing starts until the plan has been read against the codebase.
+//
+// Roots only: an issue with a blocker is already waiting on something that is
+// itself waiting on the review, so an edge to it would be redundant.
+func (s *Store) addReviewIssue(tx *sql.Tx, planID int64, result *ApplyResult) (string, error) {
+	roots, err := rootIssues(tx, planID)
+	if err != nil {
+		return "", err
+	}
+
+	number, rel, err := s.insert(tx, planID, NewIssue{
+		LocalID: ReviewLocalID,
+		Type:    ReviewType,
+		Title:   "Review this plan before work starts",
+		Body:    reviewBody,
+		Acceptance: []string{
+			"Every issue checked against the code it will change",
+			"Issues that can run at once do not collide",
+			"Each type's agent can do what its issue asks",
+			"Findings commented on the issues they affect",
+		},
+	})
+	if err != nil {
+		return "", wrapRef(err)
+	}
+
+	for _, root := range roots {
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO deps (blocked, blocker) VALUES (?, ?)`, root, number); err != nil {
+			return s.abs(rel), err
+		}
+	}
+
+	result.Created = append(result.Created, number)
+	return s.abs(rel), nil
+}
+
+// rootIssues are the issues in a plan that nothing else is holding up.
+func rootIssues(tx *sql.Tx, planID int64) ([]int64, error) {
+	rows, err := tx.Query(`
+		SELECT number FROM issues i
+		WHERE i.plan_id = ?
+		  AND NOT EXISTS (SELECT 1 FROM deps d WHERE d.blocked = i.number)
+		ORDER BY number`, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var roots []int64
+	for rows.Next() {
+		var number int64
+		if err := rows.Scan(&number); err != nil {
+			return nil, err
+		}
+		roots = append(roots, number)
+	}
+	return roots, rows.Err()
 }
 
 // upsertPlan finds the plan by slug or creates it, and writes its markdown

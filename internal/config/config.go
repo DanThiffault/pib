@@ -25,33 +25,51 @@ const Template = `# Which agent implements an issue of each type.
 # still works — pib simply has no way to launch it, and says so.
 
 [types]
-feature   = ""
-task      = "worker"
-research  = "researcher"
-prototype = "prototype"
-reviewer  = "reviewer"
+feature       = ""
+task          = "worker"
+research      = "researcher"
+prototype     = "prototype"
+reviewer      = "reviewer"
+plan-reviewer = "plan-reviewer"
+
+# Applying a new plan adds an issue that reviews it against the codebase, and
+# blocks the rest of the plan until it closes. Set this to false to plan
+# without one.
+[plan]
+review = true
 `
 
 // defaults mirrors Template. Used when no global config exists yet.
 func defaults() map[string]string {
 	return map[string]string{
-		"feature":   "",
-		"task":      "worker",
-		"research":  "researcher",
-		"prototype": "prototype",
-		"reviewer":  "reviewer",
+		"feature":       "",
+		"task":          "worker",
+		"research":      "researcher",
+		"prototype":     "prototype",
+		"reviewer":      "reviewer",
+		"plan-reviewer": "plan-reviewer",
 	}
 }
 
 // Config is the merged configuration.
 type Config struct {
-	types map[string]string
+	types      map[string]string
+	planReview bool
 }
+
+// PlanReview reports whether applying a new plan should add an issue that
+// reviews it. On unless a config turns it off.
+func (c Config) PlanReview() bool { return c.planReview }
 
 // file is the on-disk shape. Unknown keys are ignored, so a config written by
 // a newer pib still loads.
 type file struct {
 	Types map[string]string `toml:"types"`
+	Plan  struct {
+		// Review is a pointer so an absent [plan] section leaves the
+		// default alone rather than reading as false.
+		Review *bool `toml:"review"`
+	} `toml:"plan"`
 }
 
 // Dir is pib's home directory, ~/.pib.
@@ -87,12 +105,18 @@ func Load(workspaceDir string) (Config, error) {
 // it exists, so a type deleted from it stays deleted; the built-in defaults
 // apply only while there is no global file at all.
 func LoadPaths(global, workspace string) (Config, error) {
-	types, found, err := read(global)
+	cfg := Config{planReview: true}
+
+	base, found, err := read(global)
 	if err != nil {
 		return Config{}, err
 	}
+	cfg.types = base.types()
 	if !found {
-		types = defaults()
+		cfg.types = defaults()
+	}
+	if base.Plan.Review != nil {
+		cfg.planReview = *base.Plan.Review
 	}
 
 	over, found, err := read(workspace)
@@ -100,38 +124,46 @@ func LoadPaths(global, workspace string) (Config, error) {
 		return Config{}, err
 	}
 	if found {
-		for name, agent := range over {
-			types[name] = agent
+		for name, agent := range over.types() {
+			cfg.types[name] = agent
 		}
 	}
+	if over.Plan.Review != nil {
+		cfg.planReview = *over.Plan.Review
+	}
 
-	return Config{types: types}, nil
+	return cfg, nil
 }
 
 // read parses one config file. A missing file is not an error.
-func read(path string) (map[string]string, bool, error) {
+func read(path string) (file, bool, error) {
 	if path == "" {
-		return nil, false, nil
+		return file{}, false, nil
 	}
 
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, false, nil
+			return file{}, false, nil
 		}
-		return nil, false, err
+		return file{}, false, err
 	}
 
 	var f file
 	if _, err := toml.Decode(string(body), &f); err != nil {
-		return nil, false, fmt.Errorf("%s: %w", path, err)
+		return file{}, false, fmt.Errorf("%s: %w", path, err)
 	}
+	return f, true, nil
+}
 
+// types copies the map so a caller can merge into it without touching what
+// was parsed.
+func (f file) types() map[string]string {
 	types := make(map[string]string, len(f.Types))
 	for name, agent := range f.Types {
 		types[name] = agent
 	}
-	return types, true, nil
+	return types
 }
 
 // Seed writes the default config to path if nothing is there. It reports

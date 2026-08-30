@@ -188,7 +188,10 @@ func (h Handler) planApply(req protocol.Request) (protocol.Response, error) {
 		return protocol.Response{}, err
 	}
 
-	result, err := h.Store.Apply(doc, issues.ApplyOptions{KnownType: h.Config.Known})
+	result, err := h.Store.Apply(doc, issues.ApplyOptions{
+		KnownType: h.Config.Known,
+		Review:    h.Config.PlanReview(),
+	})
 	if err != nil {
 		return protocol.Response{}, err
 	}

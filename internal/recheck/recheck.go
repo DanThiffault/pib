@@ -53,9 +53,10 @@ type Hook struct {
 // It returns immediately: reconciliation calls this with a client waiting on a
 // listing, and the agent it starts runs for minutes.
 func (h *Hook) IssueClosed(issue issues.Issue) {
-	// A closing reviewer means the plan is over. There is nothing downstream
-	// of it by construction, and running here would only ever find nothing.
-	if issue.Type == "reviewer" {
+	// Neither review closing is worth reacting to. A code reviewer closing
+	// means the plan is over; a plan reviewer closing means it has not begun,
+	// so nothing has been produced that could contradict what is queued.
+	if issue.Type == "reviewer" || issue.Type == ReviewerName {
 		return
 	}
 

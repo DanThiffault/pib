@@ -30,7 +30,7 @@ func TestLoadPathsFallsBackToDefaults(t *testing.T) {
 	if !ok || agent != "worker" {
 		t.Errorf("task maps to %q (ok=%v), want worker", agent, ok)
 	}
-	if got, want := cfg.Types(), []string{"feature", "prototype", "research", "reviewer", "task"}; !reflect.DeepEqual(got, want) {
+	if got, want := cfg.Types(), []string{"feature", "plan-reviewer", "prototype", "research", "reviewer", "task"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Types() = %v, want %v", got, want)
 	}
 }
@@ -213,5 +213,45 @@ func TestLoadUsesHomeAndWorkspace(t *testing.T) {
 	}
 	if agent, _ := cfg.AgentFor("task"); agent != "worker" {
 		t.Errorf("task maps to %q, want the seeded worker", agent)
+	}
+}
+
+func TestPlanReviewDefaultsOnAndCanBeTurnedOff(t *testing.T) {
+	dir := t.TempDir()
+
+	// Nothing configured at all.
+	cfg, err := LoadPaths(filepath.Join(dir, "missing.toml"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PlanReview() {
+		t.Error("PlanReview() = false with no config, want true")
+	}
+
+	// A config that says nothing about it leaves the default alone — the
+	// section is a pointer so absent does not read as false.
+	global := write(t, dir, "[types]\ntask = \"worker\"\n")
+	cfg, err = LoadPaths(global, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PlanReview() {
+		t.Error("PlanReview() = false for a config with no [plan] section, want true")
+	}
+
+	// The workspace can turn it off without restating the types.
+	workspace := filepath.Join(dir, "workspace.toml")
+	if err := os.WriteFile(workspace, []byte("[plan]\nreview = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadPaths(global, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PlanReview() {
+		t.Error("PlanReview() = true after the workspace turned it off")
+	}
+	if agent, ok := cfg.AgentFor("task"); !ok || agent != "worker" {
+		t.Errorf("task maps to %q (ok=%v); the override should not have dropped types", agent, ok)
 	}
 }
