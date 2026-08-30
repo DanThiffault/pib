@@ -12,57 +12,22 @@ import (
 	"pib/internal/config"
 	"pib/internal/issues"
 	"pib/internal/server"
+	"pib/internal/ui/theme"
 	"pib/internal/workspace"
 )
 
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#7D56F4")).
-			MarginLeft(2)
-
-	itemStyle = lipgloss.NewStyle().
-			PaddingLeft(4)
-
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#666666")).
-			MarginLeft(2)
-
-	promptStyle = lipgloss.NewStyle().
-			Bold(true).
-			MarginLeft(2)
-
-	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#D75F5F")).
-			MarginLeft(2)
-
-	noticeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#5FAF5F")).
-			MarginLeft(2)
-
-	loadingStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#5FAF5F")).
-			MarginLeft(2)
-
-	activeTabStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Background(lipgloss.Color("#7D56F4")).
-			Padding(0, 2)
-
-	inactiveTabStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#666666")).
-				Padding(0, 2)
-
-	tabBarStyle = lipgloss.NewStyle().
-			MarginLeft(2).
-			MarginBottom(1)
-
-	selectedItemStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("#7D56F4")).
-				Foreground(lipgloss.Color("#FFFFFF")).
-				PaddingLeft(4)
+	titleStyle        = theme.Default.Title
+	itemStyle         = theme.Default.Item
+	helpStyle         = theme.Default.Help
+	promptStyle       = theme.Default.Prompt
+	errorStyle        = theme.Default.Error
+	noticeStyle       = theme.Default.Notice
+	loadingStyle      = theme.Default.Loading
+	activeTabStyle    = theme.Default.TabActive
+	inactiveTabStyle  = theme.Default.TabInactive
+	tabBarStyle       = theme.Default.TabBar
+	selectedItemStyle = theme.Default.Selected
 )
 
 var (
