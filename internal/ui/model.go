@@ -186,7 +186,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	if m.phase != phasePrompt {
-		return m.startupView()
+		return m.ground(m.startupView())
 	}
 
 	var b strings.Builder
@@ -197,7 +197,20 @@ func (m Model) View() string {
 	case tabPlans:
 		b.WriteString(m.tabPlansView())
 	}
-	return b.String()
+	return m.ground(b.String())
+}
+
+// ground paints the theme's background behind the whole view.
+//
+// Every foreground colour in the palette was picked against that background,
+// so leaving it unpainted renders them onto whatever the terminal happens to
+// use — and the dim greys, chosen against near-black, are close to invisible
+// on a light one. Width fills each line so the ground is not ragged.
+func (m Model) ground(view string) string {
+	if m.width == 0 {
+		return view
+	}
+	return theme.Default.Base.Width(m.width).Render(view)
 }
 
 // switchTab moves to the next tab. The prompt gives up focus on the way out
