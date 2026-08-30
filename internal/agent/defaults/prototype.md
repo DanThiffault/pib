@@ -52,15 +52,35 @@ pib issue view "$PIB_ISSUE"
 Then carry on from where the feedback lands: another spike, a revised comparison, or
 recording the decision.
 
-### 2. Build Quick Spikes
+### 2. Build One Runnable Comparison
 
-For each approach, build the minimal running version:
-- Keep it in a temporary directory or branch (label it `prototype/<number>-<slug>`)
-- Don't worry about tests, error handling, or polish
-- Focus on the interaction or visual difference that matters for the decision
+Build **one program** that shows every option and switches between them with a keypress.
+Not one program per option.
 
-Keep each spike in its own file or module, named for the option it demonstrates, so the
-two can be run side by side and thrown away together.
+That is partly so the comparison can actually be made — someone who has to quit and
+restart to see the next option is comparing memories, not options. But it is mostly
+about honesty. Separate programs drift: they end up with different sample data,
+different spacing, different amounts of care, and then the comparison measures the
+drift instead of the thing being decided. One program with the options swapped behind a
+key holds everything else identical, so the only difference on screen is the one the
+user is choosing between.
+
+- Put what varies behind one small type — a palette, a layout function, a struct of
+  styles — and write everything around it once. If an option needs more than that type
+  swapped, that is worth saying on the issue: it means the options differ more deeply
+  than the comparison suggests.
+- Bind a key to switch: `1`…`n` to jump straight to one, or `tab` to cycle.
+- Put the name of the current option on screen, next to the keys that change it. A
+  screenshot should say what it is a screenshot of.
+- Keep it in `prototype/<issue>-<slug>/`, with its own dependency manifest if the
+  language has one, so it cannot disturb the real build. A formatter or linter that
+  runs over the whole repository will still pick it up, which is one more reason it
+  comes out as soon as the chosen option is implemented.
+- No tests, no error handling, no polish. It is going in the bin.
+
+If two options genuinely cannot share a process — different frameworks, a conflicting
+global — say so on the issue and give the exact command for each. That is the exception
+you explain, not the shape to reach for.
 
 ### 3. Document Findings on the Issue
 
@@ -72,12 +92,14 @@ pib issue comment "$PIB_ISSUE" --body "## Prototype Findings
 ### Option A: Modal Dialog
 - **Pros:** Familiar pattern, easy to implement, accessible
 - **Cons:** Breaks flow on mobile, needs focus trap
-- **Demo:** [screenshot or link to running version]
 
 ### Option B: Inline Expand
 - **Pros:** Maintains context, smooth on mobile
 - **Cons:** More complex state management, can feel cramped
-- **Demo:** [screenshot or link to running version]
+
+### See for yourself
+    cd prototype/<issue>-<slug> && <run command>
+Press 1 and 2 to switch; the current option is named in the header.
 
 ### Recommendation
 Option B for mobile-first flow. Option A acceptable as fallback for desktop.
@@ -90,8 +112,12 @@ Awaiting user feedback before finalizing."
 Put the question to whoever asked for the prototype, with `pib_ask`:
 
 ```
-pib_ask(question: "Findings are on issue #<number>. Which direction — A, B, or something else?")
+pib_ask(question: "Findings are on issue #<number>. Run it with `cd prototype/<issue>-<slug> && <command>`, then 1/2 to switch. Which direction — A, B, or something else?")
 ```
+
+Put the run command in the question itself. You are asking someone to choose between
+things they have not seen, and they will not go hunting through the issue for how to
+look — an unanswerable question comes back as a guess.
 
 That ends your session and hands the question up; they answer and resume you, and their
 answer is waiting for you when you come back. **Do not proceed without it.**

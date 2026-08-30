@@ -138,6 +138,31 @@ func TestNoAgentClosesATaskIssue(t *testing.T) {
 	}
 }
 
+// A comparison the reader has to quit and restart to make is a comparison of
+// memories. Worse, separate programs drift apart in ways unrelated to what is
+// being decided, so the comparison measures the drift.
+func TestPrototypeShipsOneSwitchableComparison(t *testing.T) {
+	body, _ := defaultAgents.ReadFile(defaultsDir + "/prototype.md")
+	text := string(body)
+
+	for _, want := range []string{"one program", "switch", "prototype/<issue>-<slug>"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("prototype.md does not mention %q", want)
+		}
+	}
+	if strings.Contains(text, "its own file or module") {
+		t.Error("prototype.md still asks for one spike per file, which is what produced separate binaries")
+	}
+	// It asks the user to choose, so the question has to say how to look.
+	ask := strings.Index(text, "pib_ask(question:")
+	if ask < 0 {
+		t.Fatal("prototype.md no longer asks the user to choose")
+	}
+	if !strings.Contains(text[ask:ask+400], "prototype/") {
+		t.Error("the pib_ask question does not tell the user how to run the prototype")
+	}
+}
+
 // The plan agents advise; they never change the plan themselves. plan-recheck
 // especially: pib runs it when an issue closes, so a recheck that closed one
 // would run itself again.
