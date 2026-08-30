@@ -28,6 +28,7 @@ var (
 	inactiveTabStyle  = theme.Default.TabInactive
 	tabBarStyle       = theme.Default.TabBar
 	selectedItemStyle = theme.Default.Selected
+	dividerStyle      = lipgloss.NewStyle().Foreground(theme.DefaultPalette.Border)
 )
 
 var (

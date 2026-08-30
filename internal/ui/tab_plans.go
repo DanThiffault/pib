@@ -11,6 +11,7 @@ import (
 
 	"pib/internal/config"
 	"pib/internal/issues"
+	"pib/internal/ui/theme"
 )
 
 type plansLoadedMsg struct {
@@ -186,11 +187,12 @@ func (m Model) planListTwoPaneView() string {
 	leftPane := m.planListPane(leftW, h)
 	rightPane := m.planMetadataPane(rightW, h)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "│", rightPane)
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, dividerStyle.Render("│"), rightPane)
 }
 
-// listPane renders the left pane of a two-pane view: a bold header above a
+// listPane renders the left pane of a two-pane view: a themed header above a
 // window of labels, scrolled to keep the cursor in view and padded out to h.
+// Scroll indicators appear when the list extends beyond the visible window.
 //
 // Every row is exactly one line, which is what makes the arithmetic here
 // honest. The row styles pad on the left, so a label is truncated to what is
@@ -205,21 +207,51 @@ func listPane(header string, labels []string, cursor, w, h int) string {
 		h = 1
 	}
 
-	rows := h - 1 // the header takes one
-	if rows < 1 {
-		rows = 1
+	// Determine how many rows are available for items.
+	// The header takes one line; scroll indicators take one line each.
+	maxItems := h - 1
+	if maxItems < 1 {
+		maxItems = 1
 	}
 
 	start := 0
-	if cursor >= rows {
-		start = cursor - rows + 1
+	if cursor >= maxItems {
+		start = cursor - maxItems + 1
 	}
-	end := start + rows
+	end := start + maxItems
 	if end > len(labels) {
 		end = len(labels)
 	}
 
-	lines := []string{lipgloss.NewStyle().Bold(true).Width(w).Render(header)}
+	// If the list is scrollable, reserve space for indicators and recompute.
+	if start > 0 || end < len(labels) {
+		indicatorCount := 0
+		if start > 0 {
+			indicatorCount++
+		}
+		if end < len(labels) {
+			indicatorCount++
+		}
+		proposed := h - 1 - indicatorCount
+		if proposed >= 1 {
+			maxItems = proposed
+			start = 0
+			if cursor >= maxItems {
+				start = cursor - maxItems + 1
+			}
+			end = start + maxItems
+			if end > len(labels) {
+				end = len(labels)
+			}
+		}
+	}
+
+	lines := []string{theme.Default.PaneHeader.Width(w).Render(header)}
+
+	if start > 0 {
+		lines = append(lines, theme.Default.Dim.Width(w).Render("▲"))
+	}
+
 	for i := start; i < end; i++ {
 		style, marker := itemStyle, "    "
 		if i == cursor {
@@ -231,6 +263,11 @@ func listPane(header string, labels []string, cursor, w, h int) string {
 		}
 		lines = append(lines, style.Width(w).Render(truncate(marker+labels[i], avail)))
 	}
+
+	if end < len(labels) {
+		lines = append(lines, theme.Default.Dim.Width(w).Render("▼"))
+	}
+
 	for len(lines) < h {
 		lines = append(lines, strings.Repeat(" ", w))
 	}
@@ -292,7 +329,7 @@ func (m Model) planDetailTwoPaneView() string {
 	leftPane := m.issueListPane(leftW, h)
 	rightPane := m.issuePreviewPane(rightW, h)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "│", rightPane)
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, dividerStyle.Render("│"), rightPane)
 }
 
 func (m Model) issueListPane(w, h int) string {
