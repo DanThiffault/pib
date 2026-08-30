@@ -164,7 +164,15 @@ before you apply is better than reading about them afterwards.
 After user confirmation, write the whole plan as one document and hand it to pib.
 
 There is no create-then-wire dance: issues refer to each other by ids local to the
-document, and pib allocates the real numbers. Write `plan.json`. What the feature *is* goes on the plan; the issues are the work:
+document, and pib allocates the real numbers.
+
+Write it to `/tmp/pib-plan-<slug>.json`, using the slug you chose for the plan. It is
+input to the command below and nothing after it — pib keeps the plan itself — so it
+does not belong in the repository, where it would show up in the user's next commit.
+The slug keeps it yours: two planners running at once do not collide, and re-applying
+an amended plan overwrites your own file rather than someone else's.
+
+What the feature *is* goes on the plan; the issues are the work:
 
 ```json
 {
@@ -204,7 +212,7 @@ document, and pib allocates the real numbers. Write `plan.json`. What the featur
 Then apply it:
 
 ```bash
-pib plan apply plan.json
+pib plan apply /tmp/pib-plan-<slug>.json
 ```
 
 Notes on the document:
