@@ -144,50 +144,29 @@ func (m Model) updateTabPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// piArt is the Plan tab's boss: a flat bar over two legs, the way the letter
+// is drawn.
 const piArt = `
-       ███████
-     ██       ██
-    █           █
-   ███████████████
-   █             █
-   █             █
-  █               █
-  █               █
+ ██████████████████
+███████████████████
+    ███       ███
+    ███       ███
+    ███       ███
+   ███        ███
+  ████        ████
 `
 
+// piMinHeight is the terminal height the art needs. It is eight lines, and
+// the prompt block beneath it wants roughly twenty more; below that the art
+// wins space the prompt needs.
+const piMinHeight = 30
+
 func (m Model) tabPlanView() string {
-	if m.isNarrow() {
-		return m.tabPlanViewNarrow()
-	}
-	return m.tabPlanViewWide()
-}
-
-func (m Model) tabPlanViewNarrow() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("pib") + "\n\n")
-	b.WriteString(itemStyle.Render(fmt.Sprintf("%s · %s", m.planner.Name, m.workspace.GitRoot)) + "\n")
-	if m.planner.Model != "" {
-		b.WriteString(itemStyle.Render(m.planner.Model) + "\n")
-	}
-	b.WriteString(helpStyle.Render(destination()) + "\n")
-	b.WriteString("\n")
-	b.WriteString(promptStyle.Render("What do you want to plan?") + "\n\n")
-	b.WriteString(m.input.View() + "\n")
-
-	if m.notice != "" {
-		b.WriteString("\n" + noticeStyle.Render(m.notice) + "\n")
-	}
-
-	b.WriteString("\n" + helpStyle.Render("enter plan • alt+enter newline • esc/ctrl+c quit"))
-
-	return b.String()
-}
-
-func (m Model) tabPlanViewWide() string {
-	var b strings.Builder
-
-	if m.height >= 30 {
+	// Wide enough for two panes elsewhere, and tall enough that the art does
+	// not crowd out the prompt.
+	if !m.isNarrow() && m.height >= piMinHeight {
 		b.WriteString(theme.Default.Primary.Render(piArt) + "\n\n")
 	}
 

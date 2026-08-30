@@ -35,6 +35,11 @@ var DefaultPalette = Palette{
 }
 
 // Styles holds pre-built lipgloss styles for the TUI.
+//
+// Several are not referenced yet. They are the vocabulary ADR-002 specifies,
+// and the issues that consume them — the themed panes, the dependency graph,
+// the action bar — come after this one. They are ahead of their callers rather
+// than left over from a previous design, so resist deleting them as dead code.
 type Styles struct {
 	Base        lipgloss.Style
 	Title       lipgloss.Style
