@@ -13,6 +13,7 @@ import (
 	"pib/internal/agent"
 	"pib/internal/runner"
 	"pib/internal/tmux"
+	"pib/internal/ui/theme"
 )
 
 var (
@@ -143,8 +144,52 @@ func (m Model) updateTabPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+const piArt = `
+       ███████
+     ██       ██
+    █           █
+   ███████████████
+   █             █
+   █             █
+  █               █
+  █               █
+`
+
 func (m Model) tabPlanView() string {
+	if m.isNarrow() {
+		return m.tabPlanViewNarrow()
+	}
+	return m.tabPlanViewWide()
+}
+
+func (m Model) tabPlanViewNarrow() string {
 	var b strings.Builder
+
+	b.WriteString(titleStyle.Render("pib") + "\n\n")
+	b.WriteString(itemStyle.Render(fmt.Sprintf("%s · %s", m.planner.Name, m.workspace.GitRoot)) + "\n")
+	if m.planner.Model != "" {
+		b.WriteString(itemStyle.Render(m.planner.Model) + "\n")
+	}
+	b.WriteString(helpStyle.Render(destination()) + "\n")
+	b.WriteString("\n")
+	b.WriteString(promptStyle.Render("What do you want to plan?") + "\n\n")
+	b.WriteString(m.input.View() + "\n")
+
+	if m.notice != "" {
+		b.WriteString("\n" + noticeStyle.Render(m.notice) + "\n")
+	}
+
+	b.WriteString("\n" + helpStyle.Render("enter plan • alt+enter newline • esc/ctrl+c quit"))
+
+	return b.String()
+}
+
+func (m Model) tabPlanViewWide() string {
+	var b strings.Builder
+
+	if m.height >= 30 {
+		b.WriteString(theme.Default.Primary.Render(piArt) + "\n\n")
+	}
 
 	b.WriteString(titleStyle.Render("pib") + "\n\n")
 	b.WriteString(itemStyle.Render(fmt.Sprintf("%s · %s", m.planner.Name, m.workspace.GitRoot)) + "\n")
