@@ -40,6 +40,11 @@ var (
 			Foreground(lipgloss.Color("#5FAF5F")).
 			MarginLeft(2)
 
+	loadingStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#5FAF5F")).
+			MarginLeft(2)
+
 	activeTabStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#FFFFFF")).
@@ -299,6 +304,9 @@ func (m Model) contentHeight() int {
 }
 
 func truncate(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
 	runes := []rune(s)
 	if len(runes) <= max {
 		return s

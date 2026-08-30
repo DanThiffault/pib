@@ -148,9 +148,13 @@ func (m Model) currentPlanSlug() string {
 	return m.plans[m.planCursor].Slug
 }
 
+func (m Model) isNarrow() bool {
+	return m.width < 80
+}
+
 func (m Model) tabPlansView() string {
 	if m.plansLoading {
-		return m.renderCentered(helpStyle.Render("Loading plans…"))
+		return m.renderCentered(loadingStyle.Render("◐ Loading plans…"))
 	}
 	if m.plansErr != nil {
 		return m.renderCentered(errorStyle.Render("Error loading plans: " + m.plansErr.Error()))
@@ -173,9 +177,12 @@ func (m Model) renderCentered(content string) string {
 }
 
 func (m Model) planListTwoPaneView() string {
-	leftW, rightW := paneWidths(m.width)
 	h := m.contentHeight()
+	if m.isNarrow() {
+		return m.planListPane(m.width, h)
+	}
 
+	leftW, rightW := paneWidths(m.width)
 	leftPane := m.planListPane(leftW, h)
 	rightPane := m.planMetadataPane(rightW, h)
 
@@ -191,6 +198,13 @@ func (m Model) planListTwoPaneView() string {
 // the row past w and wraps it onto a second line, and then the pane holds
 // fewer rows than this thinks it does and the cursor can sit below its floor.
 func listPane(header string, labels []string, cursor, w, h int) string {
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+
 	rows := h - 1 // the header takes one
 	if rows < 1 {
 		rows = 1
@@ -211,7 +225,11 @@ func listPane(header string, labels []string, cursor, w, h int) string {
 		if i == cursor {
 			style, marker = selectedItemStyle, "  > "
 		}
-		lines = append(lines, style.Width(w).Render(truncate(marker+labels[i], w-style.GetPaddingLeft())))
+		avail := w - style.GetPaddingLeft()
+		if avail < 1 {
+			avail = 1
+		}
+		lines = append(lines, style.Width(w).Render(truncate(marker+labels[i], avail)))
 	}
 	for len(lines) < h {
 		lines = append(lines, strings.Repeat(" ", w))
@@ -256,7 +274,7 @@ func (m Model) planMetadataPane(w, h int) string {
 
 func (m Model) planDetailTwoPaneView() string {
 	if m.planIssuesLoading {
-		return m.renderCentered(helpStyle.Render("Loading issues…"))
+		return m.renderCentered(loadingStyle.Render("◐ Loading issues…"))
 	}
 	if m.planIssuesErr != nil {
 		return m.renderCentered(errorStyle.Render("Error loading issues: " + m.planIssuesErr.Error()))
@@ -265,9 +283,12 @@ func (m Model) planDetailTwoPaneView() string {
 		return m.renderCentered(helpStyle.Render("No issues in this plan."))
 	}
 
-	leftW, rightW := paneWidths(m.width)
 	h := m.contentHeight()
+	if m.isNarrow() {
+		return m.issueListPane(m.width, h)
+	}
 
+	leftW, rightW := paneWidths(m.width)
 	leftPane := m.issueListPane(leftW, h)
 	rightPane := m.issuePreviewPane(rightW, h)
 
