@@ -21,6 +21,7 @@ import (
 	"pib/internal/issueops"
 	"pib/internal/issues"
 	"pib/internal/protocol"
+	"pib/internal/recheck"
 	"pib/internal/server"
 	"pib/internal/workspace"
 )
@@ -57,9 +58,10 @@ func (a App) Run() int {
 		return exitOK
 	case "plan":
 		return a.dispatch(rest, map[string]command{
-			"apply": a.planApply,
-			"list":  a.planList,
-			"view":  a.planView,
+			"apply":  a.planApply,
+			"list":   a.planList,
+			"view":   a.planView,
+			"review": a.planReview,
 		}, "plan")
 	case "issue":
 		return a.dispatch(rest, map[string]command{
@@ -169,6 +171,44 @@ func (a App) planView(args []string) error {
 		return err
 	}
 	return a.renderPlanDetail(resp, *asJSON)
+}
+
+// planReview turns a reviewer loose on the plan itself, before any of it is
+// worked. It is the counterpart to the recheck pib runs on its own when an
+// issue closes: this one runs once, by hand, while changing an issue is still
+// free.
+func (a App) planReview(args []string) error {
+	fs, asJSON := a.flags("plan review")
+	positional, err := parse(fs, args, 1, "<slug>")
+	if err != nil {
+		return err
+	}
+	slug := positional[0]
+
+	// Resolve first, so a typo in the slug fails here rather than inside an
+	// agent that has already opened a window.
+	if _, err := a.send(request(protocol.OpPlanView, issueops.PlanViewParams{Slug: slug})); err != nil {
+		return err
+	}
+
+	if !*asJSON {
+		fmt.Fprintf(a.Stderr, "Reviewing plan %s\n", slug)
+	}
+
+	resp, err := a.send(protocol.Request{
+		Op:    protocol.OpSpawn,
+		Agent: recheck.ReviewerName,
+		Name:  "review " + slug,
+		Task: fmt.Sprintf(
+			"Review the plan %q before any of it is worked. Read it with "+
+				"`pib plan view %s` and `pib issue list --plan %s`, then check every "+
+				"issue against the codebase it will change.",
+			slug, slug, slug),
+	})
+	if err != nil {
+		return err
+	}
+	return a.renderRun(resp, *asJSON)
 }
 
 // ── issue ──
@@ -783,6 +823,7 @@ already running in this repository.
   pib plan apply <file.json>     apply a plan document, creating its issues
   pib plan list                  every plan pib knows
   pib plan view <slug>           a plan and the issues in it
+  pib plan review <slug>         review the plan against the codebase before work starts
 
   pib issue create --plan <slug> --type <type> --title <title>
   pib issue start <number>       run the agent that implements it, and wait

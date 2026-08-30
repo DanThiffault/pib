@@ -27,6 +27,14 @@ const (
 	DBName = "pib.db"
 )
 
+// ClosedHook is notified after an issue closes, whichever path closed it: an
+// explicit close, or a pull request pib saw merge. It runs after the write, so
+// what it reads is what landed, and it must not block — reconciliation calls
+// it while a client is waiting on a listing.
+type ClosedHook interface {
+	IssueClosed(issue Issue)
+}
+
 // DataDir is the data directory for a workspace, normally <git root>/.pib/data.
 func DataDir(workspaceDir string) string {
 	return filepath.Join(workspaceDir, DataDirName)
@@ -36,6 +44,23 @@ func DataDir(workspaceDir string) string {
 type Store struct {
 	db  *sql.DB
 	dir string
+
+	// OnClosed is notified whenever an issue closes. Optional; set it after
+	// Open and before the store is shared.
+	OnClosed ClosedHook
+}
+
+// notifyClosed tells the hook an issue closed, re-reading it so the hook sees
+// the row as it landed rather than as it was before the write.
+func (s *Store) notifyClosed(number int64) {
+	if s.OnClosed == nil {
+		return
+	}
+	issue, err := s.Issue(number)
+	if err != nil {
+		return
+	}
+	s.OnClosed.IssueClosed(issue)
 }
 
 // Open prepares the data directory and opens the database, applying any

@@ -13,6 +13,7 @@ import (
 	"pib/internal/issueops"
 	"pib/internal/issues"
 	"pib/internal/protocol"
+	"pib/internal/recheck"
 	"pib/internal/server"
 )
 
@@ -664,5 +665,38 @@ func TestFollowupWaitsForALiveRun(t *testing.T) {
 	code, _, stderr := h.run(t, "issue", "followup", "2", "--message", "hurry up")
 	if code != 1 || !strings.Contains(stderr, "already working on #2") {
 		t.Errorf("followup during a live run gave %d: %s", code, stderr)
+	}
+}
+
+func TestPlanReviewSpawnsTheReviewer(t *testing.T) {
+	h := setup(t)
+	h.ok(t, "plan", "apply", h.planFile(t))
+
+	h.ok(t, "plan", "review", "orders")
+
+	if len(h.agents.requests) != 1 {
+		t.Fatalf("spawned %d agents, want 1", len(h.agents.requests))
+	}
+	req := h.agents.requests[0]
+	if req.Agent != recheck.ReviewerName {
+		t.Errorf("agent = %q, want %q", req.Agent, recheck.ReviewerName)
+	}
+	if req.Issue != 0 {
+		t.Errorf("issue = %d, want 0 — the reviewer reviews the plan, not an issue", req.Issue)
+	}
+	if !strings.Contains(req.Task, "orders") {
+		t.Errorf("task does not name the plan: %q", req.Task)
+	}
+}
+
+// A typo in the slug should fail before an agent opens a window.
+func TestPlanReviewOnAnUnknownPlanSpawnsNothing(t *testing.T) {
+	h := setup(t)
+
+	if code, _, _ := h.run(t, "plan", "review", "nope"); code == 0 {
+		t.Error("reviewing a plan that does not exist succeeded")
+	}
+	if len(h.agents.requests) != 0 {
+		t.Errorf("spawned %d agents for an unknown plan, want 0", len(h.agents.requests))
 	}
 }

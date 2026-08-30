@@ -13,6 +13,7 @@ import (
 	"pib/internal/issueops"
 	"pib/internal/issues"
 	"pib/internal/pr"
+	"pib/internal/recheck"
 	"pib/internal/runner"
 	"pib/internal/server"
 	"pib/internal/workspace"
@@ -123,14 +124,21 @@ func startServer(ws workspace.Status) tea.Cmd {
 			return serverStartedMsg{err: err}
 		}
 
+		agents := runner.Runner{
+			GitRoot:       ws.GitRoot,
+			StateDir:      ws.Dir,
+			ExtensionPath: extensionPath,
+			SocketPath:    server.Path(ws.Dir),
+			Record:        store,
+		}
+
+		// Whenever an issue closes — explicitly, or because pib saw its pull
+		// request merge — look at what is left of the plan before anyone works
+		// it as written.
+		store.OnClosed = &recheck.Hook{Spawn: agents, Issues: store}
+
 		srv, err := server.Listen(ws.Dir, server.Router{
-			Agents: runner.Runner{
-				GitRoot:       ws.GitRoot,
-				StateDir:      ws.Dir,
-				ExtensionPath: extensionPath,
-				SocketPath:    server.Path(ws.Dir),
-				Record:        store,
-			},
+			Agents: agents,
 			Issues: issueops.Handler{
 				Store:  store,
 				Config: cfg,

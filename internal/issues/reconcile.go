@@ -228,6 +228,7 @@ func (s *Store) settle(item pending, state string) (bool, error) {
 		WHERE number = ?`, stamp, stamp, stamp, item.number); err != nil {
 		return false, err
 	}
+	s.notifyClosed(item.number)
 	return true, nil
 }
 

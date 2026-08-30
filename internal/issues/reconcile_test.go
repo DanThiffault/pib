@@ -333,3 +333,45 @@ func TestClosedIssuesAreNotReconciled(t *testing.T) {
 		t.Errorf("gh was asked about a closed issue %d times", github.seen())
 	}
 }
+
+// recorder captures closes for the hook test below.
+type recorder struct{ closed []Issue }
+
+func (r *recorder) IssueClosed(issue Issue) { r.closed = append(r.closed, issue) }
+
+// The two close paths do not share code: one is CloseIssue, the other a raw
+// update inside reconciliation. A hook wired to only one would miss every
+// task, since a task closes on a merged pull request.
+func TestBothClosePathsNotifyTheHook(t *testing.T) {
+	store := planned(t)
+	merged := linked(t, store, "Build", "https://github.com/o/r/pull/1")
+
+	explicit, err := store.Create(NewIssue{Plan: "orders", Type: "research", Title: "Decide"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var seen recorder
+	store.OnClosed = &seen
+
+	if _, _, err := store.CloseIssue(explicit.Number, "done"); err != nil {
+		t.Fatal(err)
+	}
+	github := &fakeGitHub{states: map[string]string{"https://github.com/o/r/pull/1": "merged"}}
+	if _, err := store.Reconcile(context.Background(), Filter{}, ReconcileOptions{Lookup: github}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(seen.closed) != 2 {
+		t.Fatalf("hook saw %d closes, want one from each path: %+v", len(seen.closed), seen.closed)
+	}
+	for i, want := range []int64{explicit.Number, merged.Number} {
+		if seen.closed[i].Number != want {
+			t.Errorf("close %d was #%d, want #%d", i, seen.closed[i].Number, want)
+		}
+		if seen.closed[i].State != StateClosed {
+			t.Errorf("#%d reached the hook as %q, want it already closed",
+				seen.closed[i].Number, seen.closed[i].State)
+		}
+	}
+}

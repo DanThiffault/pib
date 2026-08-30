@@ -397,7 +397,11 @@ func (s *Store) CloseIssue(number int64, reason string) (Issue, []string, error)
 	}
 
 	issue, err = s.Issue(number)
-	return issue, warnings, err
+	if err != nil {
+		return Issue{}, nil, err
+	}
+	s.notifyClosed(number)
+	return issue, warnings, nil
 }
 
 // ReopenIssue puts a closed issue back in play.
