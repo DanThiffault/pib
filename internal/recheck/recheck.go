@@ -88,24 +88,29 @@ func (h *Hook) request(issue issues.Issue) protocol.Request {
 	if agent == "" {
 		agent = AgentName
 	}
+	// Deliberately not Issue: issue.Number. That column means "an agent
+	// working this issue", and `pib issue followup` resumes the newest run
+	// against one — so claiming the issue here would hand a followup meant
+	// for the agent that did the work to the recheck that watched it finish.
+	// The number reaches the agent through the briefing instead.
 	return protocol.Request{
 		Op:    protocol.OpSpawn,
 		Agent: agent,
 		Name:  fmt.Sprintf("recheck #%d", issue.Number),
 		Task:  Briefing(issue),
-		Issue: issue.Number,
 	}
 }
 
-// Briefing tells the agent which close it is reacting to. The type is in the
-// text because it decides what the agent looks for, and the number is also in
-// PIB_ISSUE because the request names the issue.
+// Briefing tells the agent which close it is reacting to. Both the number and
+// the type are in the text: the type decides what the agent looks for, and the
+// number is here rather than in PIB_ISSUE because the run does not claim the
+// issue.
 func Briefing(issue issues.Issue) string {
 	return fmt.Sprintf(
 		"Issue #%d just closed in plan %q. It was of type %q: %s\n\n"+
 			"Check whether what it produced contradicts any issue still open in that "+
-			"plan. Its number is in PIB_ISSUE. Most closes change nothing — say so and "+
-			"finish rather than looking for something to report.",
+			"plan. Most closes change nothing — say so and finish rather than looking "+
+			"for something to report.",
 		issue.Number, issue.Plan, issue.Type, issue.Title)
 }
 

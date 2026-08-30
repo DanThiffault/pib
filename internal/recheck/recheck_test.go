@@ -77,8 +77,14 @@ func TestLaunchesWhenWorkRemains(t *testing.T) {
 	if req.Agent != AgentName {
 		t.Errorf("agent = %q, want %q", req.Agent, AgentName)
 	}
-	if req.Issue != 4 {
-		t.Errorf("issue = %d, want 4 so PIB_ISSUE is set", req.Issue)
+	// runs.issue means "an agent working this issue", and `pib issue followup`
+	// resumes the newest run against one. A recheck claiming the issue would
+	// take over a followup meant for the agent that did the work.
+	if req.Issue != 0 {
+		t.Errorf("issue = %d, want 0 — a recheck watches an issue, it does not work it", req.Issue)
+	}
+	if !strings.Contains(req.Task, "#4") {
+		t.Errorf("the briefing does not name the closed issue: %q", req.Task)
 	}
 	if req.Op != protocol.OpSpawn {
 		t.Errorf("op = %q, want spawn", req.Op)
