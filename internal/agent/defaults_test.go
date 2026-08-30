@@ -138,6 +138,29 @@ func TestNoAgentClosesATaskIssue(t *testing.T) {
 	}
 }
 
+// A prototype exists because a choice has not been made. Closing it releases
+// everything waiting on that choice, so closing it is declaring one — which is
+// the user's to make, not the agent's.
+func TestPrototypeLeavesItsIssueOpen(t *testing.T) {
+	body, _ := defaultAgents.ReadFile(defaultsDir + "/prototype.md")
+	text := string(body)
+
+	if !strings.Contains(text, "must not close your issue") {
+		t.Error("the prototype agent is no longer told to leave its issue open")
+	}
+	// The old workflow ended in a close. Nothing should still instruct one.
+	if strings.Contains(text, `--reason "Prototype complete`) {
+		t.Error("the prototype agent still closes its own issue when it is done")
+	}
+	if strings.Contains(text, "then closes itself") {
+		t.Error("the description still says the prototype agent closes itself")
+	}
+	// It still has to hand the choice up, or nothing ever decides.
+	if !strings.Contains(text, "pib_ask") {
+		t.Error("the prototype agent no longer asks the user to choose")
+	}
+}
+
 // A comparison the reader has to quit and restart to make is a comparison of
 // memories. Worse, separate programs drift apart in ways unrelated to what is
 // being decided, so the comparison measures the drift.
