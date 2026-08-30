@@ -337,3 +337,72 @@ func moment(t time.Time) string {
 func table(w interface{ Write([]byte) (int, error) }) *tabwriter.Writer {
 	return tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 }
+
+// startResult is one agent launched by `pib plan start`.
+type startResult struct {
+	Issue   issues.Status `json:"issue"`
+	Status  string        `json:"status,omitempty"`
+	Text    string        `json:"text,omitempty"`
+	Session string        `json:"session,omitempty"`
+	Error   string        `json:"error,omitempty"`
+}
+
+func (a App) renderPlanStart(results []startResult, skipped []issues.Status, slug string, asJSON bool) error {
+	if asJSON {
+		body, err := json.Marshal(map[string]any{
+			"plan":    slug,
+			"started": results,
+			"skipped": skipped,
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Stdout, string(body))
+		return nil
+	}
+
+	if len(results) == 0 {
+		fmt.Fprintf(a.Stdout, "Nothing in %s can start right now.\n", slug)
+	}
+
+	for _, r := range results {
+		fmt.Fprintf(a.Stdout, "── %s #%d — %s\n", r.Issue.Agent, r.Issue.Number, r.Issue.Title)
+		switch {
+		case r.Error != "":
+			fmt.Fprintf(a.Stdout, "   did not start: %s\n", r.Error)
+		case r.Status == "done":
+			fmt.Fprintf(a.Stdout, "   %s\n", firstLine(r.Text))
+		case r.Status == "needs_input":
+			fmt.Fprintf(a.Stdout, "   stopped to ask: %s\n", firstLine(r.Text))
+			fmt.Fprintf(a.Stdout, "   answer it with: pib issue followup %d --message \"…\"\n", r.Issue.Number)
+		case r.Status == "error":
+			fmt.Fprintf(a.Stdout, "   failed: %s\n", firstLine(r.Text))
+		default:
+			fmt.Fprintf(a.Stdout, "   stopped without reporting a result: %s\n", firstLine(r.Text))
+		}
+	}
+
+	// Ready, but no agent is mapped to the type — so nothing could run them.
+	for _, issue := range skipped {
+		fmt.Fprintf(a.Stderr, "#%d (%s) was ready but %s\n", issue.Number, issue.Type, note(issue))
+	}
+
+	if len(results) > 0 {
+		fmt.Fprintf(a.Stderr,
+			"\nStarted what was ready when the command ran. Anything these unblocked is "+
+				"waiting for the next `pib plan start %s`.\n", slug)
+	}
+	return nil
+}
+
+// firstLine keeps a summary to one line, since several agents report at once.
+func firstLine(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "(no output)"
+	}
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = strings.TrimSpace(text[:i]) + " …"
+	}
+	return text
+}

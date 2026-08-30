@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"pib/internal/issueops"
@@ -62,6 +63,7 @@ func (a App) Run() int {
 			"list":   a.planList,
 			"view":   a.planView,
 			"review": a.planReview,
+			"start":  a.planStart,
 		}, "plan")
 	case "issue":
 		return a.dispatch(rest, map[string]command{
@@ -172,6 +174,78 @@ func (a App) planView(args []string) error {
 		return err
 	}
 	return a.renderPlanDetail(resp, *asJSON)
+}
+
+// planStart runs every issue in a plan that could start right now, at once.
+//
+// The set is taken once, before anything launches. An issue that becomes ready
+// because one of these closes is deliberately left alone: a command that kept
+// launching as work unblocked would run a whole plan from one keystroke, and
+// there would be no moment to look at what the last round produced. Run it
+// again when you want the next round.
+func (a App) planStart(args []string) error {
+	fs, asJSON := a.flags("plan start")
+	positional, err := parse(fs, args, 1, "<slug>")
+	if err != nil {
+		return err
+	}
+	slug := positional[0]
+
+	resp, err := a.send(request(protocol.OpIssueReady, issueops.ListParams{Plan: slug}))
+	if err != nil {
+		return err
+	}
+	var ready issueops.StatusList
+	if err := json.Unmarshal(resp.Payload, &ready); err != nil {
+		return err
+	}
+
+	var launch, unlaunchable []issues.Status
+	for _, issue := range ready.Issues {
+		if issue.Launchable {
+			launch = append(launch, issue)
+		} else {
+			unlaunchable = append(unlaunchable, issue)
+		}
+	}
+
+	if len(launch) == 0 {
+		return a.renderPlanStart(nil, unlaunchable, slug, *asJSON)
+	}
+
+	if !*asJSON {
+		fmt.Fprintf(a.Stderr, "Starting %s on plan %s:\n", plural(len(launch), "agent", "agents"), slug)
+		for _, issue := range launch {
+			fmt.Fprintf(a.Stderr, "  %s #%d — %s\n", issue.Agent, issue.Number, issue.Title)
+		}
+		fmt.Fprintln(a.Stderr)
+	}
+
+	// Every spawn holds its connection until its agent exits, so they have to
+	// go out together or this would be a sequential queue wearing a fan-out's
+	// clothes.
+	results := make([]startResult, len(launch))
+	var wg sync.WaitGroup
+	for i, issue := range launch {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := a.send(protocol.Request{
+				Op:    protocol.OpSpawn,
+				Agent: issue.Agent,
+				Name:  fmt.Sprintf("%s #%d", issue.Agent, issue.Number),
+				Task:  briefing(issue.Number, issue.Title),
+				Issue: issue.Number,
+			})
+			results[i] = startResult{Issue: issue, Status: resp.Status, Text: resp.Text, Session: resp.Session}
+			if err != nil {
+				results[i].Error = err.Error()
+			}
+		}()
+	}
+	wg.Wait()
+
+	return a.renderPlanStart(results, unlaunchable, slug, *asJSON)
 }
 
 // planReview turns a reviewer loose on the plan itself. Applying a new plan
@@ -845,6 +919,7 @@ already running in this repository.
   pib plan list                  every plan pib knows
   pib plan view <slug>           a plan and the issues in it
   pib plan review <slug>         review the plan against the codebase before work starts
+  pib plan start <slug>          run every issue in it that can start right now
 
   pib issue create --plan <slug> --type <type> --title <title>
   pib issue start <number>       run the agent that implements it, and wait

@@ -200,6 +200,22 @@ never adds a gate. Turn it off with `review = false` under `[plan]` in `config.t
 pib plan review <slug>       # run another one by hand, any time
 ```
 
+### Running a whole round
+
+```bash
+pib plan start <slug>
+```
+
+Every issue in the plan that could start right now starts, together, each with the
+agent its type maps to. The set is taken **once, before anything launches**: an issue
+that becomes ready because one of these closes is left for the next invocation. That is
+deliberate — a command that kept launching as work unblocked would run an entire plan
+from one keystroke, and there would be no moment to read what came back. Run it again
+for the next round.
+
+It waits for the round to finish and prints a line per agent. An issue that was ready
+but whose type maps to no agent is reported rather than skipped silently.
+
 Applying the same plan again is an **additive merge**: known ids update, new ids are
 created, and an issue you dropped from the document is left alone — never closed,
 never deleted. A closed issue stays closed. So a second planner pass is safe to run

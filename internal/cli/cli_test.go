@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"pib/internal/config"
@@ -30,6 +31,9 @@ type harness struct {
 // finished agent would, including writing the run row the real runner writes
 // — which is what a followup later looks for.
 type fakeAgents struct {
+	// mu guards requests: `pib plan start` spawns every ready issue at once,
+	// so several of these land in parallel.
+	mu       sync.Mutex
 	requests []protocol.Request
 	resp     protocol.Response
 	err      error
@@ -37,11 +41,15 @@ type fakeAgents struct {
 }
 
 func (f *fakeAgents) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
+	f.mu.Lock()
 	f.requests = append(f.requests, req)
+	f.mu.Unlock()
 	if f.err != nil {
 		return protocol.Response{}, f.err
 	}
 
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if id := f.resp.Session; id != "" && f.store != nil {
 		agent := req.Agent
 		if agent == "" {
@@ -488,10 +496,10 @@ func TestIssueStartRunsTheMappedAgent(t *testing.T) {
 		t.Errorf("stderr = %q, want it to say what it started", stderr)
 	}
 
-	if len(h.agents.requests) != 1 {
-		t.Fatalf("spawned %d agents", len(h.agents.requests))
+	if len(h.agents.seen()) != 1 {
+		t.Fatalf("spawned %d agents", len(h.agents.seen()))
 	}
-	req := h.agents.requests[0]
+	req := h.agents.seen()[0]
 	if req.Op != protocol.OpSpawn || req.Agent != "worker" {
 		t.Errorf("request = %+v, want a worker spawn", req)
 	}
@@ -512,7 +520,7 @@ func TestIssueStartRefusesWhatCannotRun(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "waiting on #2") {
 		t.Errorf("starting a blocked issue gave %d: %s", code, stderr)
 	}
-	if len(h.agents.requests) != 0 {
+	if len(h.agents.seen()) != 0 {
 		t.Error("a blocked issue was started anyway")
 	}
 
@@ -530,14 +538,14 @@ func TestIssueStartCanBeForcedAndOverridden(t *testing.T) {
 	if code, _, stderr := h.run(t, "issue", "start", "3", "--force"); code != 0 {
 		t.Fatalf("--force exit %d: %s", code, stderr)
 	}
-	if h.agents.requests[0].Issue != 3 {
-		t.Errorf("request = %+v", h.agents.requests[0])
+	if h.agents.seen()[0].Issue != 3 {
+		t.Errorf("request = %+v", h.agents.seen()[0])
 	}
 
 	if code, _, stderr := h.run(t, "issue", "start", "1", "--agent", "scout"); code != 0 {
 		t.Fatalf("--agent exit %d: %s", code, stderr)
 	}
-	if got := h.agents.requests[1].Agent; got != "scout" {
+	if got := h.agents.seen()[1].Agent; got != "scout" {
 		t.Errorf("agent = %q, want the override", got)
 	}
 }
@@ -583,10 +591,10 @@ func TestFollowupResumesTheLastRun(t *testing.T) {
 		t.Errorf("stderr = %q", stderr)
 	}
 
-	if len(h.agents.requests) != 2 {
-		t.Fatalf("%d requests, want the start and the followup", len(h.agents.requests))
+	if len(h.agents.seen()) != 2 {
+		t.Fatalf("%d requests, want the start and the followup", len(h.agents.seen()))
 	}
-	req := h.agents.requests[1]
+	req := h.agents.seen()[1]
 	if req.Op != protocol.OpResume {
 		t.Errorf("op = %q, want a resume", req.Op)
 	}
@@ -610,7 +618,7 @@ func TestFollowupTakesAMessageFile(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if got := h.agents.requests[1].Answer; got != "the review is on the PR" {
+	if got := h.agents.seen()[1].Answer; got != "the review is on the PR" {
 		t.Errorf("answer = %q", got)
 	}
 }
@@ -624,7 +632,7 @@ func TestFollowupRefusesWhatItCannotContinue(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "never been worked on") {
 		t.Errorf("followup on an unworked issue gave %d: %s", code, stderr)
 	}
-	if len(h.agents.requests) != 0 {
+	if len(h.agents.seen()) != 0 {
 		t.Error("it resumed something anyway")
 	}
 
@@ -646,11 +654,11 @@ func TestFollowupRefusesAClosedIssueUnlessForced(t *testing.T) {
 		t.Errorf("followup on a closed issue gave %d: %s", code, stderr)
 	}
 
-	before := len(h.agents.requests)
+	before := len(h.agents.seen())
 	if code, _, stderr := h.run(t, "issue", "followup", "2", "--message", "one more thing", "--force"); code != 0 {
 		t.Fatalf("--force exit %d: %s", code, stderr)
 	}
-	if len(h.agents.requests) != before+1 {
+	if len(h.agents.seen()) != before+1 {
 		t.Error("--force did not resume the session")
 	}
 }
@@ -677,10 +685,10 @@ func TestPlanReviewSpawnsTheReviewer(t *testing.T) {
 
 	h.ok(t, "plan", "review", "orders")
 
-	if len(h.agents.requests) != 1 {
-		t.Fatalf("spawned %d agents, want 1", len(h.agents.requests))
+	if len(h.agents.seen()) != 1 {
+		t.Fatalf("spawned %d agents, want 1", len(h.agents.seen()))
 	}
-	req := h.agents.requests[0]
+	req := h.agents.seen()[0]
 	if req.Agent != recheck.ReviewerName {
 		t.Errorf("agent = %q, want %q", req.Agent, recheck.ReviewerName)
 	}
@@ -699,8 +707,8 @@ func TestPlanReviewOnAnUnknownPlanSpawnsNothing(t *testing.T) {
 	if code, _, _ := h.run(t, "plan", "review", "nope"); code == 0 {
 		t.Error("reviewing a plan that does not exist succeeded")
 	}
-	if len(h.agents.requests) != 0 {
-		t.Errorf("spawned %d agents for an unknown plan, want 0", len(h.agents.requests))
+	if len(h.agents.seen()) != 0 {
+		t.Errorf("spawned %d agents for an unknown plan, want 0", len(h.agents.seen()))
 	}
 }
 
@@ -731,5 +739,84 @@ func TestIssueReopenOnAnUnknownIssueFails(t *testing.T) {
 	h := setup(t)
 	if code, _, _ := h.run(t, "issue", "reopen", "99"); code == 0 {
 		t.Error("reopening an issue that does not exist succeeded")
+	}
+}
+
+// planStart takes the ready set once. An issue unblocked by something it
+// started belongs to the next invocation, or one command would run a whole
+// plan with no moment to look at what came back.
+// seen copies the recorded spawns under the lock.
+func (f *fakeAgents) seen() []protocol.Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]protocol.Request(nil), f.requests...)
+}
+
+func TestPlanStartLaunchesOnlyWhatWasReady(t *testing.T) {
+	h := setup(t)
+	h.ok(t, "plan", "apply", h.planFile(t))
+
+	// #1 feature (no agent), #2 schema (ready), #3 aggregate (waits on #2).
+	out := h.ok(t, "plan", "start", "orders")
+
+	var started []int64
+	for _, req := range h.agents.seen() {
+		started = append(started, req.Issue)
+	}
+	if len(started) != 1 || started[0] != 2 {
+		t.Fatalf("started %v, want only #2 — the one issue that was ready", started)
+	}
+	if !strings.Contains(out, "#2") {
+		t.Errorf("output does not mention the issue it started: %q", out)
+	}
+
+	// #3 became ready as a result, and must not have been picked up.
+	for _, req := range h.agents.seen() {
+		if req.Issue == 3 {
+			t.Error("#3 was started; it only became ready because #2 did")
+		}
+	}
+}
+
+func TestPlanStartRunsReadyIssuesTogether(t *testing.T) {
+	h := setup(t)
+	h.ok(t, "plan", "apply", h.planFile(t))
+	// Free the aggregate so two issues are ready at once.
+	h.ok(t, "issue", "edit", "3", "--remove-blocked-by", "2")
+
+	h.ok(t, "plan", "start", "orders")
+
+	started := map[int64]bool{}
+	for _, req := range h.agents.seen() {
+		started[req.Issue] = true
+		if req.Agent != "worker" {
+			t.Errorf("#%d started with agent %q, want the mapped worker", req.Issue, req.Agent)
+		}
+		if !strings.Contains(req.Task, "pib issue view") {
+			t.Errorf("#%d got a briefing the CLI does not share with issue start: %q", req.Issue, req.Task)
+		}
+	}
+	if !started[2] || !started[3] {
+		t.Errorf("started %v, want both ready issues", started)
+	}
+}
+
+// The feature issue is ready but its type maps to no agent, so nothing can run
+// it. That is worth saying rather than silently skipping.
+func TestPlanStartReportsWhatItCannotRun(t *testing.T) {
+	h := setup(t)
+	h.ok(t, "plan", "apply", h.planFile(t))
+	h.ok(t, "issue", "close", "2")
+	h.ok(t, "issue", "close", "3")
+
+	code, _, stderr := h.run(t, "plan", "start", "orders")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if len(h.agents.seen()) != 0 {
+		t.Errorf("started %d agents, want none — only the unmappable feature was ready", len(h.agents.seen()))
+	}
+	if !strings.Contains(stderr, "#1") {
+		t.Errorf("stderr does not mention the issue it could not run: %q", stderr)
 	}
 }
