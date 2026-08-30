@@ -703,3 +703,33 @@ func TestPlanReviewOnAnUnknownPlanSpawnsNothing(t *testing.T) {
 		t.Errorf("spawned %d agents for an unknown plan, want 0", len(h.agents.requests))
 	}
 }
+
+func TestIssueReopenPutsAClosedIssueBackInPlay(t *testing.T) {
+	h := setup(t)
+	h.ok(t, "plan", "apply", h.planFile(t))
+	h.ok(t, "issue", "close", "2", "--reason", "done")
+
+	if out := h.ok(t, "issue", "view", "2"); !strings.Contains(out, "closed") {
+		t.Fatalf("setup failed, #2 is not closed: %q", out)
+	}
+
+	out := h.ok(t, "issue", "reopen", "2")
+	if strings.Contains(out, "closed") {
+		t.Errorf("reopen output still says closed: %q", out)
+	}
+	if !strings.Contains(out, "#2") {
+		t.Errorf("reopen output does not show the issue: %q", out)
+	}
+
+	// Whatever depended on it is blocked again.
+	if out := h.ok(t, "issue", "view", "3"); !strings.Contains(out, "waiting on #2") {
+		t.Errorf("#3 did not go back to waiting on #2: %q", out)
+	}
+}
+
+func TestIssueReopenOnAnUnknownIssueFails(t *testing.T) {
+	h := setup(t)
+	if code, _, _ := h.run(t, "issue", "reopen", "99"); code == 0 {
+		t.Error("reopening an issue that does not exist succeeded")
+	}
+}

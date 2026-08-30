@@ -75,6 +75,7 @@ func (a App) Run() int {
 			"comment":  a.issueComment,
 			"link-pr":  a.issueLinkPR,
 			"close":    a.issueClose,
+			"reopen":   a.issueReopen,
 			"reindex":  a.issueReindex,
 		}, "issue")
 	default:
@@ -597,6 +598,26 @@ func (a App) issueClose(args []string) error {
 	return a.renderClose(resp, *asJSON)
 }
 
+// issueReopen undoes a close. Whatever the issue produced is still on it, so a
+// clean retry usually means clearing that out too — this only moves the state.
+func (a App) issueReopen(args []string) error {
+	fs, asJSON := a.flags("issue reopen")
+	positional, err := parse(fs, args, 1, "<number>")
+	if err != nil {
+		return err
+	}
+	number, err := numberOf(positional[0])
+	if err != nil {
+		return err
+	}
+
+	resp, err := a.send(request(protocol.OpIssueReopen, issueops.ReopenParams{Number: number}))
+	if err != nil {
+		return err
+	}
+	return a.renderDetail(resp, *asJSON)
+}
+
 func (a App) issueReindex(args []string) error {
 	fs, asJSON := a.flags("issue reindex")
 	plan := fs.String("plan", "", "only this plan")
@@ -836,6 +857,7 @@ already running in this repository.
   pib issue comment <number> --body <text>
   pib issue link-pr <number> <url>
   pib issue close <number> [--reason <text>]
+  pib issue reopen <number>      put a closed issue back in play
   pib issue reindex [--plan <slug>]
 
 Every command takes --json to print the reply as json instead of text.

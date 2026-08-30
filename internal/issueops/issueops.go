@@ -87,6 +87,11 @@ type (
 		Reason string `json:"reason,omitempty"`
 	}
 
+	// ReopenParams puts a closed issue back in play.
+	ReopenParams struct {
+		Number int64 `json:"number"`
+	}
+
 	// PlanViewParams identifies a plan.
 	PlanViewParams struct {
 		Slug string `json:"slug"`
@@ -170,6 +175,8 @@ func (h Handler) Run(ctx context.Context, req protocol.Request) (protocol.Respon
 		return h.issueLinkPR(req)
 	case protocol.OpIssueClose:
 		return h.issueClose(req)
+	case protocol.OpIssueReopen:
+		return h.issueReopen(req)
 	case protocol.OpIssueReindex:
 		return h.issueReindex(req)
 
@@ -357,6 +364,20 @@ func (h Handler) issueClose(req protocol.Request) (protocol.Response, error) {
 		return protocol.Response{}, err
 	}
 	return reply(CloseResult{Issue: status, Warnings: warnings})
+}
+
+// issueReopen puts a closed issue back in play, so an agent can have another
+// attempt at work that was recorded as finished.
+func (h Handler) issueReopen(req protocol.Request) (protocol.Response, error) {
+	params, err := decode[ReopenParams](req)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+
+	if _, err := h.Store.ReopenIssue(params.Number); err != nil {
+		return protocol.Response{}, err
+	}
+	return h.detail(params.Number)
 }
 
 func (h Handler) issueReindex(req protocol.Request) (protocol.Response, error) {

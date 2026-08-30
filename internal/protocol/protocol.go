@@ -34,6 +34,7 @@ const (
 	OpIssueComment Op = "issue.comment"
 	OpIssueLinkPR  Op = "issue.link_pr"
 	OpIssueClose   Op = "issue.close"
+	OpIssueReopen  Op = "issue.reopen"
 	OpIssueReady   Op = "issue.ready"
 	OpIssueReindex Op = "issue.reindex"
 )

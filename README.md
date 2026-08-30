@@ -226,6 +226,7 @@ pib issue edit 7 --title "…" --add-blocked-by 3,4
 pib issue comment 7 --body "Looks right."
 pib issue link-pr 7 https://github.com/you/repo/pull/12
 pib issue close 7 --reason "superseded"
+pib issue reopen 7             # back in play, for another attempt
 pib issue reindex
 ```
 
@@ -277,6 +278,12 @@ are cached for 30 seconds, so a tight loop of listings does not shell out repeat
 
 You can always `pib issue close <n>` by hand. Closing a task whose pull request has
 not merged is allowed and reported, because pib warns rather than blocking.
+
+`pib issue reopen <n>` undoes a close, and everything that was waiting on the issue
+goes back to waiting. It moves the state and nothing else: whatever the last attempt
+wrote is still on the issue and still on disk, so a genuinely clean retry means
+clearing that out too — otherwise the agent reads its own conclusions and ratifies
+them.
 
 ### Running the work
 
