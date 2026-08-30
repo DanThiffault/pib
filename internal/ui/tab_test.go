@@ -650,6 +650,195 @@ func TestIssueListRowsStayWithinThePane(t *testing.T) {
 	}
 }
 
+func TestNarrowTerminalShowsSinglePane(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+	m.width = 60
+	m.height = 20
+
+	view := m.View()
+	if strings.Contains(view, "│") {
+		t.Errorf("narrow plan list should not contain pane divider:\n%s", view)
+	}
+
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+	view = m.View()
+	if strings.Contains(view, "│") {
+		t.Errorf("narrow detail view should not contain pane divider:\n%s", view)
+	}
+}
+
+func TestWideTerminalShowsTwoPanes(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+	m.width = 100
+	m.height = 20
+
+	view := m.View()
+	if !strings.Contains(view, "│") {
+		t.Errorf("wide plan list should contain pane divider:\n%s", view)
+	}
+}
+
+func TestTruncateLongTitles(t *testing.T) {
+	long := strings.Repeat("a", 100)
+	got := truncate(long, 20)
+	if len([]rune(got)) != 20 {
+		t.Errorf("truncate length = %d, want 20", len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("truncate did not end with ellipsis: %q", got)
+	}
+	if strings.Contains(got, long) {
+		t.Errorf("truncate returned the full string")
+	}
+}
+
+func TestTruncateAtSmallMax(t *testing.T) {
+	if got := truncate("hello", 0); got != "" {
+		t.Errorf("truncate at 0 = %q, want empty", got)
+	}
+	if got := truncate("hello", -1); got != "" {
+		t.Errorf("truncate at -1 = %q, want empty", got)
+	}
+	if got := truncate("hello", 2); got != "he" {
+		t.Errorf("truncate at 2 = %q, want he", got)
+	}
+}
+
+func TestVeryNarrowWidthNoPanic(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+	m.width = 5
+	m.height = 10
+
+	_ = m.View() // should not panic
+
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+	_ = m.View() // should not panic
+}
+
+func TestResizeUpdatesDimensions(t *testing.T) {
+	m := readyWithTabs(t)
+	if m.width != 0 || m.height != 0 {
+		t.Skipf("initial dimensions non-zero: %dx%d", m.width, m.height)
+	}
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(Model)
+	if m.width != 120 {
+		t.Errorf("width = %d, want 120", m.width)
+	}
+	if m.height != 40 {
+		t.Errorf("height = %d, want 40", m.height)
+	}
+}
+
+func TestResizeHandledInPlanListView(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 20})
+	m = next.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "plan-a") {
+		t.Errorf("resized plan list view missing plan:\n%s", view)
+	}
+}
+
+func TestResizeHandledInPlanDetailView(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, map[string]issues.PlanCounts{
+		"plan-a": {Total: 1, Open: 1, Closed: 0},
+	})
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 20})
+	m = next.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "Issue 1") {
+		t.Errorf("resized detail view missing issue:\n%s", view)
+	}
+}
+
+func TestLoadingIndicatorVisible(t *testing.T) {
+	m := readyWithTabs(t)
+	m.currentTab = tabPlans
+	m.plansLoading = true
+
+	view := m.View()
+	if !strings.Contains(view, "◐") {
+		t.Errorf("loading indicator missing spinner character:\n%s", view)
+	}
+	if !strings.Contains(view, "Loading plans") {
+		t.Errorf("loading indicator missing text:\n%s", view)
+	}
+}
+
+func TestDetailLoadingIndicatorVisible(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssuesLoading = true
+
+	view := m.View()
+	if !strings.Contains(view, "◐") {
+		t.Errorf("loading indicator missing spinner character:\n%s", view)
+	}
+	if !strings.Contains(view, "Loading issues") {
+		t.Errorf("loading indicator missing text:\n%s", view)
+	}
+}
+
+func TestTabBarKeysSwitchTabsButNavigationWorksInPane(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+		{Slug: "plan-b", Title: "Plan B"},
+	}, nil)
+
+	// Up/down navigate within the pane.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.planCursor != 1 {
+		t.Errorf("planCursor = %d, want 1 after down", m.planCursor)
+	}
+
+	// Tab still switches tabs globally.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(Model)
+	if m.currentTab != tabPlan {
+		t.Errorf("currentTab = %v, want tabPlan after tab key", m.currentTab)
+	}
+}
+
 // Entering a plan starts a load and leaving starts another, so two responses
 // can be in flight. The older one must not land on the newer plan's view.
 func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
