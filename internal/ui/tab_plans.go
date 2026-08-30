@@ -83,6 +83,50 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.planIssues = msg.issues
 		m.planIssuesErr = nil
 		return m, nil
+	// Semantic action messages — the contract for future backend handlers.
+	case startIssueMsg:
+		m.notice = fmt.Sprintf("Start issue #%d", msg.issue.Number)
+		return m, nil
+	case viewIssueMsg:
+		m.notice = fmt.Sprintf("View issue #%d", msg.issue.Number)
+		return m, nil
+	case cancelIssueMsg:
+		m.notice = fmt.Sprintf("Cancel issue #%d", msg.issue.Number)
+		return m, nil
+	case leaveFeedbackMsg:
+		m.notice = fmt.Sprintf("Leave feedback on issue #%d", msg.issue.Number)
+		return m, nil
+	case respondIssueMsg:
+		m.notice = fmt.Sprintf("Respond to issue #%d", msg.issue.Number)
+		return m, nil
+	case viewPRMsg:
+		m.notice = fmt.Sprintf("View PR for issue #%d", msg.issue.Number)
+		return m, nil
+	case viewBlockersMsg:
+		m.notice = fmt.Sprintf("View blockers for issue #%d", msg.issue.Number)
+		return m, nil
+	case backMsg:
+		m.plansView = viewPlanList
+		m.notice = ""
+		return m, nil
+	case editIssueMsg:
+		m.notice = fmt.Sprintf("Edit issue #%d", msg.issue.Number)
+		return m, nil
+	case commentIssueMsg:
+		m.notice = fmt.Sprintf("Comment on issue #%d", msg.issue.Number)
+		return m, nil
+	case closeIssueMsg:
+		m.notice = fmt.Sprintf("Close issue #%d", msg.issue.Number)
+		return m, nil
+	case openIssueMsg:
+		m.notice = fmt.Sprintf("Reopen issue #%d", msg.issue.Number)
+		return m, nil
+	case viewLogMsg:
+		m.notice = fmt.Sprintf("View log for issue #%d", msg.issue.Number)
+		return m, nil
+	case refreshIssueMsg:
+		m.notice = fmt.Sprintf("Refresh issue #%d", msg.issue.Number)
+		return m, nil
 	}
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
@@ -91,17 +135,36 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch {
 			case key.Matches(keyMsg, backKeys):
 				m.plansView = viewPlanList
+				m.notice = ""
 				return m, nil
 			case key.Matches(keyMsg, upKeys):
 				if m.issueCursor > 0 {
 					m.issueCursor--
+					m.notice = ""
 				}
 				return m, nil
 			case key.Matches(keyMsg, downKeys):
 				if m.issueCursor < len(m.planIssues)-1 {
 					m.issueCursor++
+					m.notice = ""
 				}
 				return m, nil
+			}
+
+			// Contextual action keys for the selected issue.
+			if m.issueCursor < len(m.planIssues) {
+				issue := m.planIssues[m.issueCursor]
+				for _, a := range issueActions(issue) {
+					if keyMsg.String() == a.Key {
+						if a.Key == "b" {
+							m.plansView = viewPlanList
+							m.notice = ""
+							return m, nil
+						}
+						m.notice = actionNotice(a, issue)
+						return m, actionCmd(a, issue)
+					}
+				}
 			}
 			return m, nil
 		}
@@ -126,6 +189,7 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.planIssuesErr = nil
 				m.planIssuesLoading = true
 				m.planIssuesLoadedFor = ""
+				m.notice = ""
 				return m, loadPlanIssues(m.store, m.plans[m.planCursor].Slug, m.cfg)
 			}
 			return m, nil
@@ -284,15 +348,24 @@ func (m Model) planDetailTwoPaneView() string {
 	}
 
 	h := m.contentHeight()
+	paneH := h - 1
+	if paneH < 1 {
+		paneH = 1
+	}
 	if m.isNarrow() {
-		return m.issueListPane(m.width, h)
+		actionBar := m.actionBarView(m.width)
+		return lipgloss.JoinVertical(lipgloss.Left, m.issueListPane(m.width, paneH), actionBar)
 	}
 
 	leftW, rightW := paneWidths(m.width)
-	leftPane := m.issueListPane(leftW, h)
-	rightPane := m.issuePreviewPane(rightW, h)
+	leftPane := m.issueListPane(leftW, paneH)
+	rightPane := m.issuePreviewPane(rightW, paneH)
+	actionBar := m.actionBarView(m.width)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "│", rightPane)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "│", rightPane),
+		actionBar,
+	)
 }
 
 func (m Model) issueListPane(w, h int) string {

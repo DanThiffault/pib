@@ -871,3 +871,196 @@ func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
 		t.Errorf("view shows the other plan's issues:\n%s", m.View())
 	}
 }
+
+func TestActionBarShowsForLaunchableIssue(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Launchable Issue"}, Launchable: true, Ready: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "Start") {
+		t.Errorf("action bar missing Start:\n%s", view)
+	}
+	if !strings.Contains(view, "View") {
+		t.Errorf("action bar missing View:\n%s", view)
+	}
+	if !strings.Contains(view, "Back") {
+		t.Errorf("action bar missing Back:\n%s", view)
+	}
+}
+
+func TestActionBarShowsForInProgressIssue(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 2, Title: "In Progress Issue"}, InProgress: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "View run") {
+		t.Errorf("action bar missing View run:\n%s", view)
+	}
+	if !strings.Contains(view, "Cancel") {
+		t.Errorf("action bar missing Cancel:\n%s", view)
+	}
+	if !strings.Contains(view, "Back") {
+		t.Errorf("action bar missing Back:\n%s", view)
+	}
+}
+
+func TestActionBarShowsForBlockedIssue(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 3, Title: "Blocked Issue"}, Blocked: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "View blockers") {
+		t.Errorf("action bar missing View blockers:\n%s", view)
+	}
+	if !strings.Contains(view, "Back") {
+		t.Errorf("action bar missing Back:\n%s", view)
+	}
+}
+
+func TestActionBarShowsForAwaitingReviewIssue(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 4, Title: "Awaiting Review Issue"}, AwaitingReview: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "Leave feedback") {
+		t.Errorf("action bar missing Leave feedback:\n%s", view)
+	}
+	if !strings.Contains(view, "Respond") {
+		t.Errorf("action bar missing Respond:\n%s", view)
+	}
+	if !strings.Contains(view, "View PR") {
+		t.Errorf("action bar missing View PR:\n%s", view)
+	}
+	if !strings.Contains(view, "Back") {
+		t.Errorf("action bar missing Back:\n%s", view)
+	}
+}
+
+func TestActionBarShowsForClosedIssue(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 5, Title: "Closed Issue", State: issues.StateClosed}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "Open") {
+		t.Errorf("action bar missing Open:\n%s", view)
+	}
+	if !strings.Contains(view, "Log") {
+		t.Errorf("action bar missing Log:\n%s", view)
+	}
+	if !strings.Contains(view, "Back") {
+		t.Errorf("action bar missing Back:\n%s", view)
+	}
+}
+
+func TestActionKeyEmitsNotice(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+	m = next.(Model)
+	if !strings.Contains(m.notice, "View issue #1") {
+		t.Errorf("notice = %q, want 'View issue #1'", m.notice)
+	}
+}
+
+func TestStartKeyEmitsStartMessage(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	m = next.(Model)
+	if m.notice == "" {
+		t.Error("expected notice after pressing start")
+	}
+	if cmd == nil {
+		t.Fatal("expected command from start key")
+	}
+	msg := cmd()
+	if _, ok := msg.(startIssueMsg); !ok {
+		t.Errorf("cmd returned %T, want startIssueMsg", msg)
+	}
+}
+
+func TestBackKeyInDetailViewReturnsToList(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	m = next.(Model)
+	if m.plansView != viewPlanList {
+		t.Errorf("plansView = %v, want viewPlanList", m.plansView)
+	}
+}
+
+func TestNavigationClearsNotice(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "First"}},
+		{Issue: issues.Issue{Number: 2, Title: "Second"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+	m.issueCursor = 0
+	m.notice = "some notice"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.notice != "" {
+		t.Errorf("notice not cleared after navigation, got %q", m.notice)
+	}
+}
+
+func TestActionBarDoesNotAddExtraHeight(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.height = 15
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, "Start") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("action bar not found in view:\n%s", view)
+	}
+}
