@@ -1,6 +1,6 @@
 ---
 name: prototype
-description: UX spiking agent — produces throwaway code to compare UI/UX approaches, posts findings to its GitHub issue, asks for feedback, then closes itself
+description: UX spiking agent — produces throwaway code to compare UI/UX approaches, posts findings to its pib issue, asks for feedback, then closes itself
 tools: read, bash, write, edit
 model: openrouter/moonshotai/kimi-k2.6
 thinking: medium

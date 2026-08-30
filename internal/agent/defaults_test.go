@@ -18,7 +18,10 @@ func TestDefaultNamesLeadWithPlanner(t *testing.T) {
 	if names[0] != PlannerName {
 		t.Errorf("names[0] = %q, want the planner first", names[0])
 	}
-	for _, want := range []string{"planner", "scout", "researcher", "reviewer", "worker", "prototype"} {
+	for _, want := range []string{
+		"planner", "scout", "researcher", "reviewer", "worker", "prototype",
+		"plan-reviewer", "plan-recheck",
+	} {
 		if !slices.Contains(names, want) {
 			t.Errorf("default set is missing %q: %v", want, names)
 		}
@@ -95,9 +98,11 @@ func TestNoDefaultTracksIssuesThroughGH(t *testing.T) {
 // it would find the command simply unavailable.
 func TestAgentsCanRunThePibCommandsTheyNeed(t *testing.T) {
 	needs := map[string][]string{
-		"planner":  {"pib plan apply", "pib issue ready", "blockedBy"},
-		"worker":   {"pib issue view", "pib issue link-pr"},
-		"reviewer": {"pib issue view", "pib issue comment", "pib issue close"},
+		"planner":       {"pib plan apply", "pib issue ready", "blockedBy"},
+		"worker":        {"pib issue view", "pib issue link-pr"},
+		"reviewer":      {"pib issue view", "pib issue comment", "pib issue close"},
+		"plan-reviewer": {"pib plan view", "pib issue list --plan", "pib issue comment"},
+		"plan-recheck":  {"pib issue view", "pib issue list --plan", "pib issue comment"},
 	}
 
 	for name, commands := range needs {
@@ -130,6 +135,45 @@ func TestNoAgentClosesATaskIssue(t *testing.T) {
 	body, _ = defaultAgents.ReadFile(defaultsDir + "/reviewer.md")
 	if !strings.Contains(string(body), "Never close a task issue") {
 		t.Error("the reviewer is no longer told to leave task issues alone")
+	}
+}
+
+// The plan agents advise; they never change the plan themselves. plan-recheck
+// especially: pib runs it when an issue closes, so a recheck that closed one
+// would run itself again.
+func TestPlanAgentsDoNotChangeThePlan(t *testing.T) {
+	for _, name := range []string{"plan-reviewer", "plan-recheck"} {
+		body, _ := defaultAgents.ReadFile(defaultsDir + "/" + name + ".md")
+		text := string(body)
+
+		for _, forbidden := range []string{"pib issue close", "pib issue edit"} {
+			if strings.Contains(text, forbidden) {
+				t.Errorf("%s reaches for %q; it is advisory", name, forbidden)
+			}
+		}
+		if !strings.Contains(text, "Never close") && !strings.Contains(text, "not close") {
+			t.Errorf("%s is not told to leave issues open", name)
+		}
+	}
+}
+
+// A recheck that reports something every run reworders the plan under workers
+// who have already read it, which is worse than not running at all.
+func TestRecheckPrefersSilence(t *testing.T) {
+	body, _ := defaultAgents.ReadFile(defaultsDir + "/plan-recheck.md")
+	text := string(body)
+
+	for _, want := range []string{"contradiction", "Silence"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("plan-recheck does not mention %q; it needs a bias toward no-op", want)
+		}
+	}
+	// It proposes a document rather than applying one.
+	if !strings.Contains(text, "/tmp/pib-plan-") {
+		t.Error("plan-recheck does not say where to write its proposal")
+	}
+	if strings.Contains(text, "pib plan apply") {
+		t.Error("plan-recheck applies its own proposal; the user does that")
 	}
 }
 

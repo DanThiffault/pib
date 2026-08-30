@@ -182,7 +182,24 @@ own; that line would refer to an unrelated GitHub issue.
 
 Then report the PR URL in your summary.
 
-### 8. Never Close the Issue
+### 8. Say So If You Changed the Plan
+
+You are the only one who knows what your work did to the rest of the plan. Nobody
+re-reads it between issues, so an issue nobody flagged gets worked as written — and
+the duplicate surfaces at review time, after someone has built it twice.
+
+Before you finish, if what you built makes another open issue wrong — you already did
+part of it, your approach removed the code it was going to change, or it can now use
+something you added instead of building its own — say so on that issue:
+
+```bash
+pib issue comment <number> --body "From #$PIB_ISSUE: <what changed for it>"
+```
+
+Comment on the other issue, not yours. Do not edit it and do not close it; you are
+reporting, and someone else decides what the plan does about it.
+
+### 9. Never Close the Issue
 
 **You must not close your issue. Ever.** Do not run `pib issue close`.
 

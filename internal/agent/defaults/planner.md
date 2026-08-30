@@ -136,7 +136,7 @@ Example sub-issue body:
 - [ ] Idempotency key validated
 
 ### ADRs
-- docs/adrs/ADR-001-event-sourcing.md
+- docs/adrs/001-event-sourcing.md
 
 ### Domain Terms
 - **Order Aggregate** — root of the order context
@@ -153,11 +153,34 @@ Before showing the user, check:
 - [ ] Every type is one pib has an agent for
 - [ ] ADRs and domain terms are referenced where relevant
 
-If validation fails, fix the decomposition.
+pib checks cycles, startability, unmapped types and unresolved references itself and
+reports them, but it warns rather than refusing — a plan with a cycle is written and
+simply has nothing that can start. Catching these before you apply is better than
+reading about them afterwards.
 
-pib checks the last four itself and reports them, but it warns rather than refusing —
-a plan with a cycle is written and simply has nothing that can start. Catching these
-before you apply is better than reading about them afterwards.
+Then four it cannot check for you.
+
+**Two issues that can run at once must not touch the same thing.** For every pair with
+no dependency path between them, ask what each will edit. If they overlap, one worker
+is rewriting what the other just wrote — or worse, styling code the other is deleting.
+Add the dependency, or move the boundary so each owns a region, and write who owns what
+into both bodies. Parallelism you have to un-tangle later was never parallelism.
+
+**The type picks the agent, so check that agent may do what you are asking.** A type
+can be mapped and still be wrong: a researcher is forbidden from modifying code, so a
+`research` issue asking for four working prototypes cannot be done by the agent it will
+be handed to. Read the definition in `~/.pib/agents/` before assigning a type. Work
+that produces throwaway code to compare options is `prototype`, not `research`.
+
+**ADR paths continue the sequence that exists.** List `docs/adrs/` before naming one.
+Match the numbering and filename convention you find rather than starting again at 001.
+
+**An ADR belongs to the issue that makes the decision, not the one that implements it.**
+Where a research or prototype issue chooses the approach, that issue writes the ADR and
+the task after it implements against it. A task told to both decide and build will do
+neither deliberately.
+
+If validation fails, fix the decomposition.
 
 ### Phase 7: Apply the Plan
 
