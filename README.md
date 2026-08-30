@@ -88,13 +88,14 @@ pib
 
 ### Startup
 
-On first run pib checks three things and asks before changing anything:
+On first run pib checks two things and asks before changing anything:
 
 1. **`.pib/` missing** — pib keeps its workspace at the repository root.
    `y` creates it; `n` or `q` exits.
-2. **`.pib/` not gitignored** — `y` appends `/.pib/` to the root `.gitignore`,
-   `n` continues without it, `q` exits.
-3. **`~/.pib/agents/` missing** — `y` installs the default agents; `n` or `q` exits.
+2. **`~/.pib/agents/` missing** — `y` installs the default agents; `n` or `q` exits.
+
+pib does not touch your `.gitignore`. Add `/.pib/` to it yourself — nothing under it
+is meant to be checked in.
 
 Then it loads `~/.pib/agents/planner.md`, writes `~/.pib/config.toml` if there isn't
 one, opens the issue store under `.pib/data/`, and opens its socket.
@@ -150,10 +151,10 @@ pib keeps its own issues. A plan becomes a tree of issues with dependencies betw
 them, and pib works out from those what can start now. GitHub still owns pull
 requests; nothing is pushed to GitHub issues.
 
-Everything lives under `.pib/`, which is gitignored: metadata in a SQLite database,
-and one markdown file per issue beside it. The running pib is the only writer — the
-commands below are clients that reach it over the same socket agents use, so several
-agents can work at once without stepping on each other.
+Everything lives under `.pib/`, which is not meant to be checked in: metadata in a
+SQLite database, and one markdown file per issue beside it. The running pib is the
+only writer — the commands below are clients that reach it over the same socket
+agents use, so several agents can work at once without stepping on each other.
 
 ### Applying a plan
 
@@ -410,7 +411,8 @@ Unknown keys are ignored, so newer definitions still load on an older pib.
 
 ## Workspace layout
 
-Everything pib writes lives under `.pib/` at the repository root, and is gitignored:
+Everything pib writes lives under `.pib/` at the repository root. None of it is meant
+to be checked in — add `/.pib/` to your `.gitignore`:
 
 ```
 .pib/

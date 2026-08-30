@@ -25,7 +25,6 @@ type phase int
 const (
 	phaseDetecting phase = iota
 	phaseConfirmCreate
-	phaseConfirmGitignore
 	phaseCheckingAgents
 	phaseConfirmAgents
 	phaseLoadingPlanner
@@ -40,8 +39,6 @@ type detectedMsg struct {
 }
 
 type createdMsg struct{ err error }
-
-type gitignoredMsg struct{ err error }
 
 type plannerLoadedMsg struct {
 	planner agent.Definition
@@ -155,12 +152,6 @@ func createWorkspace(status workspace.Status) tea.Cmd {
 	}
 }
 
-func addToGitignore(status workspace.Status) tea.Cmd {
-	return func() tea.Msg {
-		return gitignoredMsg{err: status.AddToGitignore()}
-	}
-}
-
 // updateStartup handles every message while the workspace checks are running.
 // It returns handled=false once startup is done and the main model should take
 // over the message.
@@ -187,18 +178,8 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m.workspace.Exists = true
-		m.created = true
 		next, cmd := m.afterWorkspaceExists()
 		return next, cmd, true
-
-	case gitignoredMsg:
-		if msg.err != nil {
-			m.phase = phaseFailed
-			m.err = msg.err
-			return m, nil, true
-		}
-		m.workspace.Ignored = true
-		return m.afterWorkspaceReady(), checkAgents, true
 
 	case agentsCheckedMsg:
 		if msg.err != nil {
@@ -262,18 +243,6 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 
-		case phaseConfirmGitignore:
-			switch {
-			case key.Matches(msg, yesKeys):
-				return m, addToGitignore(m.workspace), true
-			case key.Matches(msg, noKeys):
-				// Declining is fine — carry on without ignoring it.
-				return m.afterWorkspaceReady(), checkAgents, true
-			case key.Matches(msg, quitKeys):
-				return m, tea.Quit, true
-			}
-			return m, nil, true
-
 		case phaseConfirmAgents:
 			switch {
 			case key.Matches(msg, yesKeys):
@@ -292,25 +261,15 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
-// afterWorkspaceExists moves on to the gitignore check, or straight to the
-// create prompt if the directory is still missing. Once both are settled it
-// loads the planner agent.
+// afterWorkspaceExists prompts to create the workspace directory when it is
+// still missing, and otherwise moves straight on to the agent checks.
 func (m Model) afterWorkspaceExists() (Model, tea.Cmd) {
-	switch {
-	case !m.workspace.Exists:
+	if !m.workspace.Exists {
 		m.phase = phaseConfirmCreate
-	case !m.workspace.Ignored:
-		m.phase = phaseConfirmGitignore
-	default:
-		return m.afterWorkspaceReady(), checkAgents
+		return m, nil
 	}
-	return m, nil
-}
-
-// afterWorkspaceReady moves past the workspace checks to the agent checks.
-func (m Model) afterWorkspaceReady() Model {
 	m.phase = phaseCheckingAgents
-	return m
+	return m, checkAgents
 }
 
 func (m Model) startupView() string {
@@ -350,16 +309,6 @@ func (m Model) startupView() string {
 			itemStyle.Render("pib keeps its workspace there.") + "\n\n" +
 			promptStyle.Render(fmt.Sprintf("Create %s?", m.workspace.Dir)) + "\n\n" +
 			helpStyle.Render("y/enter create • n/q exit")
-
-	case phaseConfirmGitignore:
-		note := ""
-		if m.created {
-			note = itemStyle.Render("Created "+m.workspace.Dir) + "\n"
-		}
-		return titleStyle.Render("pib") + "\n\n" + note +
-			itemStyle.Render(fmt.Sprintf("%s is not ignored by git.", workspace.DirName)) + "\n\n" +
-			promptStyle.Render("Add it to .gitignore?") + "\n\n" +
-			helpStyle.Render("y/enter add • n continue without • q exit")
 	}
 
 	return ""

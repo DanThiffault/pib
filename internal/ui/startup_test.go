@@ -43,11 +43,11 @@ func TestMissingDirPromptsThenCreates(t *testing.T) {
 	// "y" issues the create command; feed back a successful result.
 	m, _ = step(t, m, press("y"))
 	m, _ = step(t, m, createdMsg{})
-	if m.phase != phaseConfirmGitignore {
-		t.Fatalf("phase = %v, want phaseConfirmGitignore", m.phase)
+	if m.phase != phaseCheckingAgents {
+		t.Fatalf("phase = %v, want phaseCheckingAgents", m.phase)
 	}
-	if !m.created || !m.workspace.Exists {
-		t.Errorf("created=%v exists=%v, want true/true", m.created, m.workspace.Exists)
+	if !m.workspace.Exists {
+		t.Error("workspace.Exists = false, want true")
 	}
 }
 
@@ -70,7 +70,7 @@ func ready(t *testing.T) Model {
 
 	m := NewModel()
 	m, _ = step(t, m, detectedMsg{status: workspace.Status{
-		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true, Ignored: true,
+		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true,
 	}})
 	m, _ = step(t, m, agentsCheckedMsg{installed: true, dir: "/home/.pib/agents"})
 	if m.phase != phaseLoadingPlanner {
@@ -89,42 +89,24 @@ func ready(t *testing.T) Model {
 	return m
 }
 
-func TestUnignoredDirDeclineContinues(t *testing.T) {
+// pib no longer asks about .gitignore, so an existing workspace goes straight
+// to the agent checks whether or not git ignores it.
+func TestExistingDirSkipsStraightToAgents(t *testing.T) {
 	m := NewModel()
-	status := workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}
 
-	m, _ = step(t, m, detectedMsg{status: status})
-	if m.phase != phaseConfirmGitignore {
-		t.Fatalf("phase = %v, want phaseConfirmGitignore", m.phase)
-	}
-
-	// Declining the gitignore prompt must not stop startup.
-	next, cmd := m.Update(press("n"))
+	next, cmd := m.Update(detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
+	m = next.(Model)
 	if cmd == nil {
-		t.Error("declining gitignore returned no command, want the planner load")
+		t.Error("detecting a ready workspace returned no command, want the agent check")
 	}
-	if p := next.(Model).phase; p != phaseCheckingAgents {
-		t.Errorf("phase = %v, want phaseCheckingAgents", p)
-	}
-}
-
-func TestUnignoredDirAcceptAdds(t *testing.T) {
-	m := NewModel()
-	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
-
-	m, _ = step(t, m, press("enter"))
-	m, _ = step(t, m, gitignoredMsg{})
 	if m.phase != phaseCheckingAgents {
-		t.Fatalf("phase = %v, want phaseCheckingAgents", m.phase)
-	}
-	if !m.workspace.Ignored {
-		t.Error("Ignored = false, want true")
+		t.Errorf("phase = %v, want phaseCheckingAgents", m.phase)
 	}
 }
 
 func TestReadyWorkspaceSkipsPrompts(t *testing.T) {
 	m := NewModel()
-	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true, Ignored: true}})
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
 	if m.phase != phaseCheckingAgents {
 		t.Fatalf("phase = %v, want phaseCheckingAgents", m.phase)
 	}
@@ -132,7 +114,7 @@ func TestReadyWorkspaceSkipsPrompts(t *testing.T) {
 
 func TestServerFailureStopsStartup(t *testing.T) {
 	m := NewModel()
-	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true, Ignored: true}})
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
 	m, _ = step(t, m, agentsCheckedMsg{installed: true})
 	m, _ = step(t, m, plannerLoadedMsg{planner: agent.Definition{Name: "planner"}})
 	m, _ = step(t, m, serverStartedMsg{err: errors.New("address already in use")})
@@ -147,7 +129,7 @@ func TestServerFailureStopsStartup(t *testing.T) {
 
 func TestMissingPlannerFails(t *testing.T) {
 	m := NewModel()
-	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true, Ignored: true}})
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
 	m, _ = step(t, m, agentsCheckedMsg{installed: true})
 	m, _ = step(t, m, plannerLoadedMsg{err: agent.ErrNotFound})
 
@@ -174,7 +156,7 @@ func TestDetectErrorFails(t *testing.T) {
 func TestMissingAgentsPromptsThenInstalls(t *testing.T) {
 	m := NewModel()
 	m, _ = step(t, m, detectedMsg{status: workspace.Status{
-		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true, Ignored: true,
+		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true,
 	}})
 
 	m, _ = step(t, m, agentsCheckedMsg{installed: false, dir: "/home/.pib/agents"})
@@ -207,7 +189,7 @@ func TestMissingAgentsPromptsThenInstalls(t *testing.T) {
 func TestDecliningAgentsQuits(t *testing.T) {
 	m := NewModel()
 	m, _ = step(t, m, detectedMsg{status: workspace.Status{
-		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true, Ignored: true,
+		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true,
 	}})
 	m, _ = step(t, m, agentsCheckedMsg{installed: false, dir: "/home/.pib/agents"})
 
@@ -223,7 +205,7 @@ func TestDecliningAgentsQuits(t *testing.T) {
 func TestInstallFailureStopsStartup(t *testing.T) {
 	m := NewModel()
 	m, _ = step(t, m, detectedMsg{status: workspace.Status{
-		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true, Ignored: true,
+		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true,
 	}})
 	m, _ = step(t, m, agentsCheckedMsg{installed: false, dir: "/home/.pib/agents"})
 	m, _ = step(t, m, agentsInstalledMsg{err: errors.New("permission denied")})

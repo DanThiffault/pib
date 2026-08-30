@@ -95,7 +95,6 @@ type Model struct {
 
 	phase     phase
 	workspace workspace.Status
-	created   bool
 	err       error
 
 	planner   agent.Definition

@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -50,12 +49,9 @@ func TestDetectMissing(t *testing.T) {
 	if s.Exists {
 		t.Error("Exists = true, want false")
 	}
-	if s.Ignored {
-		t.Error("Ignored = true, want false")
-	}
 }
 
-func TestCreateAndIgnore(t *testing.T) {
+func TestCreate(t *testing.T) {
 	root := newRepo(t)
 
 	s, err := Detect()
@@ -69,54 +65,12 @@ func TestCreateAndIgnore(t *testing.T) {
 		t.Fatalf("workspace dir not created: %v", err)
 	}
 
-	if err := s.AddToGitignore(); err != nil {
-		t.Fatal(err)
-	}
-	// Appending twice must not duplicate the entry.
-	if err := s.AddToGitignore(); err != nil {
-		t.Fatal(err)
-	}
-
-	body, err := os.ReadFile(filepath.Join(root, ".gitignore"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(string(body), gitignoreEntry); got != 1 {
-		t.Errorf("entry appears %d times, want 1:\n%s", got, body)
-	}
-
 	again, err := Detect()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !again.Exists || !again.Ignored {
-		t.Errorf("after setup: Exists=%v Ignored=%v, want true/true", again.Exists, again.Ignored)
-	}
-}
-
-func TestAppendPreservesExistingGitignore(t *testing.T) {
-	root := newRepo(t)
-	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("node_modules"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := Detect()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddToGitignore(); err != nil {
-		t.Fatal(err)
-	}
-
-	body, err := os.ReadFile(filepath.Join(root, ".gitignore"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(string(body), "node_modules\n") {
-		t.Errorf("existing content mangled:\n%s", body)
-	}
-	if !strings.Contains(string(body), gitignoreEntry) {
-		t.Errorf("entry missing:\n%s", body)
+	if !again.Exists {
+		t.Error("after Create: Exists = false, want true")
 	}
 }
 
