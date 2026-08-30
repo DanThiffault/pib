@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -11,6 +12,7 @@ import (
 
 	"pib/internal/config"
 	"pib/internal/issues"
+	"pib/internal/ui/theme"
 )
 
 type plansLoadedMsg struct {
@@ -63,6 +65,10 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.plans = msg.plans
 		m.planCounts = msg.counts
 		m.planCursor = 0
+		if slug := m.currentPlanSlug(); slug != "" && m.planIssuesLoadedFor != slug {
+			m.planIssuesLoading = true
+			return m, loadPlanIssues(m.store, slug, m.cfg)
+		}
 		return m, nil
 	case planIssuesLoadedMsg:
 		// A response for a plan the user has already left is stale. Nothing
@@ -112,10 +118,18 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.planCursor > 0 {
 				m.planCursor--
 			}
+			if slug := m.currentPlanSlug(); slug != "" && m.planIssuesLoadedFor != slug {
+				m.planIssuesLoading = true
+				return m, loadPlanIssues(m.store, slug, m.cfg)
+			}
 			return m, nil
 		case key.Matches(keyMsg, downKeys):
 			if m.planCursor < len(m.plans)-1 {
 				m.planCursor++
+			}
+			if slug := m.currentPlanSlug(); slug != "" && m.planIssuesLoadedFor != slug {
+				m.planIssuesLoading = true
+				return m, loadPlanIssues(m.store, slug, m.cfg)
 			}
 			return m, nil
 		case key.Matches(keyMsg, selectKeys):
@@ -184,7 +198,7 @@ func (m Model) planListTwoPaneView() string {
 
 	leftW, rightW := paneWidths(m.width)
 	leftPane := m.planListPane(leftW, h)
-	rightPane := m.planMetadataPane(rightW, h)
+	rightPane := m.planDAGPane(rightW, h)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, "│", rightPane)
 }
@@ -248,28 +262,180 @@ func (m Model) planListPane(w, h int) string {
 	return listPane("Plans", labels, m.planCursor, w, h)
 }
 
-func (m Model) planMetadataPane(w, h int) string {
-	if m.planCursor >= len(m.plans) {
-		return lipgloss.NewStyle().Width(w).Height(h).Render("")
+func (m Model) planDAGPane(w, h int) string {
+	if m.planIssuesLoading {
+		return lipgloss.NewStyle().Width(w).Height(h).Render(loadingStyle.Render("◐ Loading issues…"))
+	}
+	if m.planIssuesErr != nil {
+		return lipgloss.NewStyle().Width(w).Height(h).Render(errorStyle.Render("Error: " + m.planIssuesErr.Error()))
+	}
+	if len(m.planIssues) == 0 {
+		return lipgloss.NewStyle().Width(w).Height(h).Render(helpStyle.Render("No issues in this plan."))
 	}
 
-	plan := m.plans[m.planCursor]
-	counts := m.planCounts[plan.Slug]
+	lines, styles := m.buildPlanDAG(w)
+	if len(lines) > h {
+		lines = lines[:h]
+		styles = styles[:h]
+	}
 
+	rendered := make([]string, 0, h)
+	for i, line := range lines {
+		rendered = append(rendered, styles[i].Render(truncate(line, w)))
+	}
+	for len(rendered) < h {
+		rendered = append(rendered, strings.Repeat(" ", w))
+	}
+
+	return lipgloss.NewStyle().Width(w).Height(h).Render(
+		lipgloss.JoinVertical(lipgloss.Left, rendered...),
+	)
+}
+
+// buildPlanDAG renders the plan's issues as a topologically-sorted ASCII tree.
+// It returns one line and one style per row.
+func (m Model) buildPlanDAG(w int) ([]string, []lipgloss.Style) {
+	byNumber := make(map[int64]issues.Status, len(m.planIssues))
+	blocks := make(map[int64][]int64)
+	for _, issue := range m.planIssues {
+		byNumber[issue.Number] = issue
+	}
+	for _, issue := range m.planIssues {
+		for _, blocker := range issue.BlockedBy {
+			if _, ok := byNumber[blocker]; ok {
+				blocks[blocker] = append(blocks[blocker], issue.Number)
+			}
+		}
+	}
+
+	// Find roots: issues with no blockers that are also in the plan.
+	hasBlockerInPlan := make(map[int64]bool)
+	for _, issue := range m.planIssues {
+		for _, blocker := range issue.BlockedBy {
+			if _, ok := byNumber[blocker]; ok {
+				hasBlockerInPlan[issue.Number] = true
+				break
+			}
+		}
+	}
+	var roots []int64
+	for _, issue := range m.planIssues {
+		if !hasBlockerInPlan[issue.Number] {
+			roots = append(roots, issue.Number)
+		}
+	}
+	sort.Slice(roots, func(i, j int) bool { return roots[i] < roots[j] })
+
+	var lines []string
+	var styles []lipgloss.Style
+	visited := make(map[int64]bool)
+	inStack := make(map[int64]bool)
+
+	var dfs func(number int64, ancestors []bool)
+	dfs = func(number int64, ancestors []bool) {
+		if inStack[number] {
+			issue := byNumber[number]
+			prefix := dagPrefix(ancestors)
+			avail := w - lipgloss.Width(prefix) - 3
+			if avail < 1 {
+				avail = 1
+			}
+			lines = append(lines, prefix+"↻ "+formatDAGIssue(issue, avail))
+			styles = append(styles, dagStyleForIssue(issue))
+			return
+		}
+		if visited[number] {
+			issue := byNumber[number]
+			prefix := dagPrefix(ancestors)
+			connector := "├─► "
+			if len(ancestors) > 0 && ancestors[len(ancestors)-1] {
+				connector = "└─► "
+			}
+			avail := w - lipgloss.Width(prefix) - lipgloss.Width(connector)
+			if avail < 1 {
+				avail = 1
+			}
+			lines = append(lines, prefix+connector+formatDAGIssue(issue, avail))
+			styles = append(styles, theme.Default.Dim)
+			return
+		}
+		visited[number] = true
+		inStack[number] = true
+		defer delete(inStack, number)
+
+		issue := byNumber[number]
+		prefix := dagPrefix(ancestors)
+		var connector string
+		if len(ancestors) == 0 {
+			connector = ""
+		} else if ancestors[len(ancestors)-1] {
+			connector = "└─► "
+		} else {
+			connector = "├─► "
+		}
+		avail := w - lipgloss.Width(prefix) - lipgloss.Width(connector)
+		if avail < 1 {
+			avail = 1
+		}
+		lines = append(lines, prefix+connector+formatDAGIssue(issue, avail))
+		styles = append(styles, dagStyleForIssue(issue))
+
+		children := blocks[number]
+		sort.Slice(children, func(i, j int) bool { return children[i] < children[j] })
+		for i, child := range children {
+			childAncestors := append(append([]bool(nil), ancestors...), i == len(children)-1)
+			dfs(child, childAncestors)
+		}
+	}
+
+	for _, root := range roots {
+		dfs(root, []bool{})
+	}
+	return lines, styles
+}
+
+func dagPrefix(ancestors []bool) string {
+	if len(ancestors) <= 1 {
+		return ""
+	}
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("Metadata") + "\n")
-	b.WriteString(itemStyle.Render("Title: "+plan.Title) + "\n")
-	b.WriteString(itemStyle.Render("Slug:  "+plan.Slug) + "\n")
-	if !plan.CreatedAt.IsZero() {
-		b.WriteString(itemStyle.Render("Created: "+plan.CreatedAt.Format("2006-01-02")) + "\n")
+	for i := 0; i < len(ancestors)-1; i++ {
+		if ancestors[i] {
+			b.WriteString("   ")
+		} else {
+			b.WriteString("│  ")
+		}
 	}
-	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("Issues") + "\n")
-	b.WriteString(itemStyle.Render(fmt.Sprintf("Total:  %d", counts.Total)) + "\n")
-	b.WriteString(itemStyle.Render(fmt.Sprintf("Open:   %d", counts.Open)) + "\n")
-	b.WriteString(itemStyle.Render(fmt.Sprintf("Closed: %d", counts.Closed)) + "\n")
+	return b.String()
+}
 
-	return lipgloss.NewStyle().Width(w).Height(h).Render(b.String())
+func formatDAGIssue(issue issues.Status, maxWidth int) string {
+	var parts []string
+	parts = append(parts, fmt.Sprintf("#%d %s", issue.Number, issue.Title))
+	parts = append(parts, "["+string(issue.State)+"]")
+	if issue.Agent != "" {
+		parts = append(parts, issue.Agent)
+	}
+	s := strings.Join(parts, " ")
+	return truncate(s, maxWidth)
+}
+
+func dagStyleForIssue(issue issues.Status) lipgloss.Style {
+	if issue.State == issues.StateClosed {
+		return theme.Default.Dim
+	}
+	switch {
+	case issue.Blocked:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#ff757f"))
+	case issue.InProgress:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#e0af68"))
+	case issue.AwaitingReview:
+		return theme.Default.Secondary
+	case issue.Ready:
+		return theme.Default.Tertiary
+	default:
+		return theme.Default.Primary
+	}
 }
 
 func (m Model) planDetailTwoPaneView() string {

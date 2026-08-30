@@ -255,17 +255,8 @@ func TestPlanListShowsTwoPanes(t *testing.T) {
 	if !strings.Contains(view, "plan-a") {
 		t.Errorf("view missing plan slug:\n%s", view)
 	}
-	if !strings.Contains(view, "Plan A") {
-		t.Errorf("view missing plan title:\n%s", view)
-	}
-	if !strings.Contains(view, "Total:") {
-		t.Errorf("view missing issue total:\n%s", view)
-	}
-	if !strings.Contains(view, "Open:") {
-		t.Errorf("view missing open count:\n%s", view)
-	}
-	if !strings.Contains(view, "Closed:") {
-		t.Errorf("view missing closed count:\n%s", view)
+	if !strings.Contains(view, "No issues in this plan.") {
+		t.Errorf("view missing empty DAG message:\n%s", view)
 	}
 }
 
@@ -869,5 +860,29 @@ func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
 	}
 	if strings.Contains(m.View(), "Belongs to A") {
 		t.Errorf("view shows the other plan's issues:\n%s", m.View())
+	}
+}
+
+func TestPlanDAGPaneRendersTree(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Setup", State: issues.StateOpen}},
+		{Issue: issues.Issue{Number: 2, Title: "Build", State: issues.StateOpen, BlockedBy: []int64{1}}},
+		{Issue: issues.Issue{Number: 3, Title: "Test", State: issues.StateOpen, BlockedBy: []int64{1}}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	output := m.planDAGPane(60, 10)
+	if !strings.Contains(output, "#1 Setup") {
+		t.Errorf("DAG missing root issue:\n%s", output)
+	}
+	if !strings.Contains(output, "#2 Build") {
+		t.Errorf("DAG missing child issue:\n%s", output)
+	}
+	if !strings.Contains(output, "#3 Test") {
+		t.Errorf("DAG missing sibling issue:\n%s", output)
+	}
+	if !strings.Contains(output, "├─►") && !strings.Contains(output, "└─►") {
+		t.Errorf("DAG missing tree connectors:\n%s", output)
 	}
 }
