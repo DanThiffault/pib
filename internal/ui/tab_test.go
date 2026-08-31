@@ -904,8 +904,8 @@ func TestActionBarShowsForInProgressIssue(t *testing.T) {
 	if !strings.Contains(view, "View run") {
 		t.Errorf("action bar missing View run:\n%s", view)
 	}
-	if !strings.Contains(view, "Cancel") {
-		t.Errorf("action bar missing Cancel:\n%s", view)
+	if !strings.Contains(view, "Kill run") {
+		t.Errorf("action bar missing Kill run:\n%s", view)
 	}
 	if !strings.Contains(view, "Back") {
 		t.Errorf("action bar missing Back:\n%s", view)
@@ -938,7 +938,7 @@ func TestActionBarShowsForAwaitingReviewIssue(t *testing.T) {
 	m.planIssuesLoadedFor = "plan-a"
 
 	view := m.View()
-	if !strings.Contains(view, "Leave feedback") {
+	if !strings.Contains(view, "Feedback") {
 		t.Errorf("action bar missing Leave feedback:\n%s", view)
 	}
 	if !strings.Contains(view, "Respond") {
@@ -1062,5 +1062,63 @@ func TestActionBarDoesNotAddExtraHeight(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("action bar not found in view:\n%s", view)
+	}
+}
+
+// A key must mean the same thing wherever it appears. Comment and cancel-the-
+// run are one keystroke apart in muscle memory and opposite in consequence, so
+// they must not share one.
+func TestActionKeysMeanOneThingEachAcrossStates(t *testing.T) {
+	states := map[string]issues.Status{
+		"closed":   {Issue: issues.Issue{Number: 1, State: issues.StateClosed}},
+		"progress": {Issue: issues.Issue{Number: 2}, InProgress: true},
+		"review":   {Issue: issues.Issue{Number: 3}, AwaitingReview: true},
+		"blocked":  {Issue: issues.Issue{Number: 4}, Blocked: true},
+		"ready":    {Issue: issues.Issue{Number: 5}, Ready: true, Launchable: true},
+	}
+
+	labels := map[string]string{}
+	where := map[string]string{}
+	for state, status := range states {
+		for _, a := range issueActions(status) {
+			// The object may differ by state — "View run" and "View PR" are
+			// both viewing. The verb may not.
+			verb := strings.Fields(a.Label)[0]
+			if seen, ok := labels[a.Key]; ok && seen != verb {
+				t.Errorf("%q is %q in %s but %q in %s",
+					a.Key, verb, state, seen, where[a.Key])
+			}
+			labels[a.Key], where[a.Key] = verb, state
+		}
+	}
+}
+
+// Every offered key has to do something, and nothing that is not offered
+// should be carried around waiting for a caller that never comes.
+func TestEveryOfferedActionResolves(t *testing.T) {
+	offered := map[string]bool{}
+	for _, status := range []issues.Status{
+		{Issue: issues.Issue{Number: 1, State: issues.StateClosed}},
+		{Issue: issues.Issue{Number: 2}, InProgress: true},
+		{Issue: issues.Issue{Number: 3}, AwaitingReview: true},
+		{Issue: issues.Issue{Number: 4}, Blocked: true},
+		{Issue: issues.Issue{Number: 5}, Ready: true, Launchable: true},
+		{Issue: issues.Issue{Number: 6}, Ready: true},
+	} {
+		for _, a := range issueActions(status) {
+			offered[a.Key] = true
+			if a.Key == "b" {
+				continue // back is handled before the action table
+			}
+			if actionNotice(a, status) == "" {
+				t.Errorf("%q (%s) has no notice", a.Key, a.Label)
+			}
+			if actionCmd(a, status) == nil {
+				t.Errorf("%q (%s) has no command", a.Key, a.Label)
+			}
+		}
+	}
+	if actionCmd(Action{Key: "zzz"}, issues.Status{}) != nil {
+		t.Error("an unoffered key produced a command")
 	}
 }

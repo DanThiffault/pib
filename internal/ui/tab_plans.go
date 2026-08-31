@@ -115,17 +115,11 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commentIssueMsg:
 		m.notice = fmt.Sprintf("Comment on issue #%d", msg.issue.Number)
 		return m, nil
-	case closeIssueMsg:
-		m.notice = fmt.Sprintf("Close issue #%d", msg.issue.Number)
-		return m, nil
 	case openIssueMsg:
 		m.notice = fmt.Sprintf("Reopen issue #%d", msg.issue.Number)
 		return m, nil
 	case viewLogMsg:
 		m.notice = fmt.Sprintf("View log for issue #%d", msg.issue.Number)
-		return m, nil
-	case refreshIssueMsg:
-		m.notice = fmt.Sprintf("Refresh issue #%d", msg.issue.Number)
 		return m, nil
 	}
 

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"pib/internal/issues"
 	"pib/internal/ui/theme"
@@ -23,10 +23,8 @@ type viewPRMsg struct{ issue issues.Status }
 type viewBlockersMsg struct{ issue issues.Status }
 type editIssueMsg struct{ issue issues.Status }
 type commentIssueMsg struct{ issue issues.Status }
-type closeIssueMsg struct{ issue issues.Status }
 type openIssueMsg struct{ issue issues.Status }
 type viewLogMsg struct{ issue issues.Status }
-type refreshIssueMsg struct{ issue issues.Status }
 type backMsg struct{}
 
 // Action represents one item in the BBS-style action bar.
@@ -49,12 +47,12 @@ func issueActions(status issues.Status) []Action {
 	case status.InProgress:
 		return []Action{
 			{Key: "v", Label: "View run"},
-			{Key: "c", Label: "Cancel"},
+			{Key: "k", Label: "Kill run"},
 			{Key: "b", Label: "Back"},
 		}
 	case status.AwaitingReview:
 		return []Action{
-			{Key: "l", Label: "Leave feedback"},
+			{Key: "f", Label: "Feedback"},
 			{Key: "r", Label: "Respond"},
 			{Key: "v", Label: "View PR"},
 			{Key: "b", Label: "Back"},
@@ -145,14 +143,12 @@ func actionNotice(a Action, issue issues.Status) string {
 			return fmt.Sprintf("View issue #%d", issue.Number)
 		}
 	case "c":
-		if issue.InProgress {
-			return fmt.Sprintf("Cancel issue #%d", issue.Number)
-		}
 		return fmt.Sprintf("Comment on issue #%d", issue.Number)
+	case "k":
+		return fmt.Sprintf("Kill the run on issue #%d", issue.Number)
 	case "l":
-		if issue.InProgress {
-			return fmt.Sprintf("View log for issue #%d", issue.Number)
-		}
+		return fmt.Sprintf("View the run log for issue #%d", issue.Number)
+	case "f":
 		return fmt.Sprintf("Leave feedback on issue #%d", issue.Number)
 	case "r":
 		return fmt.Sprintf("Respond to issue #%d", issue.Number)
@@ -160,10 +156,8 @@ func actionNotice(a Action, issue issues.Status) string {
 		return fmt.Sprintf("Edit issue #%d", issue.Number)
 	case "o":
 		return fmt.Sprintf("Reopen issue #%d", issue.Number)
-	case "x":
-		return fmt.Sprintf("Close issue #%d", issue.Number)
 	default:
-		return fmt.Sprintf("Refresh issue #%d", issue.Number)
+		return ""
 	}
 }
 
@@ -184,14 +178,12 @@ func actionCmd(a Action, issue issues.Status) tea.Cmd {
 			return func() tea.Msg { return viewIssueMsg{issue: issue} }
 		}
 	case "c":
-		if issue.InProgress {
-			return func() tea.Msg { return cancelIssueMsg{issue: issue} }
-		}
 		return func() tea.Msg { return commentIssueMsg{issue: issue} }
+	case "k":
+		return func() tea.Msg { return cancelIssueMsg{issue: issue} }
 	case "l":
-		if issue.InProgress {
-			return func() tea.Msg { return viewLogMsg{issue: issue} }
-		}
+		return func() tea.Msg { return viewLogMsg{issue: issue} }
+	case "f":
 		return func() tea.Msg { return leaveFeedbackMsg{issue: issue} }
 	case "r":
 		return func() tea.Msg { return respondIssueMsg{issue: issue} }
@@ -199,9 +191,7 @@ func actionCmd(a Action, issue issues.Status) tea.Cmd {
 		return func() tea.Msg { return editIssueMsg{issue: issue} }
 	case "o":
 		return func() tea.Msg { return openIssueMsg{issue: issue} }
-	case "x":
-		return func() tea.Msg { return closeIssueMsg{issue: issue} }
 	default:
-		return func() tea.Msg { return refreshIssueMsg{issue: issue} }
+		return nil
 	}
 }
