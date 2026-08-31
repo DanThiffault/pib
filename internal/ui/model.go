@@ -80,7 +80,6 @@ type Model struct {
 	plansLoading        bool
 	planCursor          int
 	issueCursor         int
-	planCounts          map[string]issues.PlanCounts
 	planIssues          []issues.Status
 	planIssuesLoading   bool
 	planIssuesErr       error
