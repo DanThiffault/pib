@@ -35,8 +35,14 @@ plan-reviewer = "plan-reviewer"
 # Applying a new plan adds an issue that reviews it against the codebase, and
 # blocks the rest of the plan until it closes. Set this to false to plan
 # without one.
+#
+# isolate gives each issue its own git worktree under .pib/worktrees, so agents
+# working different issues at once cannot move each other's branch. Turn it off
+# for a project where a fresh checkout needs expensive setup — installed
+# dependencies, a build cache — and run one agent at a time instead.
 [plan]
 review = true
+isolate = true
 `
 
 // defaults mirrors Template. Used when no global config exists yet.
@@ -53,9 +59,14 @@ func defaults() map[string]string {
 
 // Config is the merged configuration.
 type Config struct {
-	types      map[string]string
-	planReview bool
+	types       map[string]string
+	planReview  bool
+	planIsolate bool
 }
+
+// PlanIsolate reports whether each issue gets its own checkout. On unless a
+// config turns it off.
+func (c Config) PlanIsolate() bool { return c.planIsolate }
 
 // PlanReview reports whether applying a new plan should add an issue that
 // reviews it. On unless a config turns it off.
@@ -66,9 +77,10 @@ func (c Config) PlanReview() bool { return c.planReview }
 type file struct {
 	Types map[string]string `toml:"types"`
 	Plan  struct {
-		// Review is a pointer so an absent [plan] section leaves the
-		// default alone rather than reading as false.
-		Review *bool `toml:"review"`
+		// Both are pointers so an absent [plan] section leaves the
+		// defaults alone rather than reading as false.
+		Review  *bool `toml:"review"`
+		Isolate *bool `toml:"isolate"`
 	} `toml:"plan"`
 }
 
@@ -105,7 +117,7 @@ func Load(workspaceDir string) (Config, error) {
 // it exists, so a type deleted from it stays deleted; the built-in defaults
 // apply only while there is no global file at all.
 func LoadPaths(global, workspace string) (Config, error) {
-	cfg := Config{planReview: true}
+	cfg := Config{planReview: true, planIsolate: true}
 
 	base, found, err := read(global)
 	if err != nil {
@@ -117,6 +129,9 @@ func LoadPaths(global, workspace string) (Config, error) {
 	}
 	if base.Plan.Review != nil {
 		cfg.planReview = *base.Plan.Review
+	}
+	if base.Plan.Isolate != nil {
+		cfg.planIsolate = *base.Plan.Isolate
 	}
 
 	over, found, err := read(workspace)
@@ -130,6 +145,9 @@ func LoadPaths(global, workspace string) (Config, error) {
 	}
 	if over.Plan.Review != nil {
 		cfg.planReview = *over.Plan.Review
+	}
+	if over.Plan.Isolate != nil {
+		cfg.planIsolate = *over.Plan.Isolate
 	}
 
 	return cfg, nil

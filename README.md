@@ -216,6 +216,18 @@ for the next round.
 It waits for the round to finish and prints a line per agent. An issue that was ready
 but whose type maps to no agent is reported rather than skipped silently.
 
+Each issue gets its own git checkout under `.pib/worktrees/<number>/`, because a branch
+belongs to a directory rather than to a process: two workers in one directory both run
+`git checkout -b`, and the second moves the tree out from under the first. The checkout
+is detached, so each agent's own branch command lands in its own tree and nowhere else,
+and a followup comes back to the same one — with its branch and whatever it had not
+committed. Checkouts of closed issues are swept when pib next starts, which is the only
+moment nothing is running in them.
+
+Turn it off with `isolate = false` under `[plan]` for a project where a fresh checkout
+needs expensive setup — installed dependencies, a build cache — and run one agent at a
+time instead.
+
 Applying the same plan again is an **additive merge**: known ids update, new ids are
 created, and an issue you dropped from the document is left alone — never closed,
 never deleted. A closed issue stays closed. So a second planner pass is safe to run

@@ -205,3 +205,117 @@ func TestSpawnBuildsChildCommand(t *testing.T) {
 		t.Error("child stole focus; want it opened in the background")
 	}
 }
+
+// workspaces is a stand-in for the worktree manager.
+type workspaces struct {
+	dirs map[int64]string
+	err  error
+}
+
+func (w workspaces) For(issue int64) (string, error) {
+	if w.err != nil {
+		return "", w.err
+	}
+	return w.dirs[issue], nil
+}
+
+func scoutRunner(t *testing.T, dir string) Runner {
+	t.Helper()
+	return Runner{
+		GitRoot:       dir,
+		StateDir:      dir,
+		ExtensionPath: "/x/pib.ts",
+		SocketPath:    "/x/pib.sock",
+		Load: func(string) (agent.Definition, error) {
+			return agent.Definition{
+				Name:  "worker",
+				Tools: []string{"read", "bash"},
+				Model: "m",
+				Body:  "You are a worker.",
+			}, nil
+		},
+	}
+}
+
+// Two agents working different issues must not share a checkout: a branch
+// belongs to the directory, so the second `git checkout -b` would move the
+// first one's tree.
+func TestAgentsRunInTheirIssuesOwnCheckout(t *testing.T) {
+	windows := capture(t)
+	dir := t.TempDir()
+
+	r := scoutRunner(t, dir)
+	r.Workspace = workspaces{dirs: map[int64]string{11: "/w/11", 12: "/w/12"}}
+
+	for _, issue := range []int64{11, 12} {
+		if _, err := r.Run(context.Background(), protocol.Request{
+			Op: protocol.OpSpawn, Agent: "worker", Task: "work", Issue: issue,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if len(*windows) != 2 {
+		t.Fatalf("opened %d windows, want 2", len(*windows))
+	}
+	if got := (*windows)[0].opts.Dir; got != "/w/11" {
+		t.Errorf("#11 ran in %q, want /w/11", got)
+	}
+	if got := (*windows)[1].opts.Dir; got != "/w/12" {
+		t.Errorf("#12 ran in %q, want /w/12", got)
+	}
+}
+
+// An agent with no issue has no checkout of its own, and runs where the user is.
+func TestAgentWithNoIssueRunsInTheRepository(t *testing.T) {
+	windows := capture(t)
+	dir := t.TempDir()
+
+	r := scoutRunner(t, dir)
+	r.Workspace = workspaces{dirs: map[int64]string{0: dir}}
+
+	if _, err := r.Run(context.Background(), protocol.Request{
+		Op: protocol.OpSpawn, Agent: "worker", Task: "look around",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*windows)[0].opts.Dir; got != dir {
+		t.Errorf("ran in %q, want the repository %q", got, dir)
+	}
+}
+
+// Without a Workspaces every agent runs in the repository, which is how pib
+// behaved before checkouts were separated.
+func TestWithoutIsolationEveryAgentRunsInTheRepository(t *testing.T) {
+	windows := capture(t)
+	dir := t.TempDir()
+
+	r := scoutRunner(t, dir)
+	if _, err := r.Run(context.Background(), protocol.Request{
+		Op: protocol.OpSpawn, Agent: "worker", Task: "work", Issue: 11,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*windows)[0].opts.Dir; got != dir {
+		t.Errorf("ran in %q, want the repository %q", got, dir)
+	}
+}
+
+// A checkout that cannot be made is not something to paper over: the agent
+// would branch in the shared tree and race whoever else is running.
+func TestNoCheckoutMeansNoAgent(t *testing.T) {
+	windows := capture(t)
+	dir := t.TempDir()
+
+	r := scoutRunner(t, dir)
+	r.Workspace = workspaces{err: errors.New("disk full")}
+
+	if _, err := r.Run(context.Background(), protocol.Request{
+		Op: protocol.OpSpawn, Agent: "worker", Task: "work", Issue: 11,
+	}); err == nil {
+		t.Error("spawned an agent with no checkout of its own")
+	}
+	if len(*windows) != 0 {
+		t.Errorf("opened %d windows despite having nowhere to run", len(*windows))
+	}
+}

@@ -60,6 +60,22 @@ type run struct {
 	agent string
 }
 
+// Workspaces hands out a working directory per issue. worktree.Manager
+// satisfies it.
+type Workspaces interface {
+	For(issue int64) (string, error)
+}
+
+// dirFor is where an agent working this issue should run. Without a Workspaces
+// it is the repository itself, which is how pib behaved before checkouts were
+// separated.
+func (r Runner) dirFor(issue int64) (string, error) {
+	if r.Workspace == nil {
+		return r.GitRoot, nil
+	}
+	return r.Workspace.For(issue)
+}
+
 // Runner spawns agents for one repository.
 type Runner struct {
 	// GitRoot is the working directory agents run in.
@@ -74,6 +90,10 @@ type Runner struct {
 	Load func(name string) (agent.Definition, error)
 	// Record notes runs as they start and finish. Optional.
 	Record Recorder
+	// Workspace gives an issue its own checkout, so agents working different
+	// issues at once cannot move each other's branch. Optional: without one
+	// every agent runs in GitRoot, which is safe only one at a time.
+	Workspace Workspaces
 }
 
 // ErrSelfSpawn reports an agent trying to spawn itself.
@@ -180,9 +200,14 @@ func (r Runner) agentOf(id string) string {
 // await opens the window, waits for it to close, and reads the result. If the
 // caller goes away the window is killed rather than left orphaned.
 func (r Runner) await(ctx context.Context, info run, runDir, name string, argv []string) (protocol.Response, error) {
+	dir, err := r.dirFor(info.issue)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+
 	window, err := newWindow(tmux.Options{
 		Name:       name,
-		Dir:        r.GitRoot,
+		Dir:        dir,
 		Env:        childEnv(runDir, r.SocketPath, info.agent, info.issue),
 		Background: true,
 	}, argv)

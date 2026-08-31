@@ -17,6 +17,7 @@ import (
 	"pib/internal/runner"
 	"pib/internal/server"
 	"pib/internal/workspace"
+	"pib/internal/worktree"
 )
 
 // phase tracks where startup is in the workspace checks. The main view is
@@ -130,6 +131,24 @@ func startServer(ws workspace.Status) tea.Cmd {
 			ExtensionPath: extensionPath,
 			SocketPath:    server.Path(ws.Dir),
 			Record:        store,
+		}
+
+		// A branch belongs to a checkout, not to a process, so agents working
+		// different issues in one directory move each other's. Each issue gets
+		// its own checkout instead.
+		if cfg.PlanIsolate() {
+			trees := worktree.Manager{GitRoot: ws.GitRoot, StateDir: ws.Dir}
+			agents.Workspace = trees
+
+			// Nothing is running yet, which is the only safe moment to take a
+			// checkout away — an issue can close through reconciliation while
+			// its own agent is still working in one.
+			if _, err := trees.Sweep(func(issue int64) bool {
+				current, err := store.Issue(issue)
+				return err == nil && current.State == issues.StateClosed
+			}); err != nil {
+				return serverStartedMsg{err: err}
+			}
 		}
 
 		// Whenever an issue closes — explicitly, or because pib saw its pull
