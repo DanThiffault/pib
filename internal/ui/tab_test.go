@@ -185,12 +185,11 @@ func TestPromptViewShowsTabBar(t *testing.T) {
 	}
 }
 
-func plansModel(t *testing.T, plans []issues.Plan, counts map[string]issues.PlanCounts) Model {
+func plansModel(t *testing.T, plans []issues.Plan) Model {
 	m := readyWithTabs(t)
 	m.currentTab = tabPlans
 	m.input.Blur()
 	m.plans = plans
-	m.planCounts = counts
 	m.width = 100
 	m.height = 30
 	return m
@@ -201,10 +200,6 @@ func TestPlanListNavigation(t *testing.T) {
 		{Slug: "plan-a", Title: "Plan A"},
 		{Slug: "plan-b", Title: "Plan B"},
 		{Slug: "plan-c", Title: "Plan C"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
-		"plan-b": {Total: 3, Open: 2, Closed: 1},
-		"plan-c": {Total: 0, Open: 0, Closed: 0},
 	})
 
 	// Down moves cursor
@@ -247,8 +242,6 @@ func TestPlanListNavigation(t *testing.T) {
 func TestPlanListShowsTwoPanes(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A", CreatedAt: mustParse("2024-01-15T10:00:00Z")},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 5, Open: 3, Closed: 2},
 	})
 
 	view := m.View()
@@ -263,8 +256,6 @@ func TestPlanListShowsTwoPanes(t *testing.T) {
 func TestEnterOpensPlanDetail(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -277,8 +268,6 @@ func TestEnterOpensPlanDetail(t *testing.T) {
 func TestRightOpensPlanDetail(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
@@ -291,8 +280,6 @@ func TestRightOpensPlanDetail(t *testing.T) {
 func TestEscInDetailViewGoesBack(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 
@@ -306,8 +293,6 @@ func TestEscInDetailViewGoesBack(t *testing.T) {
 func TestEscInDetailViewDoesNotQuit(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 
@@ -323,8 +308,6 @@ func TestEscInDetailViewDoesNotQuit(t *testing.T) {
 func TestLeftInDetailViewGoesBack(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 
@@ -370,9 +353,8 @@ func TestPlansLoadedMsgPopulatesCounts(t *testing.T) {
 	m.plansLoading = true
 
 	plans := []issues.Plan{{Slug: "plan-x", Title: "Plan X"}}
-	counts := map[string]issues.PlanCounts{"plan-x": {Total: 4, Open: 2, Closed: 2}}
 
-	next, _ := m.Update(plansLoadedMsg{plans: plans, counts: counts})
+	next, _ := m.Update(plansLoadedMsg{plans: plans})
 	m = next.(Model)
 
 	if m.plansLoading {
@@ -381,16 +363,11 @@ func TestPlansLoadedMsgPopulatesCounts(t *testing.T) {
 	if len(m.plans) != 1 || m.plans[0].Slug != "plan-x" {
 		t.Errorf("plans = %v, want one plan with slug plan-x", m.plans)
 	}
-	if m.planCounts["plan-x"].Total != 4 {
-		t.Errorf("planCounts total = %d, want 4", m.planCounts["plan-x"].Total)
-	}
 }
 
 func TestCtrlCQuitsFromDetailView(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 
@@ -406,8 +383,6 @@ func TestCtrlCQuitsFromDetailView(t *testing.T) {
 func TestEnterOpensPlanDetailAndLoadsIssues(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -434,8 +409,6 @@ func TestEnterOpensPlanDetailAndLoadsIssues(t *testing.T) {
 func TestPlanIssuesLoadedMsgPopulatesIssues(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 2, Open: 2, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 	m.planIssuesLoading = true
@@ -465,8 +438,6 @@ func TestPlanIssuesLoadedMsgPopulatesIssues(t *testing.T) {
 func TestIssueListNavigation(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 3, Open: 3, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 	m.planIssues = []issues.Status{
@@ -511,8 +482,6 @@ func TestIssueListNavigation(t *testing.T) {
 func TestPlanDetailShowsTwoPanes(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 2, Open: 2, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 	m.planIssues = []issues.Status{
@@ -543,8 +512,6 @@ func TestPlanDetailShowsTwoPanes(t *testing.T) {
 func TestPlanDetailShowsLoadingState(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 	m.planIssuesLoading = true
@@ -558,8 +525,6 @@ func TestPlanDetailShowsLoadingState(t *testing.T) {
 func TestPlanDetailShowsEmptyState(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 0, Open: 0, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 	m.planIssuesLoading = false
@@ -576,8 +541,6 @@ func TestPlanDetailShowsEmptyState(t *testing.T) {
 func TestPlanDetailShowsErrorState(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 0, Open: 0, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 	m.planIssuesLoading = false
@@ -597,7 +560,7 @@ func TestPlanDetailShowsErrorState(t *testing.T) {
 // window can hold fewer issues than the scroll arithmetic thinks and the
 // cursor ends up below the floor of the pane, invisible.
 func TestIssueListRowsStayWithinThePane(t *testing.T) {
-	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
 	m.height = 15
 	m.plansView = viewPlanDetail
 	m.planIssuesLoadedFor = "plan-a"
@@ -644,8 +607,6 @@ func TestIssueListRowsStayWithinThePane(t *testing.T) {
 func TestNarrowTerminalShowsSinglePane(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 	m.width = 60
 	m.height = 20
@@ -669,8 +630,6 @@ func TestNarrowTerminalShowsSinglePane(t *testing.T) {
 func TestWideTerminalShowsTwoPanes(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 	m.width = 100
 	m.height = 20
@@ -710,8 +669,6 @@ func TestTruncateAtSmallMax(t *testing.T) {
 func TestVeryNarrowWidthNoPanic(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 	m.width = 5
 	m.height = 10
@@ -745,8 +702,6 @@ func TestResizeUpdatesDimensions(t *testing.T) {
 func TestResizeHandledInPlanListView(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 20})
@@ -761,8 +716,6 @@ func TestResizeHandledInPlanListView(t *testing.T) {
 func TestResizeHandledInPlanDetailView(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, map[string]issues.PlanCounts{
-		"plan-a": {Total: 1, Open: 1, Closed: 0},
 	})
 	m.plansView = viewPlanDetail
 	m.planIssues = []issues.Status{
@@ -796,7 +749,7 @@ func TestLoadingIndicatorVisible(t *testing.T) {
 func TestDetailLoadingIndicatorVisible(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
-	}, nil)
+	})
 	m.plansView = viewPlanDetail
 	m.planIssuesLoading = true
 
@@ -813,7 +766,7 @@ func TestTabBarKeysSwitchTabsButNavigationWorksInPane(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 		{Slug: "plan-b", Title: "Plan B"},
-	}, nil)
+	})
 
 	// Up/down navigate within the pane.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -836,7 +789,7 @@ func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 		{Slug: "plan-b", Title: "Plan B"},
-	}, nil)
+	})
 	m.plansView = viewPlanDetail
 	m.planCursor = 1
 
@@ -864,7 +817,7 @@ func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
 }
 
 func TestPlanDAGPaneRendersTree(t *testing.T) {
-	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}, nil)
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "Setup", State: issues.StateOpen}},
 		{Issue: issues.Issue{Number: 2, Title: "Build", State: issues.StateOpen, BlockedBy: []int64{1}}},

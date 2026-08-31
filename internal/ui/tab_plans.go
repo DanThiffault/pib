@@ -16,9 +16,8 @@ import (
 )
 
 type plansLoadedMsg struct {
-	plans  []issues.Plan
-	counts map[string]issues.PlanCounts
-	err    error
+	plans []issues.Plan
+	err   error
 }
 
 func loadPlans(store *issues.Store) tea.Cmd {
@@ -30,11 +29,7 @@ func loadPlans(store *issues.Store) tea.Cmd {
 		if err != nil {
 			return plansLoadedMsg{err: err}
 		}
-		counts, err := store.IssueCountsByPlan()
-		if err != nil {
-			return plansLoadedMsg{err: err}
-		}
-		return plansLoadedMsg{plans: plans, counts: counts}
+		return plansLoadedMsg{plans: plans}
 	}
 }
 
@@ -63,7 +58,6 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.plans = msg.plans
-		m.planCounts = msg.counts
 		m.planCursor = 0
 		if slug := m.currentPlanSlug(); slug != "" && m.planIssuesLoadedFor != slug {
 			m.planIssuesLoading = true
