@@ -50,6 +50,7 @@ type Styles struct {
 	Tag         lipgloss.Style
 	Selected    lipgloss.Style
 	Border      lipgloss.Style
+	Divider     lipgloss.Style
 	BorderFocus lipgloss.Style
 	TabActive   lipgloss.Style
 	TabInactive lipgloss.Style
@@ -100,6 +101,8 @@ func NewStyles(p Palette) Styles {
 		Border: lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(p.Border),
+		Divider: lipgloss.NewStyle().
+			Foreground(p.Border),
 		BorderFocus: lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(p.BorderFocus),

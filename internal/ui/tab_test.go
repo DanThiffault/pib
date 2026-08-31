@@ -871,3 +871,35 @@ func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
 		t.Errorf("view shows the other plan's issues:\n%s", m.View())
 	}
 }
+
+// The pane must render exactly the height it is given. Scroll indicators are
+// extra rows, and reserving them after the window is sized is how a pane ends
+// up taller than the one beside it.
+func TestListPaneNeverExceedsItsHeight(t *testing.T) {
+	labels := []string{"one", "two", "three", "four", "five", "six", "seven", "eight"}
+
+	for _, h := range []int{1, 2, 3, 4, 5, 8, 12} {
+		for _, cursor := range []int{0, 4, 7} {
+			lines := strings.Split(listPane("Plans", labels, cursor, 30, h), "\n")
+			if len(lines) != h {
+				t.Errorf("h=%d cursor=%d rendered %d lines:\n%s",
+					h, cursor, len(lines), strings.Join(lines, "\n"))
+			}
+		}
+	}
+}
+
+// Scrolling is pointless if it hides the row it scrolled to.
+func TestListPaneKeepsTheCursorVisible(t *testing.T) {
+	labels := []string{"one", "two", "three", "four", "five", "six", "seven", "eight"}
+
+	for _, h := range []int{4, 5, 8, 12} {
+		for cursor := range labels {
+			pane := listPane("Plans", labels, cursor, 30, h)
+			if !strings.Contains(pane, labels[cursor]) {
+				t.Errorf("h=%d cursor=%d (%q) is not in the pane:\n%s",
+					h, cursor, labels[cursor], pane)
+			}
+		}
+	}
+}

@@ -207,48 +207,51 @@ func listPane(header string, labels []string, cursor, w, h int) string {
 		h = 1
 	}
 
-	// Determine how many rows are available for items.
-	// The header takes one line; scroll indicators take one line each.
-	maxItems := h - 1
-	if maxItems < 1 {
-		maxItems = 1
+	// The header takes one row, and each scroll indicator takes another. All
+	// of it has to come out of h before the window is sized, or the pane
+	// renders more lines than it was given and the pane beside it no longer
+	// lines up.
+	//
+	// Which indicators appear depends on the window, and the window depends on
+	// how many indicators appear. Two passes settle it: size the window with no
+	// indicators, see which are needed, then re-size with that reserved.
+	rows := func(reserved int) (start, end, maxItems int) {
+		maxItems = h - 1 - reserved
+		if maxItems < 1 {
+			maxItems = 1
+		}
+		if cursor >= maxItems {
+			start = cursor - maxItems + 1
+		}
+		end = start + maxItems
+		if end > len(labels) {
+			end = len(labels)
+		}
+		return start, end, maxItems
 	}
 
-	start := 0
-	if cursor >= maxItems {
-		start = cursor - maxItems + 1
+	start, end, _ := rows(0)
+	indicators := 0
+	if start > 0 {
+		indicators++
 	}
-	end := start + maxItems
-	if end > len(labels) {
-		end = len(labels)
+	if end < len(labels) {
+		indicators++
+	}
+	if indicators > 0 {
+		start, end, _ = rows(indicators)
 	}
 
-	// If the list is scrollable, reserve space for indicators and recompute.
-	if start > 0 || end < len(labels) {
-		indicatorCount := 0
-		if start > 0 {
-			indicatorCount++
-		}
-		if end < len(labels) {
-			indicatorCount++
-		}
-		proposed := h - 1 - indicatorCount
-		if proposed >= 1 {
-			maxItems = proposed
-			start = 0
-			if cursor >= maxItems {
-				start = cursor - maxItems + 1
-			}
-			end = start + maxItems
-			if end > len(labels) {
-				end = len(labels)
-			}
-		}
+	// A pane too short to hold the header, an indicator and a row cannot show
+	// a window at all. Drop the indicators rather than overflow.
+	if h-1-indicators < 1 {
+		indicators = 0
+		start, end, _ = rows(0)
 	}
 
 	lines := []string{theme.Default.PaneHeader.Width(w).Render(header)}
 
-	if start > 0 {
+	if indicators > 0 && start > 0 {
 		lines = append(lines, theme.Default.Dim.Width(w).Render("▲"))
 	}
 
@@ -264,12 +267,15 @@ func listPane(header string, labels []string, cursor, w, h int) string {
 		lines = append(lines, style.Width(w).Render(truncate(marker+labels[i], avail)))
 	}
 
-	if end < len(labels) {
+	if indicators > 0 && end < len(labels) {
 		lines = append(lines, theme.Default.Dim.Width(w).Render("▼"))
 	}
 
 	for len(lines) < h {
 		lines = append(lines, strings.Repeat(" ", w))
+	}
+	if len(lines) > h {
+		lines = lines[:h]
 	}
 
 	return lipgloss.NewStyle().Width(w).Height(h).Render(
