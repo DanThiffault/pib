@@ -126,29 +126,13 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch m.plansView {
 		case viewIssueFullScreen:
-			switch {
-			case key.Matches(keyMsg, backKeys):
+			if key.Matches(keyMsg, backKeys) {
 				m.plansView = viewPlanDetail
 				m.notice = ""
 				return m, nil
 			}
-
-			// Contextual action keys for the selected issue.
-			if m.issueCursor < len(m.planIssues) {
-				issue := m.planIssues[m.issueCursor]
-				for _, a := range issueActions(issue) {
-					if keyMsg.String() == a.Key {
-						if a.Key == "b" {
-							m.plansView = viewPlanDetail
-							m.notice = ""
-							return m, nil
-						}
-						m.notice = actionNotice(a, issue)
-						return m, actionCmd(a, issue)
-					}
-				}
-			}
-			return m, nil
+			m, cmd := m.issueActionKey(keyMsg, viewPlanDetail)
+			return m, cmd
 		case viewPlanDetail:
 			switch {
 			case key.Matches(keyMsg, backKeys):
@@ -176,22 +160,8 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Contextual action keys for the selected issue.
-			if m.issueCursor < len(m.planIssues) {
-				issue := m.planIssues[m.issueCursor]
-				for _, a := range issueActions(issue) {
-					if keyMsg.String() == a.Key {
-						if a.Key == "b" {
-							m.plansView = viewPlanList
-							m.notice = ""
-							return m, nil
-						}
-						m.notice = actionNotice(a, issue)
-						return m, actionCmd(a, issue)
-					}
-				}
-			}
-			return m, nil
+			m, cmd := m.issueActionKey(keyMsg, viewPlanList)
+			return m, cmd
 		}
 
 		// viewPlanList
@@ -247,6 +217,29 @@ func (m Model) currentPlanSlug() string {
 
 func (m Model) isNarrow() bool {
 	return m.width < 80
+}
+
+// issueActionKey dispatches a contextual action key for the selected issue.
+// The plan detail and full-screen views offer the same actions; they differ
+// only in where [B]ack goes, so back is passed in rather than assumed.
+func (m Model) issueActionKey(keyMsg tea.KeyMsg, back plansView) (Model, tea.Cmd) {
+	if m.issueCursor >= len(m.planIssues) {
+		return m, nil
+	}
+	issue := m.planIssues[m.issueCursor]
+	for _, a := range issueActions(issue) {
+		if keyMsg.String() != a.Key {
+			continue
+		}
+		if a.Key == "b" {
+			m.plansView = back
+			m.notice = ""
+			return m, nil
+		}
+		m.notice = actionNotice(a, issue)
+		return m, actionCmd(a, issue)
+	}
+	return m, nil
 }
 
 func (m Model) tabPlansView() string {
@@ -616,111 +609,62 @@ func (m Model) issueFullScreenView() string {
 		return m.renderCentered(helpStyle.Render("No issues in this plan."))
 	}
 
-	h := m.contentHeight()
-	paneH := h - 1
+	paneH := m.contentHeight() - 1
 	if paneH < 1 {
 		paneH = 1
 	}
 
-	var fullPane string
+	var pane string
 	if m.issueCursor >= len(m.planIssues) {
-		fullPane = lipgloss.NewStyle().Width(m.width).Height(paneH).Render("")
+		pane = pad(m.width, paneH, "")
 	} else {
-		issue := m.planIssues[m.issueCursor]
-		var b strings.Builder
-
-		b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render(fmt.Sprintf("#%d %s", issue.Number, issue.Title)) + "\n")
-		b.WriteString(itemStyle.Render("State: "+string(issue.State)) + "\n")
-		if issue.Type != "" {
-			b.WriteString(itemStyle.Render("Type:  "+issue.Type) + "\n")
-		}
-		b.WriteString("\n")
-
-		var flags []string
-		if issue.Blocked {
-			flags = append(flags, "blocked")
-		}
-		if issue.Ready {
-			flags = append(flags, "ready")
-		}
-		if issue.InProgress {
-			flags = append(flags, "in-progress")
-		}
-		if issue.AwaitingReview {
-			flags = append(flags, "awaiting-review")
-		}
-		if issue.Launchable {
-			flags = append(flags, "launchable")
-		}
-		if len(flags) > 0 {
-			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Status") + "\n")
-			b.WriteString(itemStyle.Render(strings.Join(flags, ", ")) + "\n")
-			b.WriteString("\n")
-		}
-
-		if len(issue.OpenBlockers) > 0 {
-			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Blockers") + "\n")
-			var blockers []string
-			for _, blocker := range issue.OpenBlockers {
-				blockers = append(blockers, fmt.Sprintf("#%d", blocker))
-			}
-			b.WriteString(itemStyle.Render(strings.Join(blockers, ", ")) + "\n")
-			b.WriteString("\n")
-		}
-
-		if len(issue.Acceptance) > 0 {
-			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Acceptance") + "\n")
-			for _, ac := range issue.Acceptance {
-				b.WriteString(itemStyle.Render("• "+ac) + "\n")
-			}
-			b.WriteString("\n")
-		}
-
-		if issue.Agent != "" {
-			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Agent") + "\n")
-			b.WriteString(itemStyle.Render(issue.Agent) + "\n")
-			b.WriteString("\n")
-		}
-
-		if issue.Run != "" {
-			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Run") + "\n")
-			b.WriteString(itemStyle.Render(issue.Run) + "\n")
-			b.WriteString("\n")
-		}
-
-		if !issue.CreatedAt.IsZero() {
-			b.WriteString(itemStyle.Render("Created: "+issue.CreatedAt.Format("2006-01-02 15:04")) + "\n")
-		}
-		if !issue.UpdatedAt.IsZero() {
-			b.WriteString(itemStyle.Render("Updated: "+issue.UpdatedAt.Format("2006-01-02 15:04")) + "\n")
-		}
-
-		content := b.String()
-		lines := strings.Split(content, "\n")
-		if len(lines) > paneH {
-			lines = lines[:paneH]
-			content = strings.Join(lines, "\n")
-		}
-
-		fullPane = lipgloss.NewStyle().Width(m.width).Height(paneH).Render(content)
+		pane = issueDetail(m.planIssues[m.issueCursor], m.width, paneH, detailFull)
 	}
 
-	actionBar := m.actionBarView(m.width)
-	return lipgloss.JoinVertical(lipgloss.Left, fullPane, actionBar)
+	// The action bar is pinned to the bottom, so the pane above it must be
+	// exactly paneH lines however long the issue is.
+	return lipgloss.JoinVertical(lipgloss.Left, pane, m.actionBarView(m.width))
 }
 
 func (m Model) issuePreviewPane(w, h int) string {
 	if m.issueCursor >= len(m.planIssues) {
-		return lipgloss.NewStyle().Width(w).Height(h).Render("")
+		return pad(w, h, "")
+	}
+	return issueDetail(m.planIssues[m.issueCursor], w, h, detailPreview)
+}
+
+// detailDepth selects how much of an issue is worth rendering. The preview
+// pane shares the plan detail view with the issue list and gets roughly half
+// the width; the full-screen view has the terminal to itself and room for the
+// fields that identify an issue outside pib.
+type detailDepth int
+
+const (
+	detailPreview detailDepth = iota
+	detailFull
+)
+
+// issueDetail renders an issue's fields into a pane of exactly w by h.
+func issueDetail(issue issues.Status, w, h int, depth detailDepth) string {
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
 	}
 
-	issue := m.planIssues[m.issueCursor]
-
 	var b strings.Builder
-	b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render(fmt.Sprintf("#%d %s", issue.Number, issue.Title)) + "\n")
+	section := func(title string) {
+		b.WriteString(theme.Default.PaneHeader.Width(w).Render(title) + "\n")
+	}
+
+	b.WriteString(theme.Default.PaneHeader.Width(w).Render(fmt.Sprintf("#%d %s", issue.Number, issue.Title)) + "\n")
 	b.WriteString(itemStyle.Render("State: "+string(issue.State)) + "\n")
 	if issue.Type != "" {
 		b.WriteString(itemStyle.Render("Type:  "+issue.Type) + "\n")
+	}
+	if depth == detailFull && issue.LocalID != "" {
+		b.WriteString(itemStyle.Render("ID:    "+issue.LocalID) + "\n")
 	}
 	b.WriteString("\n")
 
@@ -741,23 +685,28 @@ func (m Model) issuePreviewPane(w, h int) string {
 		flags = append(flags, "launchable")
 	}
 	if len(flags) > 0 {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("Status") + "\n")
-		b.WriteString(itemStyle.Render(strings.Join(flags, ", ")) + "\n")
-		b.WriteString("\n")
+		section("Status")
+		b.WriteString(itemStyle.Render(strings.Join(flags, ", ")) + "\n\n")
 	}
 
-	if len(issue.OpenBlockers) > 0 {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("Blockers") + "\n")
-		var blockers []string
-		for _, blocker := range issue.OpenBlockers {
-			blockers = append(blockers, fmt.Sprintf("#%d", blocker))
+	// The preview shows only what still holds the issue up. At full screen the
+	// whole dependency edge matters, including blockers already closed.
+	blockers := issue.OpenBlockers
+	label := "Blockers"
+	if depth == detailFull && len(issue.BlockedBy) > 0 {
+		blockers, label = issue.BlockedBy, "Blocked by"
+	}
+	if len(blockers) > 0 {
+		section(label)
+		nums := make([]string, len(blockers))
+		for i, blocker := range blockers {
+			nums[i] = fmt.Sprintf("#%d", blocker)
 		}
-		b.WriteString(itemStyle.Render(strings.Join(blockers, ", ")) + "\n")
-		b.WriteString("\n")
+		b.WriteString(itemStyle.Render(strings.Join(nums, ", ")) + "\n\n")
 	}
 
 	if len(issue.Acceptance) > 0 {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("Acceptance") + "\n")
+		section("Acceptance")
 		for _, ac := range issue.Acceptance {
 			b.WriteString(itemStyle.Render("• "+ac) + "\n")
 		}
@@ -765,15 +714,23 @@ func (m Model) issuePreviewPane(w, h int) string {
 	}
 
 	if issue.Agent != "" {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("Agent") + "\n")
-		b.WriteString(itemStyle.Render(issue.Agent) + "\n")
-		b.WriteString("\n")
+		section("Agent")
+		b.WriteString(itemStyle.Render(issue.Agent) + "\n\n")
 	}
 
 	if issue.Run != "" {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("Run") + "\n")
-		b.WriteString(itemStyle.Render(issue.Run) + "\n")
-		b.WriteString("\n")
+		section("Run")
+		b.WriteString(itemStyle.Render(issue.Run) + "\n\n")
+	}
+
+	// The pull request is how the work leaves pib, and the action bar offers
+	// to open it — so the full-screen view says which one it would open.
+	if depth == detailFull && issue.PRURL != "" {
+		section("Pull request")
+		if issue.PRState != "" {
+			b.WriteString(itemStyle.Render(issue.PRState) + "\n")
+		}
+		b.WriteString(itemStyle.Render(issue.PRURL) + "\n\n")
 	}
 
 	if !issue.CreatedAt.IsZero() {
@@ -783,12 +740,13 @@ func (m Model) issuePreviewPane(w, h int) string {
 		b.WriteString(itemStyle.Render("Updated: "+issue.UpdatedAt.Format("2006-01-02 15:04")) + "\n")
 	}
 
-	content := b.String()
-	lines := strings.Split(content, "\n")
-	if len(lines) > h {
-		lines = lines[:h]
-		content = strings.Join(lines, "\n")
-	}
+	return pad(w, h, b.String())
+}
 
-	return lipgloss.NewStyle().Width(w).Height(h).Render(content)
+// pad fits content to exactly w by h. Height alone only pads, so a long line
+// that wraps would push the pane past the rows it was given and shove whatever
+// sits below it off the screen; MaxHeight truncates after wrapping, which is
+// the only point at which the real line count is known.
+func pad(w, h int, content string) string {
+	return lipgloss.NewStyle().Width(w).Height(h).MaxHeight(h).Render(content)
 }

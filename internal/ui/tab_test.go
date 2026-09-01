@@ -1404,3 +1404,91 @@ func TestEveryOfferedActionResolves(t *testing.T) {
 		t.Error("an unoffered key produced a command")
 	}
 }
+
+// A long acceptance criterion wraps when it is rendered, which happens after
+// any line counting. If the pane is not clamped it grows past the rows it was
+// given and pushes the action bar off the bottom of the screen.
+func TestFullScreenActionBarSurvivesWrappingContent(t *testing.T) {
+	long := "This acceptance criterion is deliberately long enough that it must wrap across several terminal lines when the pane is narrow"
+
+	for _, size := range []struct{ w, h int }{{100, 30}, {40, 30}, {30, 20}, {20, 12}} {
+		m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
+		m.width, m.height = size.w, size.h
+		m.plansView = viewIssueFullScreen
+		m.planIssues = []issues.Status{{
+			Issue: issues.Issue{
+				Number: 14, Title: "An issue with a title long enough to wrap on its own",
+				State: issues.StateOpen, Type: "task",
+				Acceptance: []string{long, long, long, long, long, long},
+			},
+			AwaitingReview: true,
+		}}
+
+		lines := strings.Split(m.issueFullScreenView(), "\n")
+		if len(lines) != m.contentHeight() {
+			t.Errorf("%dx%d: rendered %d lines into %d", size.w, size.h, len(lines), m.contentHeight())
+		}
+		if last := lines[len(lines)-1]; !strings.Contains(last, "[B]") && !strings.Contains(last, "[") {
+			t.Errorf("%dx%d: last line is %q, want the action bar", size.w, size.h, last)
+		}
+	}
+}
+
+// The preview pane shares its row with the issue list, so overflowing it
+// breaks the alignment of both.
+func TestPreviewPaneStaysWithinItsPane(t *testing.T) {
+	long := "This acceptance criterion is deliberately long enough that it must wrap across several terminal lines when the pane is narrow"
+
+	m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
+	m.planIssues = []issues.Status{{
+		Issue: issues.Issue{Number: 1, Title: "T", State: issues.StateOpen, Type: "task",
+			Acceptance: []string{long, long, long, long, long, long}},
+	}}
+
+	if got := len(strings.Split(m.issuePreviewPane(45, 20), "\n")); got != 20 {
+		t.Errorf("preview rendered %d lines into 20", got)
+	}
+}
+
+// The action bar offers to open the pull request, so the full-screen view says
+// which one that is. The preview pane has no room for it.
+func TestFullScreenShowsThePullRequest(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{{
+		Issue: issues.Issue{
+			Number: 14, Title: "T", State: issues.StateOpen, Type: "task",
+			PRURL: "https://example.test/pull/9", PRState: "open",
+		},
+		AwaitingReview: true,
+	}}
+
+	if view := m.issueFullScreenView(); !strings.Contains(view, "https://example.test/pull/9") {
+		t.Error("full-screen view does not show the pull request the action bar would open")
+	}
+	if preview := m.issuePreviewPane(45, 20); strings.Contains(preview, "https://example.test/pull/9") {
+		t.Error("preview pane spent its width on the pull request URL")
+	}
+}
+
+// A closed blocker still explains why an issue is shaped the way it is, so the
+// full-screen view shows the whole edge rather than only what is outstanding.
+func TestFullScreenShowsEveryBlockerNotJustOpenOnes(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{{
+		Issue: issues.Issue{
+			Number: 16, Title: "T", State: issues.StateOpen, Type: "task",
+			BlockedBy: []int64{13, 14},
+		},
+		Blocked:      true,
+		OpenBlockers: []int64{14},
+	}}
+
+	view := m.issueFullScreenView()
+	for _, want := range []string{"#13", "#14"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("full-screen view missing blocker %s", want)
+		}
+	}
+}
