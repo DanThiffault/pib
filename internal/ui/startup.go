@@ -64,6 +64,7 @@ type agentsInstalledMsg struct {
 type serverStartedMsg struct {
 	server    *server.Server
 	store     *issues.Store
+	agents    *runner.Runner
 	extension string
 	socket    string
 	config    config.Config
@@ -169,7 +170,7 @@ func startServer(ws workspace.Status) tea.Cmd {
 			return serverStartedMsg{err: err}
 		}
 
-		return serverStartedMsg{server: srv, store: store, extension: extensionPath, socket: srv.Addr(), config: cfg}
+		return serverStartedMsg{server: srv, store: store, agents: &agents, extension: extensionPath, socket: srv.Addr(), config: cfg}
 	}
 }
 
@@ -253,6 +254,7 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		}
 		m.server = msg.server
 		m.store = msg.store
+		m.agents = msg.agents
 		m.extension = msg.extension
 		m.socket = msg.socket
 		m.cfg = msg.config

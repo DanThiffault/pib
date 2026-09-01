@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"pib/internal/issues"
+	"pib/internal/runner"
 )
 
 func mustParse(s string) time.Time {
@@ -1473,6 +1474,102 @@ func TestFullScreenShowsThePullRequest(t *testing.T) {
 
 // A closed blocker still explains why an issue is shaped the way it is, so the
 // full-screen view shows the whole edge rather than only what is outstanding.
+func TestStartRefusesWhenNoAgentMapped(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+
+	next, _ := m.Update(startIssueMsg{issue: issues.Status{
+		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "feature", State: issues.StateOpen},
+		Ready: true,
+		Agent: "",
+	}})
+	m = next.(Model)
+	if !strings.Contains(m.notice, `No agent is mapped to type "feature"`) {
+		t.Errorf("notice = %q, want refusal for unmapped type", m.notice)
+	}
+}
+
+func TestStartRefusesWhenNotReady(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+
+	next, _ := m.Update(startIssueMsg{issue: issues.Status{
+		Issue:        issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Ready:        false,
+		Agent:        "worker",
+		Blocked:      true,
+		OpenBlockers: []int64{2},
+	}})
+	m = next.(Model)
+	if !strings.Contains(m.notice, "is not ready") {
+		t.Errorf("notice = %q, want refusal for not-ready issue", m.notice)
+	}
+}
+
+func TestStartRefusesWhenRunnerUnavailable(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+
+	next, _ := m.Update(startIssueMsg{issue: issues.Status{
+		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Ready: true,
+		Agent: "worker",
+	}})
+	m = next.(Model)
+	if !strings.Contains(m.notice, "Agent runner is not available") {
+		t.Errorf("notice = %q, want runner unavailable message", m.notice)
+	}
+}
+
+func TestStartReturnsBatchWithRefreshAndSpawn(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	dir := t.TempDir()
+	m.agents = &runner.Runner{
+		GitRoot:  dir,
+		StateDir: dir,
+	}
+
+	next, cmd := m.Update(startIssueMsg{issue: issues.Status{
+		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Ready: true,
+		Agent: "worker",
+	}})
+	m = next.(Model)
+
+	if !strings.Contains(m.notice, "Starting worker on #1") {
+		t.Errorf("notice = %q, want starting message", m.notice)
+	}
+	if !m.planIssuesLoading {
+		t.Error("planIssuesLoading = false, want true after start")
+	}
+	if cmd == nil {
+		t.Fatal("expected command from start")
+	}
+}
+
+func TestAgentFinishedRefreshesIssues(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+
+	next, cmd := m.Update(agentFinishedMsg{issue: issues.Status{
+		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Agent: "worker",
+	}})
+	m = next.(Model)
+
+	if !m.planIssuesLoading {
+		t.Error("planIssuesLoading = false, want true after agent finished")
+	}
+	if cmd == nil {
+		t.Fatal("expected refresh command after agent finished")
+	}
+	msg := cmd()
+	if _, ok := msg.(planIssuesLoadedMsg); !ok {
+		t.Errorf("cmd returned %T, want planIssuesLoadedMsg", msg)
+	}
+}
+
 func TestFullScreenShowsEveryBlockerNotJustOpenOnes(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
 	m.plansView = viewIssueFullScreen

@@ -14,6 +14,7 @@ import (
 	"pib/internal/server"
 	"pib/internal/ui/theme"
 	"pib/internal/workspace"
+	"pib/internal/runner"
 )
 
 var (
@@ -69,6 +70,7 @@ type Model struct {
 	notice    string
 	server    *server.Server
 	store     *issues.Store
+	agents    *runner.Runner
 	extension string
 	socket    string
 	agentsDir string

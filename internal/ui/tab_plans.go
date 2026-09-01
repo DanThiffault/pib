@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -12,6 +13,8 @@ import (
 
 	"pib/internal/config"
 	"pib/internal/issues"
+	"pib/internal/runner"
+	"pib/internal/protocol"
 	"pib/internal/ui/theme"
 )
 
@@ -85,7 +88,18 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	// Semantic action messages — the contract for future backend handlers.
 	case startIssueMsg:
-		m.notice = fmt.Sprintf("Start issue #%d", msg.issue.Number)
+		return m.handleStartIssue(msg.issue)
+	case agentFinishedMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("%s #%d stopped: %v", msg.issue.Agent, msg.issue.Number, msg.err)
+		} else {
+			m.notice = fmt.Sprintf("%s #%d finished: %s", msg.issue.Agent, msg.issue.Number, msg.status)
+		}
+		slug := m.currentPlanSlug()
+		if slug != "" {
+			m.planIssuesLoading = true
+			return m, loadPlanIssues(m.store, slug, m.cfg)
+		}
 		return m, nil
 	case viewIssueMsg:
 		m.notice = fmt.Sprintf("View issue #%d", msg.issue.Number)
@@ -213,6 +227,45 @@ func (m Model) currentPlanSlug() string {
 		return ""
 	}
 	return m.plans[m.planCursor].Slug
+}
+
+func (m Model) handleStartIssue(issue issues.Status) (Model, tea.Cmd) {
+	if issue.Agent == "" {
+		m.notice = fmt.Sprintf("No agent is mapped to type %q", issue.Type)
+		return m, nil
+	}
+	if !issue.Ready {
+		m.notice = fmt.Sprintf("#%d is not ready: %s", issue.Number, runner.Blocking(issue))
+		return m, nil
+	}
+	if m.agents == nil {
+		m.notice = "Agent runner is not available"
+		return m, nil
+	}
+	m.notice = fmt.Sprintf("Starting %s on #%d — %s", issue.Agent, issue.Number, issue.Title)
+	slug := m.currentPlanSlug()
+	m.planIssuesLoading = true
+	return m, tea.Batch(
+		loadPlanIssues(m.store, slug, m.cfg),
+		spawnAgentCmd(m.agents, issue),
+	)
+}
+
+func spawnAgentCmd(r *runner.Runner, issue issues.Status) tea.Cmd {
+	return func() tea.Msg {
+		req := protocol.Request{
+			Op:    protocol.OpSpawn,
+			Agent: issue.Agent,
+			Name:  fmt.Sprintf("%s #%d", issue.Agent, issue.Number),
+			Task:  runner.Briefing(issue.Number, issue.Title),
+			Issue: issue.Number,
+		}
+		resp, err := r.Run(context.Background(), req)
+		if err != nil {
+			return agentFinishedMsg{issue: issue, err: err}
+		}
+		return agentFinishedMsg{issue: issue, status: resp.Status, text: resp.Text}
+	}
 }
 
 func (m Model) isNarrow() bool {
