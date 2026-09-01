@@ -53,6 +53,7 @@ type plansView int
 const (
 	viewPlanList plansView = iota
 	viewPlanDetail
+	viewIssueFullScreen
 )
 
 type Model struct {
@@ -145,7 +146,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Quitting works from every tab, not just the one that used to be
 		// the whole interface — except when esc means "back" in a drill-down.
 		quitting := key.Matches(keyMsg, cancelKeys)
-		if m.currentTab == tabPlans && m.plansView == viewPlanDetail && key.Matches(keyMsg, backKeys) {
+		if m.currentTab == tabPlans && (m.plansView == viewPlanDetail || m.plansView == viewIssueFullScreen) && key.Matches(keyMsg, backKeys) {
 			quitting = false
 		}
 		if quitting {
