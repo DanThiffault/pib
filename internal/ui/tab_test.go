@@ -365,18 +365,300 @@ func TestPlansLoadedMsgPopulatesCounts(t *testing.T) {
 	}
 }
 
-func TestCtrlCQuitsFromDetailView(t *testing.T) {
+func TestRightArrowFromDetailOpensFullScreen(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
 	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(Model)
+	if m.plansView != viewIssueFullScreen {
+		t.Errorf("plansView = %v, want viewIssueFullScreen", m.plansView)
+	}
+}
+
+func TestEnterFromDetailOpensFullScreen(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.plansView != viewIssueFullScreen {
+		t.Errorf("plansView = %v, want viewIssueFullScreen", m.plansView)
+	}
+}
+
+func TestEscInFullScreenReturnsToDetail(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.plansView != viewPlanDetail {
+		t.Errorf("plansView = %v, want viewPlanDetail after esc", m.plansView)
+	}
+}
+
+func TestEscInFullScreenDoesNotQuit(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		return
+	}
+	if _, quitting := cmd().(tea.QuitMsg); quitting {
+		t.Error("esc in full-screen view should go back, not quit")
+	}
+}
+
+func TestLeftInFullScreenReturnsToDetail(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = next.(Model)
+	if m.plansView != viewPlanDetail {
+		t.Errorf("plansView = %v, want viewPlanDetail after left", m.plansView)
+	}
+}
+
+func TestFullScreenShowsIssueDetails(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "First Issue", State: issues.StateOpen, Type: "task", Acceptance: []string{"it works"}, CreatedAt: mustParse("2024-01-15T10:00:00Z")}, Ready: true, Agent: "builder", Run: "run-123"},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+	m.issueCursor = 0
+
+	view := m.View()
+	if !strings.Contains(view, "First Issue") {
+		t.Errorf("view missing issue title:\n%s", view)
+	}
+	if !strings.Contains(view, "#1") {
+		t.Errorf("view missing issue number:\n%s", view)
+	}
+	if !strings.Contains(view, "ready") {
+		t.Errorf("view missing ready flag:\n%s", view)
+	}
+	if !strings.Contains(view, "builder") {
+		t.Errorf("view missing agent:\n%s", view)
+	}
+	if !strings.Contains(view, "run-123") {
+		t.Errorf("view missing run:\n%s", view)
+	}
+	if !strings.Contains(view, "it works") {
+		t.Errorf("view missing acceptance criteria:\n%s", view)
+	}
+	if !strings.Contains(view, "Created:") {
+		t.Errorf("view missing created timestamp:\n%s", view)
+	}
+}
+
+func TestFullScreenActionBarAtBottom(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "Start") {
+		t.Errorf("action bar missing Start:\n%s", view)
+	}
+	if !strings.Contains(view, "Back") {
+		t.Errorf("action bar missing Back:\n%s", view)
+	}
+}
+
+func TestTabNavigatesFromFullScreen(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(Model)
+	if m.currentTab != tabPlan {
+		t.Errorf("currentTab = %v, want tabPlan after tab", m.currentTab)
+	}
+}
+
+func TestNumberKeysSwitchTabsFromFullScreen(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+	m.input.Blur()
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	m = next.(Model)
+	if m.currentTab != tabPlan {
+		t.Errorf("currentTab = %v, want tabPlan after 1", m.currentTab)
+	}
+}
+
+func TestBackKeyInFullScreenReturnsToDetail(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	m = next.(Model)
+	if m.plansView != viewPlanDetail {
+		t.Errorf("plansView = %v, want viewPlanDetail after back key", m.plansView)
+	}
+}
+
+func TestFullScreenActionKeyEmitsMessage(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	m = next.(Model)
+	if m.notice == "" {
+		t.Error("expected notice after pressing start in full-screen")
+	}
+	if cmd == nil {
+		t.Fatal("expected command from start key in full-screen")
+	}
+	msg := cmd()
+	if _, ok := msg.(startIssueMsg); !ok {
+		t.Errorf("cmd returned %T, want startIssueMsg", msg)
+	}
+}
+
+func TestFullScreenNoEmptyWhenNoIssues(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+
+	view := m.View()
+	if !strings.Contains(view, "No issues") {
+		t.Errorf("view missing empty state:\n%s", view)
+	}
+}
+
+func TestFullScreenShowsLoading(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssuesLoading = true
+
+	view := m.View()
+	if !strings.Contains(view, "Loading") {
+		t.Errorf("view missing loading indicator:\n%s", view)
+	}
+}
+
+func TestFullScreenShowsError(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssuesErr = errors.New("store failed")
+
+	view := m.View()
+	if !strings.Contains(view, "Error loading issues") {
+		t.Errorf("view missing error state:\n%s", view)
+	}
+}
+
+func TestFullScreenShowsBlockers(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Blocked"}, Blocked: true, OpenBlockers: []int64{2, 3}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+	m.issueCursor = 0
+
+	view := m.View()
+	if !strings.Contains(view, "#2") {
+		t.Errorf("view missing blocker #2:\n%s", view)
+	}
+	if !strings.Contains(view, "#3") {
+		t.Errorf("view missing blocker #3:\n%s", view)
+	}
+	if !strings.Contains(view, "blocked") {
+		t.Errorf("view missing blocked flag:\n%s", view)
+	}
+}
+
+func TestCtrlCQuitsFromFullScreen(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.plansView = viewIssueFullScreen
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("ctrl+c produced no command, want quit")
 	}
 	if _, quitting := cmd().(tea.QuitMsg); !quitting {
-		t.Error("ctrl+c in detail view should quit")
+		t.Error("ctrl+c in full-screen view should quit")
 	}
 }
 

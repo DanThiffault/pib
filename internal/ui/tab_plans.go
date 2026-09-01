@@ -125,6 +125,30 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch m.plansView {
+		case viewIssueFullScreen:
+			switch {
+			case key.Matches(keyMsg, backKeys):
+				m.plansView = viewPlanDetail
+				m.notice = ""
+				return m, nil
+			}
+
+			// Contextual action keys for the selected issue.
+			if m.issueCursor < len(m.planIssues) {
+				issue := m.planIssues[m.issueCursor]
+				for _, a := range issueActions(issue) {
+					if keyMsg.String() == a.Key {
+						if a.Key == "b" {
+							m.plansView = viewPlanDetail
+							m.notice = ""
+							return m, nil
+						}
+						m.notice = actionNotice(a, issue)
+						return m, actionCmd(a, issue)
+					}
+				}
+			}
+			return m, nil
 		case viewPlanDetail:
 			switch {
 			case key.Matches(keyMsg, backKeys):
@@ -141,6 +165,13 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.issueCursor < len(m.planIssues)-1 {
 					m.issueCursor++
 					m.notice = ""
+				}
+				return m, nil
+			case key.Matches(keyMsg, selectKeys):
+				if len(m.planIssues) > 0 {
+					m.plansView = viewIssueFullScreen
+					m.notice = ""
+					return m, nil
 				}
 				return m, nil
 			}
@@ -230,6 +261,8 @@ func (m Model) tabPlansView() string {
 	}
 
 	switch m.plansView {
+	case viewIssueFullScreen:
+		return m.issueFullScreenView()
 	case viewPlanDetail:
 		return m.planDetailTwoPaneView()
 	default:
@@ -570,6 +603,110 @@ func (m Model) issueListPane(w, h int) string {
 		labels[i] = fmt.Sprintf("#%d %s", issue.Number, issue.Title)
 	}
 	return listPane("Issues", labels, m.issueCursor, w, h)
+}
+
+func (m Model) issueFullScreenView() string {
+	if m.planIssuesLoading {
+		return m.renderCentered(loadingStyle.Render("◐ Loading issues…"))
+	}
+	if m.planIssuesErr != nil {
+		return m.renderCentered(errorStyle.Render("Error loading issues: " + m.planIssuesErr.Error()))
+	}
+	if len(m.planIssues) == 0 {
+		return m.renderCentered(helpStyle.Render("No issues in this plan."))
+	}
+
+	h := m.contentHeight()
+	paneH := h - 1
+	if paneH < 1 {
+		paneH = 1
+	}
+
+	var fullPane string
+	if m.issueCursor >= len(m.planIssues) {
+		fullPane = lipgloss.NewStyle().Width(m.width).Height(paneH).Render("")
+	} else {
+		issue := m.planIssues[m.issueCursor]
+		var b strings.Builder
+
+		b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render(fmt.Sprintf("#%d %s", issue.Number, issue.Title)) + "\n")
+		b.WriteString(itemStyle.Render("State: "+string(issue.State)) + "\n")
+		if issue.Type != "" {
+			b.WriteString(itemStyle.Render("Type:  "+issue.Type) + "\n")
+		}
+		b.WriteString("\n")
+
+		var flags []string
+		if issue.Blocked {
+			flags = append(flags, "blocked")
+		}
+		if issue.Ready {
+			flags = append(flags, "ready")
+		}
+		if issue.InProgress {
+			flags = append(flags, "in-progress")
+		}
+		if issue.AwaitingReview {
+			flags = append(flags, "awaiting-review")
+		}
+		if issue.Launchable {
+			flags = append(flags, "launchable")
+		}
+		if len(flags) > 0 {
+			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Status") + "\n")
+			b.WriteString(itemStyle.Render(strings.Join(flags, ", ")) + "\n")
+			b.WriteString("\n")
+		}
+
+		if len(issue.OpenBlockers) > 0 {
+			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Blockers") + "\n")
+			var blockers []string
+			for _, blocker := range issue.OpenBlockers {
+				blockers = append(blockers, fmt.Sprintf("#%d", blocker))
+			}
+			b.WriteString(itemStyle.Render(strings.Join(blockers, ", ")) + "\n")
+			b.WriteString("\n")
+		}
+
+		if len(issue.Acceptance) > 0 {
+			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Acceptance") + "\n")
+			for _, ac := range issue.Acceptance {
+				b.WriteString(itemStyle.Render("• "+ac) + "\n")
+			}
+			b.WriteString("\n")
+		}
+
+		if issue.Agent != "" {
+			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Agent") + "\n")
+			b.WriteString(itemStyle.Render(issue.Agent) + "\n")
+			b.WriteString("\n")
+		}
+
+		if issue.Run != "" {
+			b.WriteString(lipgloss.NewStyle().Bold(true).Width(m.width).Render("Run") + "\n")
+			b.WriteString(itemStyle.Render(issue.Run) + "\n")
+			b.WriteString("\n")
+		}
+
+		if !issue.CreatedAt.IsZero() {
+			b.WriteString(itemStyle.Render("Created: "+issue.CreatedAt.Format("2006-01-02 15:04")) + "\n")
+		}
+		if !issue.UpdatedAt.IsZero() {
+			b.WriteString(itemStyle.Render("Updated: "+issue.UpdatedAt.Format("2006-01-02 15:04")) + "\n")
+		}
+
+		content := b.String()
+		lines := strings.Split(content, "\n")
+		if len(lines) > paneH {
+			lines = lines[:paneH]
+			content = strings.Join(lines, "\n")
+		}
+
+		fullPane = lipgloss.NewStyle().Width(m.width).Height(paneH).Render(content)
+	}
+
+	actionBar := m.actionBarView(m.width)
+	return lipgloss.JoinVertical(lipgloss.Left, fullPane, actionBar)
 }
 
 func (m Model) issuePreviewPane(w, h int) string {
