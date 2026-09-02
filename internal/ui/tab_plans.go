@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,8 +14,8 @@ import (
 
 	"pib/internal/config"
 	"pib/internal/issues"
-	"pib/internal/runner"
 	"pib/internal/protocol"
+	"pib/internal/runner"
 	"pib/internal/ui/theme"
 )
 
@@ -83,7 +84,7 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.planIssuesErr = msg.err
 			return m, nil
 		}
-		m.planIssues = msg.issues
+		m.planIssues = m.markInFlight(msg.issues)
 		m.planIssuesErr = nil
 		return m, nil
 	// Semantic action messages — the contract for future backend handlers.
@@ -95,12 +96,16 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = fmt.Sprintf("%s #%d finished: %s", msg.issue.Agent, msg.issue.Number, msg.status)
 		}
-		slug := m.currentPlanSlug()
-		if slug != "" {
-			m.planIssuesLoading = true
-			return m, loadPlanIssues(m.store, slug, m.cfg)
+		delete(m.inFlight, msg.issue.Number)
+		return m, m.refreshIssues()
+	case refreshTickMsg:
+		// The tick only runs while pib is waiting on an agent, so it stops on
+		// its own once the last one ends.
+		if len(m.inFlight) == 0 {
+			m.polling = false
+			return m, nil
 		}
-		return m, nil
+		return m, tea.Batch(m.refreshIssues(), refreshTick())
 	case viewIssueMsg:
 		m.notice = fmt.Sprintf("View issue #%d", msg.issue.Number)
 		return m, nil
@@ -230,6 +235,13 @@ func (m Model) currentPlanSlug() string {
 }
 
 func (m Model) handleStartIssue(issue issues.Status) (Model, tea.Cmd) {
+	// Ahead of the readiness check: an issue pib is already starting reads as
+	// not ready precisely because it is starting, and "an agent is already
+	// working on it" would be a confusing answer to pressing [S] twice.
+	if m.inFlight[issue.Number] {
+		m.notice = fmt.Sprintf("#%d already has an agent starting", issue.Number)
+		return m, nil
+	}
 	if issue.Agent == "" {
 		m.notice = fmt.Sprintf("No agent is mapped to type %q", issue.Type)
 		return m, nil
@@ -242,16 +254,69 @@ func (m Model) handleStartIssue(issue issues.Status) (Model, tea.Cmd) {
 		m.notice = "Agent runner is not available"
 		return m, nil
 	}
+
+	if m.inFlight == nil {
+		m.inFlight = map[int64]bool{}
+	}
+	m.inFlight[issue.Number] = true
+
+	// Show the issue as in progress now rather than waiting for the store to
+	// agree, so the action bar stops offering to start it.
+	m.planIssues = m.markInFlight(append([]issues.Status(nil), m.planIssues...))
 	m.notice = fmt.Sprintf("Starting %s on #%d — %s", issue.Agent, issue.Number, issue.Title)
-	slug := m.currentPlanSlug()
-	m.planIssuesLoading = true
-	return m, tea.Batch(
-		loadPlanIssues(m.store, slug, m.cfg),
-		spawnAgentCmd(m.agents, issue),
-	)
+
+	cmds := []tea.Cmd{spawnAgentCmd(m.agents, issue)}
+	if !m.polling {
+		m.polling = true
+		cmds = append(cmds, refreshTick())
+	}
+	return m, tea.Batch(cmds...)
 }
 
-func spawnAgentCmd(r *runner.Runner, issue issues.Status) tea.Cmd {
+// markInFlight reports the issues pib has an outstanding spawn for as in
+// progress. The run is recorded only once the agent's window exists — after a
+// worktree is checked out and tmux has opened — so until then the store still
+// calls the issue ready, and the action bar would offer to start a second
+// agent on it. Two agents on one issue share one worktree, which is the
+// collision worktrees exist to prevent.
+func (m Model) markInFlight(list []issues.Status) []issues.Status {
+	for i := range list {
+		if m.inFlight[list[i].Number] {
+			list[i].InProgress = true
+			list[i].Ready = false
+			list[i].Launchable = false
+		}
+	}
+	return list
+}
+
+// refreshIssues reloads the current plan without raising the loading flag: a
+// silent refresh keeps the list on screen instead of flashing a spinner over
+// it once a second.
+func (m Model) refreshIssues() tea.Cmd {
+	slug := m.currentPlanSlug()
+	if slug == "" {
+		return nil
+	}
+	return loadPlanIssues(m.store, slug, m.cfg)
+}
+
+// refreshTickMsg drives the poll that shows an agent's progress. A spawn
+// blocks for as long as the agent runs, so without it nothing on screen would
+// change between starting an agent and its finishing.
+type refreshTickMsg time.Time
+
+func refreshTick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return refreshTickMsg(t) })
+}
+
+// spawner starts an agent. The UI names the one method it needs rather than
+// taking *runner.Runner, so the launch path can be tested without tmux.
+type spawner interface {
+	Run(ctx context.Context, req protocol.Request) (protocol.Response, error)
+}
+
+func spawnAgentCmd(r spawner, issue issues.Status) tea.Cmd {
 	return func() tea.Msg {
 		req := protocol.Request{
 			Op:    protocol.OpSpawn,
@@ -264,7 +329,7 @@ func spawnAgentCmd(r *runner.Runner, issue issues.Status) tea.Cmd {
 		if err != nil {
 			return agentFinishedMsg{issue: issue, err: err}
 		}
-		return agentFinishedMsg{issue: issue, status: resp.Status, text: resp.Text}
+		return agentFinishedMsg{issue: issue, status: resp.Status}
 	}
 }
 

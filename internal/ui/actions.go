@@ -18,7 +18,6 @@ type startIssueMsg struct{ issue issues.Status }
 type agentFinishedMsg struct {
 	issue  issues.Status
 	status string
-	text   string
 	err    error
 }
 type viewIssueMsg struct{ issue issues.Status }

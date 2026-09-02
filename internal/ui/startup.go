@@ -254,7 +254,11 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		}
 		m.server = msg.server
 		m.store = msg.store
-		m.agents = msg.agents
+		// A nil *runner.Runner in a spawner interface is not a nil
+		// interface, and would read as a runner that panics on use.
+		if msg.agents != nil {
+			m.agents = msg.agents
+		}
 		m.extension = msg.extension
 		m.socket = msg.socket
 		m.cfg = msg.config
