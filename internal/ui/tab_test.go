@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"context"
 	"errors"
+	"pib/internal/protocol"
+	"pib/internal/runner"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1473,6 +1477,95 @@ func TestFullScreenShowsThePullRequest(t *testing.T) {
 
 // A closed blocker still explains why an issue is shaped the way it is, so the
 // full-screen view shows the whole edge rather than only what is outstanding.
+func TestStartRefusesWhenNoAgentMapped(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+
+	next, _ := m.Update(startIssueMsg{issue: issues.Status{
+		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "feature", State: issues.StateOpen},
+		Ready: true,
+		Agent: "",
+	}})
+	m = next.(Model)
+	if !strings.Contains(m.notice, `No agent is mapped to type "feature"`) {
+		t.Errorf("notice = %q, want refusal for unmapped type", m.notice)
+	}
+}
+
+func TestStartRefusesWhenNotReady(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+
+	next, _ := m.Update(startIssueMsg{issue: issues.Status{
+		Issue:        issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Ready:        false,
+		Agent:        "worker",
+		Blocked:      true,
+		OpenBlockers: []int64{2},
+	}})
+	m = next.(Model)
+	if !strings.Contains(m.notice, "is not ready") {
+		t.Errorf("notice = %q, want refusal for not-ready issue", m.notice)
+	}
+}
+
+func TestStartRefusesWhenRunnerUnavailable(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+
+	next, _ := m.Update(startIssueMsg{issue: issues.Status{
+		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Ready: true,
+		Agent: "worker",
+	}})
+	m = next.(Model)
+	if !strings.Contains(m.notice, "Agent runner is not available") {
+		t.Errorf("notice = %q, want runner unavailable message", m.notice)
+	}
+}
+
+func TestStartReturnsBatchWithRefreshAndSpawn(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.agents = &fakeSpawner{}
+
+	next, cmd := m.Update(startIssueMsg{issue: issues.Status{
+		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Ready: true,
+		Agent: "worker",
+	}})
+	m = next.(Model)
+
+	if !strings.Contains(m.notice, "Starting worker on #1") {
+		t.Errorf("notice = %q, want starting message", m.notice)
+	}
+	if cmd == nil {
+		t.Fatal("expected command from start")
+	}
+}
+
+func TestAgentFinishedRefreshesIssues(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+
+	next, cmd := m.Update(agentFinishedMsg{issue: issues.Status{
+		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Agent: "worker",
+	}})
+	m = next.(Model)
+
+	if m.planIssuesLoading {
+		t.Error("the poll raised the loading spinner; it should refresh silently")
+	}
+	if cmd == nil {
+		t.Fatal("expected refresh command after agent finished")
+	}
+	msg := cmd()
+	if _, ok := msg.(planIssuesLoadedMsg); !ok {
+		t.Errorf("cmd returned %T, want planIssuesLoadedMsg", msg)
+	}
+}
+
 func TestFullScreenShowsEveryBlockerNotJustOpenOnes(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
 	m.plansView = viewIssueFullScreen
@@ -1490,5 +1583,220 @@ func TestFullScreenShowsEveryBlockerNotJustOpenOnes(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Errorf("full-screen view missing blocker %s", want)
 		}
+	}
+}
+
+// fakeSpawner stands in for the runner. Run blocks until released, the way a
+// real spawn blocks for as long as the agent runs.
+type fakeSpawner struct {
+	mu      sync.Mutex
+	reqs    []protocol.Request
+	release chan struct{}
+	err     error
+}
+
+func (f *fakeSpawner) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
+	f.mu.Lock()
+	f.reqs = append(f.reqs, req)
+	release := f.release
+	f.mu.Unlock()
+
+	if release != nil {
+		<-release
+	}
+	if f.err != nil {
+		return protocol.Response{}, f.err
+	}
+	return protocol.Response{Status: "done", Session: "s1"}, nil
+}
+
+func (f *fakeSpawner) seen() []protocol.Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]protocol.Request(nil), f.reqs...)
+}
+
+func startable(number int64) issues.Status {
+	return issues.Status{
+		Issue:      issues.Issue{Number: number, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Ready:      true,
+		Launchable: true,
+		Agent:      "worker",
+	}
+}
+
+// The run is recorded only after a worktree is checked out and tmux has
+// opened, so a refresh that lands in between still calls the issue ready.
+// Until the store catches up the UI has to carry that knowledge itself, or the
+// action bar goes on offering to start an issue that is already starting.
+func TestStartShowsInProgressBeforeTheStoreAgrees(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.agents = &fakeSpawner{}
+	m.planIssues = []issues.Status{startable(1)}
+
+	next, _ := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+
+	if !m.planIssues[0].InProgress {
+		t.Error("issue still reads as idle after [S]")
+	}
+	if m.planIssues[0].Ready || m.planIssues[0].Launchable {
+		t.Error("issue still reads as startable after [S]")
+	}
+	for _, a := range issueActions(m.planIssues[0]) {
+		if a.Key == "s" {
+			t.Error("action bar still offers [S]tart on an issue that is starting")
+		}
+	}
+}
+
+// Two agents on one issue share one worktree, since checkouts are keyed by
+// issue — the collision worktrees exist to prevent.
+func TestStartRefusesASecondAgentOnTheSameIssue(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	agents := &fakeSpawner{}
+	m.agents = agents
+	m.planIssues = []issues.Status{startable(1)}
+
+	next, cmd := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+	drain(cmd)
+	// The store has not recorded the run yet, so a refresh landing now still
+	// reports the issue ready.
+	next, _ = m.Update(planIssuesLoadedMsg{planSlug: "plan-a", issues: []issues.Status{startable(1)}})
+	m = next.(Model)
+	next, cmd = m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+	drain(cmd)
+
+	if got := len(agents.seen()); got != 1 {
+		t.Errorf("spawned %d agents on one issue, want 1", got)
+	}
+	if !m.planIssues[0].InProgress {
+		t.Error("a refresh that predates the run record undid the in-progress state")
+	}
+}
+
+// A stale refresh must not resurrect [S]tart for an issue already starting.
+func TestRefreshDoesNotUndoInFlightState(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.agents = &fakeSpawner{}
+	m.planIssues = []issues.Status{startable(1), startable(2)}
+
+	next, _ := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+	next, _ = m.Update(planIssuesLoadedMsg{planSlug: "plan-a", issues: []issues.Status{startable(1), startable(2)}})
+	m = next.(Model)
+
+	if !m.planIssues[0].InProgress {
+		t.Error("#1 lost its in-progress state to a refresh")
+	}
+	if m.planIssues[1].InProgress {
+		t.Error("#2 was marked in progress without being started")
+	}
+}
+
+// The poll exists only to show a running agent's progress, so it has to stop
+// once none are left rather than reloading the store forever.
+func TestRefreshTickRunsWhileAgentsDoAndStopsAfter(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.agents = &fakeSpawner{}
+	m.planIssues = []issues.Status{startable(1)}
+
+	next, _ := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+	if _, cmd := m.Update(refreshTickMsg{}); cmd == nil {
+		t.Fatal("tick stopped while an agent was still running")
+	}
+
+	next, _ = m.Update(agentFinishedMsg{issue: startable(1), status: "done"})
+	m = next.(Model)
+	if m.inFlight[1] {
+		t.Error("#1 still counted as in flight after its agent finished")
+	}
+	if _, cmd := m.Update(refreshTickMsg{}); cmd != nil {
+		t.Error("tick kept polling with no agents running")
+	}
+}
+
+// The briefing and window name are what make a launch from the browser the
+// same act as `pib issue start`.
+func TestStartSendsTheSameRequestAsTheCLI(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	agents := &fakeSpawner{}
+	m.agents = agents
+	m.planIssues = []issues.Status{startable(7)}
+
+	next, cmd := m.Update(startIssueMsg{issue: startable(7)})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("no command from [S]")
+	}
+	drain(cmd)
+
+	reqs := agents.seen()
+	if len(reqs) != 1 {
+		t.Fatalf("sent %d requests, want 1", len(reqs))
+	}
+	req := reqs[0]
+	if req.Op != protocol.OpSpawn || req.Agent != "worker" || req.Issue != 7 {
+		t.Errorf("request = %+v", req)
+	}
+	if req.Task != runner.Briefing(7, "Issue") {
+		t.Errorf("task = %q, want the shared briefing", req.Task)
+	}
+}
+
+// drain runs a command and everything a tea.Batch fans out to, which is what
+// bubbletea's event loop would do.
+func drain(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		var wg sync.WaitGroup
+		for _, c := range msg {
+			wg.Add(1)
+			go func(c tea.Cmd) { defer wg.Done(); drain(c) }(c)
+		}
+		wg.Wait()
+	}
+}
+
+// Starting a second agent must join the running poll rather than opening a
+// second one, or every start/finish cycle leaves another chain behind.
+func TestASecondAgentJoinsTheExistingPoll(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.agents = &fakeSpawner{}
+	m.planIssues = []issues.Status{startable(1), startable(2)}
+
+	next, _ := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+	if !m.polling {
+		t.Fatal("first start did not open a poll")
+	}
+
+	next, _ = m.Update(startIssueMsg{issue: startable(2)})
+	m = next.(Model)
+
+	// Both agents finish; the poll should close exactly once.
+	for _, n := range []int64{1, 2} {
+		next, _ = m.Update(agentFinishedMsg{issue: startable(n), status: "done"})
+		m = next.(Model)
+	}
+	next, cmd := m.Update(refreshTickMsg{})
+	m = next.(Model)
+	if cmd != nil {
+		t.Error("poll kept running after every agent finished")
+	}
+	if m.polling {
+		t.Error("polling still set after the poll stopped")
 	}
 }

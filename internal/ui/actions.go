@@ -15,6 +15,11 @@ import (
 // backend handlers. Most are not wired to real operations yet; they set a
 // notice so the user sees something happened.
 type startIssueMsg struct{ issue issues.Status }
+type agentFinishedMsg struct {
+	issue  issues.Status
+	status string
+	err    error
+}
 type viewIssueMsg struct{ issue issues.Status }
 type cancelIssueMsg struct{ issue issues.Status }
 type leaveFeedbackMsg struct{ issue issues.Status }

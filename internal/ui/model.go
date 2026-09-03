@@ -69,6 +69,7 @@ type Model struct {
 	notice    string
 	server    *server.Server
 	store     *issues.Store
+	agents    spawner
 	extension string
 	socket    string
 	agentsDir string
@@ -86,6 +87,15 @@ type Model struct {
 	planIssuesErr       error
 	planIssuesLoadedFor string
 	cfg                 config.Config
+
+	// inFlight holds the issues pib has an outstanding spawn for. A run is
+	// only recorded once the agent's window exists, so until then the store
+	// still reports the issue ready — this is what pib knows and the store
+	// does not yet.
+	inFlight map[int64]bool
+	// polling is true while a refresh tick is in flight, so that starting a
+	// second agent joins the existing poll instead of opening a second one.
+	polling bool
 }
 
 // Close releases the socket and the issue store. It is safe to call when

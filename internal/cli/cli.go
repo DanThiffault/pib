@@ -23,6 +23,7 @@ import (
 	"pib/internal/issues"
 	"pib/internal/protocol"
 	"pib/internal/recheck"
+	"pib/internal/runner"
 	"pib/internal/server"
 	"pib/internal/workspace"
 )
@@ -234,7 +235,7 @@ func (a App) planStart(args []string) error {
 				Op:    protocol.OpSpawn,
 				Agent: issue.Agent,
 				Name:  fmt.Sprintf("%s #%d", issue.Agent, issue.Number),
-				Task:  briefing(issue.Number, issue.Title),
+				Task:  runner.Briefing(issue.Number, issue.Title),
 				Issue: issue.Number,
 			})
 			results[i] = startResult{Issue: issue, Status: resp.Status, Text: resp.Text, Session: resp.Session}
@@ -401,7 +402,7 @@ func (a App) issueStart(args []string) error {
 			"no agent is mapped to type %q — add one to config.toml, or pass --agent", detail.Issue.Type)
 	}
 	if !*force && !detail.Issue.Ready {
-		return fmt.Errorf("#%d is not ready: %s. Pass --force to start anyway", number, blocking(detail.Issue))
+		return fmt.Errorf("#%d is not ready: %s. Pass --force to start anyway", number, runner.Blocking(detail.Issue))
 	}
 
 	if !*asJSON {
@@ -412,7 +413,7 @@ func (a App) issueStart(args []string) error {
 		Op:    protocol.OpSpawn,
 		Agent: agent,
 		Name:  fmt.Sprintf("%s #%d", agent, number),
-		Task:  briefing(number, detail.Issue.Title),
+		Task:  runner.Briefing(number, detail.Issue.Title),
 		Issue: number,
 	})
 	if err != nil {
@@ -488,32 +489,6 @@ func (a App) issueFollowup(args []string) error {
 		return err
 	}
 	return a.renderRun(resp, *asJSON)
-}
-
-// briefing is what the agent is started with. It is deliberately thin: the
-// issue is the specification, and every agent's first step is to read it.
-func briefing(number int64, title string) string {
-	return fmt.Sprintf(
-		"Work pib issue #%d: %s\n\n"+
-			"Read it first with `pib issue view %d` — that is your specification, "+
-			"including its acceptance criteria. Your issue number is also in PIB_ISSUE.",
-		number, title, number)
-}
-
-// blocking says in one phrase why an issue cannot start.
-func blocking(issue issues.Status) string {
-	switch {
-	case issue.State == issues.StateClosed:
-		return "it is closed"
-	case issue.InProgress:
-		return "an agent is already working on it"
-	case issue.AwaitingReview:
-		return "it is waiting on " + issue.PRURL
-	case issue.Blocked:
-		return "it is waiting on " + render(issue.OpenBlockers)
-	default:
-		return "unknown"
-	}
 }
 
 func (a App) issueView(args []string) error {
