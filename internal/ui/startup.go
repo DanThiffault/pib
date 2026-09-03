@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,6 +30,7 @@ const (
 	phaseConfirmCreate
 	phaseCheckingAgents
 	phaseConfirmAgents
+	phaseConfirmUpdate
 	phaseLoadingPlanner
 	phaseStartingServer
 	phasePrompt
@@ -47,11 +49,21 @@ type plannerLoadedMsg struct {
 	err     error
 }
 
-// agentsCheckedMsg reports whether ~/.pib/agents is already set up.
+// agentsCheckedMsg reports whether ~/.pib/agents is already set up, and which
+// of the definitions there no longer match the ones built into this pib.
 type agentsCheckedMsg struct {
 	installed bool
+	outdated  []string
 	dir       string
 	err       error
+}
+
+// agentsUpdatedMsg reports the definitions pib rewrote and where it saved the
+// copies it replaced.
+type agentsUpdatedMsg struct {
+	written []string
+	backup  string
+	err     error
 }
 
 // agentsInstalledMsg reports the default agents pib wrote.
@@ -90,7 +102,22 @@ func checkAgents() tea.Msg {
 	}
 
 	installed, err := agent.Installed()
-	return agentsCheckedMsg{installed: installed, dir: dir, err: err}
+	if err != nil || !installed {
+		return agentsCheckedMsg{installed: installed, dir: dir, err: err}
+	}
+
+	// An agents directory that cannot be read is not worth failing startup
+	// over: pib loads each definition by name when it needs it, and will
+	// report a real problem then.
+	outdated, _ := agent.Outdated()
+	return agentsCheckedMsg{installed: true, outdated: outdated, dir: dir}
+}
+
+func updateAgents(names []string) tea.Cmd {
+	return func() tea.Msg {
+		backup, written, err := agent.UpdateDefaults(names, time.Now())
+		return agentsUpdatedMsg{written: written, backup: backup, err: err}
+	}
 }
 
 func installAgents() tea.Msg {
@@ -220,6 +247,25 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 			m.phase = phaseConfirmAgents
 			return m, nil, true
 		}
+		if len(msg.outdated) > 0 {
+			m.outdated = msg.outdated
+			m.phase = phaseConfirmUpdate
+			return m, nil, true
+		}
+		m.phase = phaseLoadingPlanner
+		return m, loadPlanner, true
+
+	case agentsUpdatedMsg:
+		// A failed update is not fatal: the definitions already on disk still
+		// work, and they are the ones pib was going to use anyway.
+		switch {
+		case msg.err != nil:
+			m.notice = "could not update agents: " + msg.err.Error()
+		case len(msg.written) > 0:
+			m.notice = fmt.Sprintf("updated %s — replaced copies saved in %s",
+				countAgents(len(msg.written)), msg.backup)
+		}
+		m.outdated = nil
 		m.phase = phaseLoadingPlanner
 		return m, loadPlanner, true
 
@@ -286,6 +332,21 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 
+		case phaseConfirmUpdate:
+			switch {
+			case key.Matches(msg, yesKeys):
+				return m, updateAgents(m.outdated), true
+			// Declining is not a reason to stop: the definitions on disk are
+			// the ones pib has been using, and they still work.
+			case key.Matches(msg, noKeys):
+				m.outdated = nil
+				m.phase = phaseLoadingPlanner
+				return m, loadPlanner, true
+			case key.Matches(msg, quitKeys):
+				return m, tea.Quit, true
+			}
+			return m, nil, true
+
 		case phaseFailed:
 			return m, tea.Quit, true
 		}
@@ -325,6 +386,26 @@ func (m Model) startupView() string {
 		b.WriteString("\n" + helpStyle.Render("y/enter install • n/q exit"))
 		return b.String()
 
+	case phaseConfirmUpdate:
+		var b strings.Builder
+		b.WriteString(titleStyle.Render("pib") + "\n\n")
+		differ := "differ"
+		if len(m.outdated) == 1 {
+			differ = "differs"
+		}
+		b.WriteString(itemStyle.Render(fmt.Sprintf("%s in %s %s from the version built into this pib:",
+			countAgents(len(m.outdated)), m.agentsDir, differ)) + "\n\n")
+		for _, name := range m.outdated {
+			b.WriteString(itemStyle.Render("• "+name) + "\n")
+		}
+		// Saying which it is would be a guess, so the prompt says what pib
+		// will do with the file instead.
+		b.WriteString("\n" + itemStyle.Render("That is either a newer pib or your own edits — pib cannot tell.") + "\n")
+		b.WriteString(itemStyle.Render("Updating saves your copies under ~/.pib/"+agent.BackupDir+" first.") + "\n\n")
+		b.WriteString(promptStyle.Render("Update them?") + "\n\n")
+		b.WriteString(helpStyle.Render("y/enter update • n keep mine • q exit"))
+		return b.String()
+
 	case phaseLoadingPlanner:
 		return helpStyle.Render("Loading planner agent…")
 
@@ -345,4 +426,12 @@ func (m Model) startupView() string {
 	}
 
 	return ""
+}
+
+// countAgents renders "1 agent" or "3 agents".
+func countAgents(n int) string {
+	if n == 1 {
+		return "1 agent"
+	}
+	return fmt.Sprintf("%d agents", n)
 }

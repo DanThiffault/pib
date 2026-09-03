@@ -77,6 +77,35 @@ edit them and safe to re-run.
 They are ordinary markdown files after that: change the models, rewrite the prompts,
 add your own. See [Agent definitions](#agent-definitions) for the format.
 
+#### Keeping them up to date
+
+Because installing never overwrites, a definition written by an older pib stays as it
+is — including after an upgrade that rewrote it. So pib compares what is on disk with
+what is built into the binary, and asks when they differ:
+
+```
+2 agents in ~/.pib/agents differ from the version built into this pib:
+
+  • plan-recheck
+  • reviewer
+
+That is either a newer pib or your own edits — pib cannot tell.
+Updating saves your copies under ~/.pib/agents-backup first.
+
+Update them?
+
+y/enter update • n keep mine • q exit
+```
+
+pib genuinely cannot tell a stale default from an edit you made on purpose, so `y`
+never destroys what it replaces: every definition it rewrites is copied to
+`~/.pib/agents-backup/<timestamp>/` first, and the run tells you where. `n` keeps
+yours and carries on — the definitions on disk are the ones pib has been running all
+along, and declining is not a reason to stop.
+
+Only the agents you are asked about are touched. Edited definitions you want to keep
+are safest left out of the update; if you take one by accident, it is in the backup.
+
 ## Usage
 
 Run `pib` from inside a git repository, in a tmux session:

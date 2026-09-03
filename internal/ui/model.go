@@ -74,6 +74,7 @@ type Model struct {
 	socket    string
 	agentsDir string
 	installed []string
+	outdated  []string
 
 	currentTab          tab
 	plansView           plansView

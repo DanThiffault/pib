@@ -2,6 +2,8 @@ package ui
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -213,4 +215,167 @@ func TestInstallFailureStopsStartup(t *testing.T) {
 	if m.phase != phaseFailed {
 		t.Fatalf("phase = %v, want phaseFailed", m.phase)
 	}
+}
+
+func TestOutdatedAgentsPromptBeforePlanning(t *testing.T) {
+	m := NewModel()
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
+
+	next, cmd := m.Update(agentsCheckedMsg{installed: true, dir: "/home/.pib/agents", outdated: []string{"reviewer", "worker"}})
+	m = next.(Model)
+
+	if m.phase != phaseConfirmUpdate {
+		t.Fatalf("phase = %v, want phaseConfirmUpdate", m.phase)
+	}
+	if cmd != nil {
+		t.Error("pib started loading the planner before the user answered")
+	}
+	view := m.startupView()
+	for _, want := range []string{"reviewer", "worker", "2 agents", "Update them?"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("prompt missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// Agents that match the built-in definitions are the ordinary case, and must
+// not put a question in front of the user.
+func TestCurrentAgentsAskNothing(t *testing.T) {
+	m := NewModel()
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
+
+	next, cmd := m.Update(agentsCheckedMsg{installed: true, dir: "/home/.pib/agents"})
+	m = next.(Model)
+
+	if m.phase != phaseLoadingPlanner {
+		t.Errorf("phase = %v, want phaseLoadingPlanner", m.phase)
+	}
+	if cmd == nil {
+		t.Error("no command; the planner never loads")
+	}
+}
+
+// Declining an update is not a reason to stop: the definitions on disk are the
+// ones pib has been running all along.
+func TestDecliningAnUpdateCarriesOn(t *testing.T) {
+	m := NewModel()
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
+	m, _ = step(t, m, agentsCheckedMsg{installed: true, dir: "/d", outdated: []string{"reviewer"}})
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = next.(Model)
+
+	if m.phase != phaseLoadingPlanner {
+		t.Errorf("phase = %v, want phaseLoadingPlanner", m.phase)
+	}
+	if cmd == nil {
+		t.Error("declining stopped startup instead of continuing")
+	}
+	if m.outdated != nil {
+		t.Error("the declined list was kept")
+	}
+}
+
+// A write that fails leaves the definitions already on disk in place, which is
+// what pib was going to run anyway — so it reports and carries on.
+func TestAFailedUpdateDoesNotStopStartup(t *testing.T) {
+	m := NewModel()
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
+	m, _ = step(t, m, agentsCheckedMsg{installed: true, dir: "/d", outdated: []string{"reviewer"}})
+
+	next, cmd := m.Update(agentsUpdatedMsg{err: errors.New("disk full")})
+	m = next.(Model)
+
+	if m.phase != phaseLoadingPlanner {
+		t.Errorf("phase = %v, want phaseLoadingPlanner", m.phase)
+	}
+	if cmd == nil {
+		t.Error("a failed update stopped startup")
+	}
+	if !strings.Contains(m.notice, "disk full") {
+		t.Errorf("notice = %q, want the reason it failed", m.notice)
+	}
+}
+
+// The user needs to be told where the definitions they had went.
+func TestUpdateReportsWhereTheOldCopiesWent(t *testing.T) {
+	m := NewModel()
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
+	m, _ = step(t, m, agentsCheckedMsg{installed: true, dir: "/d", outdated: []string{"reviewer"}})
+
+	next, _ := m.Update(agentsUpdatedMsg{written: []string{"reviewer"}, backup: "/home/.pib/agents-backup/2026-09-03T10-00-00Z"})
+	m = next.(Model)
+
+	if !strings.Contains(m.notice, "agents-backup/2026-09-03T10-00-00Z") {
+		t.Errorf("notice = %q, want the backup location", m.notice)
+	}
+	if !strings.Contains(m.notice, "1 agent") {
+		t.Errorf("notice = %q, want a singular count", m.notice)
+	}
+}
+
+// A missing agents directory is still an install, not an update.
+func TestUninstalledAgentsStillPromptToInstall(t *testing.T) {
+	m := NewModel()
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
+
+	next, _ := m.Update(agentsCheckedMsg{installed: false, dir: "/d"})
+	m = next.(Model)
+
+	if m.phase != phaseConfirmAgents {
+		t.Errorf("phase = %v, want phaseConfirmAgents", m.phase)
+	}
+}
+
+// Pressing y actually rewrites the file and saves the old one.
+func TestAcceptingAnUpdateRewritesTheFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".pib", "agents")
+	os.MkdirAll(dir, 0o755)
+	if _, err := agent.InstallDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	mine := []byte("# my reviewer\n")
+	os.WriteFile(filepath.Join(dir, "reviewer.md"), mine, 0o644)
+
+	stale, err := agent.Outdated()
+	if err != nil || len(stale) != 1 {
+		t.Fatalf("outdated = %v, %v", stale, err)
+	}
+
+	m := NewModel()
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
+	m, _ = step(t, m, agentsCheckedMsg{installed: true, dir: dir, outdated: stale})
+	if m.phase != phaseConfirmUpdate {
+		t.Fatalf("phase = %v", m.phase)
+	}
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("y produced no update command")
+	}
+	msg := cmd().(agentsUpdatedMsg)
+	if msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	next, _ = m.Update(msg)
+	m = next.(Model)
+
+	got, _ := os.ReadFile(filepath.Join(dir, "reviewer.md"))
+	if strings.Contains(string(got), "my reviewer") {
+		t.Error("reviewer.md was not updated")
+	}
+	if !strings.Contains(string(got), "File Each Finding as an Issue") {
+		t.Error("reviewer.md is not the built-in definition")
+	}
+	saved, err := os.ReadFile(filepath.Join(msg.backup, "reviewer.md"))
+	if err != nil || string(saved) != string(mine) {
+		t.Errorf("backup missing or wrong: %q %v", saved, err)
+	}
+	if left, _ := agent.Outdated(); len(left) != 0 {
+		t.Errorf("still outdated after updating: %v", left)
+	}
+	t.Logf("notice: %s", m.notice)
 }
