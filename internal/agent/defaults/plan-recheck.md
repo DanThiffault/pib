@@ -90,7 +90,12 @@ gh pr diff <prUrl>
 - Did it remove or rename anything an open issue names?
 - Did it add something an open issue could now use instead of building its own?
 
-**A `reviewer` issue closed.** The plan is finished. Report that and stop.
+**A `reviewer` issue closed.** Not necessarily the end of the plan: the reviewer files
+each of its findings as an issue, so a closed review can leave new open work behind.
+
+- If it filed nothing and nothing else is open, the plan is finished. Report that and stop.
+- If it filed issues, those are the remaining work. Check they do not duplicate something
+  already open, and that none of them describes work that landed while the review ran.
 
 ### 4. Propose, Do Not Edit
 
