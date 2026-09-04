@@ -2,7 +2,7 @@
 name: reviewer
 description: Code review agent — reviews changes for quality, security, and correctness, and files each finding as its own issue. Its own issue is blocked by every task, so it starts once they are all closed.
 tools: read, bash
-model: openrouter/anthropic/claude-opus-4.6
+model: pi-claude-cli/claude-opus-5
 thinking: medium
 system-prompt: append
 ---

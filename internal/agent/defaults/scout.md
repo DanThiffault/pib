@@ -2,7 +2,7 @@
 name: scout
 description: Fast codebase reconnaissance — maps existing code, conventions, and patterns for a task. Called on-demand by planner or researcher.
 tools: read, bash
-model: openrouter/moonshotai/kimi-k2.6
+model: pi-claude-cli/claude-opus-5
 system-prompt: append
 ---
 
