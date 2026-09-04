@@ -2,7 +2,7 @@
 name: plan-recheck
 description: Runs when an issue closes — checks whether what it produced contradicts any open issue left in the plan, and proposes a plan document fixing the ones it does
 tools: read, bash
-model: openrouter/anthropic/claude-opus-4.6
+model: pi-claude-cli/claude-opus-5
 thinking: medium
 system-prompt: append
 ---
