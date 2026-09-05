@@ -327,6 +327,55 @@ func TestUninstalledAgentsStillPromptToInstall(t *testing.T) {
 	}
 }
 
+// Missing default agents on an existing installation are installed silently
+// and the notice names them.
+func TestMissingAgentsInstalledSilently(t *testing.T) {
+	m := NewModel()
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{
+		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true,
+	}})
+
+	m, _ = step(t, m, agentsCheckedMsg{installed: true, dir: "/d", missing: []string{"code-reviewer"}})
+	if m.phase != phaseCheckingAgents {
+		t.Fatalf("phase = %v, want phaseCheckingAgents while installing", m.phase)
+	}
+
+	m, _ = step(t, m, agentsInstalledMsg{written: []string{"code-reviewer"}})
+	if m.phase != phaseLoadingPlanner {
+		t.Fatalf("phase = %v, want phaseLoadingPlanner", m.phase)
+	}
+	if !strings.Contains(m.notice, "code-reviewer") {
+		t.Errorf("notice = %q, want it to name the installed agent", m.notice)
+	}
+}
+
+// When some agents are missing and others are outdated, the missing ones are
+// installed silently first and the outdated prompt is still shown afterwards.
+func TestMissingAndOutdatedAgents(t *testing.T) {
+	m := NewModel()
+	m, _ = step(t, m, detectedMsg{status: workspace.Status{
+		GitRoot: "/repo", Dir: "/repo/.pib", Exists: true,
+	}})
+
+	m, _ = step(t, m, agentsCheckedMsg{
+		installed: true,
+		dir:       "/d",
+		missing:   []string{"code-reviewer"},
+		outdated:  []string{"reviewer"},
+	})
+
+	m, _ = step(t, m, agentsInstalledMsg{written: []string{"code-reviewer"}})
+	if m.phase != phaseConfirmUpdate {
+		t.Fatalf("phase = %v, want phaseConfirmUpdate", m.phase)
+	}
+	if len(m.outdated) != 1 || m.outdated[0] != "reviewer" {
+		t.Errorf("outdated = %v, want [reviewer]", m.outdated)
+	}
+	if !strings.Contains(m.notice, "code-reviewer") {
+		t.Errorf("notice = %q, want it to name the silently installed agent", m.notice)
+	}
+}
+
 // Pressing y actually rewrites the file and saves the old one.
 func TestAcceptingAnUpdateRewritesTheFile(t *testing.T) {
 	home := t.TempDir()

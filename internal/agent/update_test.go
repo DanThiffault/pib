@@ -48,6 +48,104 @@ func TestMissingAgentIsNotOutdated(t *testing.T) {
 	}
 }
 
+// A default that is new in the binary but absent on an existing installation
+// is reported as missing, not outdated.
+func TestMissingAgentIsReported(t *testing.T) {
+	dir := homeAt(t)
+	if _, err := InstallDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "reviewer.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	missing, err := Missing()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) != 1 || missing[0] != "reviewer" {
+		t.Errorf("missing = %v, want [reviewer]", missing)
+	}
+
+	stale, err := Outdated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 0 {
+		t.Errorf("outdated = %v, want none", stale)
+	}
+}
+
+// A default that is present but edited is outdated, not missing.
+func TestEditedAgentIsOutdatedNotMissing(t *testing.T) {
+	dir := homeAt(t)
+	if _, err := InstallDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "reviewer.md"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	missing, err := Missing()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) != 0 {
+		t.Errorf("missing = %v, want none", missing)
+	}
+
+	stale, err := Outdated()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || stale[0] != "reviewer" {
+		t.Errorf("outdated = %v, want [reviewer]", stale)
+	}
+}
+
+// InstallDefaults on an existing installation writes only the files that
+// are missing, leaving everything else untouched.
+func TestInstallDefaultsFillsMissing(t *testing.T) {
+	dir := homeAt(t)
+	if _, err := InstallDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "reviewer.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "worker.md"), []byte("edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	written, err := InstallDefaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != 1 || written[0] != "reviewer" {
+		t.Errorf("written = %v, want [reviewer]", written)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "worker.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "edited\n" {
+		t.Error("an edited agent was overwritten")
+	}
+
+	want, err := defaultBody("reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now, err := os.ReadFile(filepath.Join(dir, "reviewer.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(now) != string(want) {
+		t.Error("reviewer.md was not restored with the built-in definition")
+	}
+}
+
 func TestChangedAgentIsOutdated(t *testing.T) {
 	dir := homeAt(t)
 	if _, err := InstallDefaults(); err != nil {
