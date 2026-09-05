@@ -166,7 +166,7 @@ func (m Model) newPlanView() string {
 
 	// Wide enough for two panes elsewhere, and tall enough that the art does
 	// not crowd out the prompt.
-	if !m.isNarrow() && m.height >= piMinHeight {
+	if m.width >= 80 && m.height >= piMinHeight {
 		b.WriteString(theme.Default.Primary.Render(piArt) + "\n\n")
 	}
 

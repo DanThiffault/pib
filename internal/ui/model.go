@@ -261,22 +261,22 @@ func (m Model) breadcrumbView() string {
 }
 
 const (
-	minLeftWidth = 20
-	maxLeftWidth = 45
-	leftPercent  = 0.35
+	minTopHeight = 4
+	maxTopHeight = 12
+	topPercent   = 0.35
 )
 
-func paneWidths(total int) (left, right int) {
-	left = int(float64(total) * leftPercent)
-	if left < minLeftWidth {
-		left = minLeftWidth
+func paneHeights(total int) (top, bottom int) {
+	top = int(float64(total) * topPercent)
+	if top < minTopHeight {
+		top = minTopHeight
 	}
-	if left > maxLeftWidth {
-		left = maxLeftWidth
+	if top > maxTopHeight {
+		top = maxTopHeight
 	}
-	right = total - left - 1 // 1-col divider
-	if right < 10 {
-		right = 10
+	bottom = total - top - 1 // 1-row rule
+	if bottom < 3 {
+		bottom = 3
 	}
 	return
 }
