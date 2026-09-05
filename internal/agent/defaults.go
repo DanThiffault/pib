@@ -123,6 +123,29 @@ func Missing() ([]string, error) {
 	return missing, nil
 }
 
+// MigrateLegacy renames built-in agents that have been renamed in newer
+// pib releases. It returns the names of agents it migrated.
+func MigrateLegacy() ([]string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return nil, err
+	}
+
+	var migrated []string
+	workerPath := filepath.Join(dir, "worker.md")
+	coderPath := filepath.Join(dir, "coder.md")
+	if _, err := os.Stat(workerPath); err == nil {
+		if _, err := os.Stat(coderPath); os.IsNotExist(err) {
+			if err := os.Rename(workerPath, coderPath); err != nil {
+				return nil, err
+			}
+			migrated = append(migrated, "coder")
+		}
+	}
+
+	return migrated, nil
+}
+
 // Outdated names the installed agents whose file no longer matches the
 // definition built into this pib.
 //
@@ -131,6 +154,10 @@ func Missing() ([]string, error) {
 // asks first and keeps what it replaces. An agent that is not installed at all
 // is not outdated — InstallDefaults is what writes those.
 func Outdated() ([]string, error) {
+	if _, err := MigrateLegacy(); err != nil {
+		return nil, err
+	}
+
 	dir, err := Dir()
 	if err != nil {
 		return nil, err

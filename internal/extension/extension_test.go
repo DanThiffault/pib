@@ -165,7 +165,7 @@ func TestPibToolPassesTheIssueItIsWorkingOn(t *testing.T) {
 	got := runTool(t,
 		map[string]string{"PIB_SOCKET": srv.Addr()},
 		"pib",
-		map[string]any{"agent": "worker", "task": "implement it", "issue": 7})
+		map[string]any{"agent": "coder", "task": "implement it", "issue": 7})
 
 	if got.Error != "" {
 		t.Fatalf("tool errored: %s", got.Error)

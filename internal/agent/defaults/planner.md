@@ -120,10 +120,10 @@ How pib handles the rest:
   dependency closes.
 - **Express blocking with `blockedBy`**, not with prose in the body. Nothing reads prose.
 - **Use `parent`**, not a `Parent: #42` line in the body.
-- **`task` issues close when a pull request merges.** A worker opens the pull request and
+- **`task` issues close when a pull request merges.** A coder opens the pull request and
   records it; pib closes the issue when it sees the merge. Plan for that latency — a
   dependent of a `task` stays blocked until a human merges.
-- **Never close a task issue yourself, and never tell a worker to close one.**
+- **Never close a task issue yourself, and never tell a coder to close one.**
 
 Example sub-issue body:
 
@@ -161,7 +161,7 @@ reading about them afterwards.
 Then four it cannot check for you.
 
 **Two issues that can run at once must not touch the same thing.** For every pair with
-no dependency path between them, ask what each will edit. If they overlap, one worker
+no dependency path between them, ask what each will edit. If they overlap, one coder
 is rewriting what the other just wrote — or worse, styling code the other is deleting.
 Add the dependency, or move the boundary so each owns a region, and write who owns what
 into both bodies. Parallelism you have to un-tangle later was never parallelism.

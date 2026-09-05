@@ -173,7 +173,7 @@ func TestValidateChecksTheRequiredFields(t *testing.T) {
 func TestCommentBodiesKeepTheirHeadings(t *testing.T) {
 	src := "---\ntitle: T\ntype: task\n---\n\nBody\n\n" + CommentMarker + "\n\n" +
 		"### reviewer · 2026-08-29T14:02:11Z\n\n" +
-		"### Findings\n\nSomething is wrong.\n\n### worker · not-a-timestamp\n\nStill the same comment.\n"
+		"### Findings\n\nSomething is wrong.\n\n### coder · not-a-timestamp\n\nStill the same comment.\n"
 
 	f, err := Parse(src)
 	if err != nil {
@@ -182,7 +182,7 @@ func TestCommentBodiesKeepTheirHeadings(t *testing.T) {
 	if len(f.Comments) != 1 {
 		t.Fatalf("got %d comments, want 1: %#v", len(f.Comments), f.Comments)
 	}
-	for _, want := range []string{"### Findings", "### worker · not-a-timestamp", "Something is wrong."} {
+	for _, want := range []string{"### Findings", "### coder · not-a-timestamp", "Something is wrong."} {
 		if !strings.Contains(f.Comments[0].Body, want) {
 			t.Errorf("comment body lost %q:\n%s", want, f.Comments[0].Body)
 		}

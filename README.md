@@ -51,7 +51,7 @@ Put the binary somewhere on your `PATH`, or run `./pib` from the repo.
 ### Agents
 
 pib ships a default set of agents — `planner`, `scout`, `researcher`, `prototype`,
-`reviewer`, and `worker` — embedded in the binary. The first time you run pib on a
+`reviewer`, and `coder` — embedded in the binary. The first time you run pib on a
 machine, it offers to install them:
 
 ```
@@ -65,7 +65,7 @@ Install the default set?
   • researcher
   • reviewer
   • scout
-  • worker
+  • coder
 
 y/enter install • n/q exit
 ```
@@ -167,7 +167,7 @@ Pass `issue` to say what the agent is working on, and pib shows that issue as in
 progress for as long as the agent runs:
 
 ```
-pib(agent: "worker", name: "Worker", task: "Implement the order aggregate", issue: 7)
+pib(agent: "coder", name: "Coder", task: "Implement the order aggregate", issue: 7)
 ```
 
 Sub-agents finish by calling `pib_done`; their last message before that call is what
@@ -246,7 +246,7 @@ It waits for the round to finish and prints a line per agent. An issue that was 
 but whose type maps to no agent is reported rather than skipped silently.
 
 Each issue gets its own git checkout under `.pib/worktrees/<number>/`, because a branch
-belongs to a directory rather than to a process: two workers in one directory both run
+belongs to a directory rather than to a process: two coders in one directory both run
 `git checkout -b`, and the second moves the tree out from under the first. The checkout
 is detached, so each agent's own branch command lands in its own tree and nowhere else,
 and a followup comes back to the same one — with its branch and whatever it had not
@@ -260,7 +260,7 @@ time instead.
 Applying the same plan again is an **additive merge**: known ids update, new ids are
 created, and an issue you dropped from the document is left alone — never closed,
 never deleted. A closed issue stays closed. So a second planner pass is safe to run
-while workers are still going.
+while coders are still going.
 
 pib warns rather than refusing. A dependency cycle, a plan with nothing startable, a
 type no agent is mapped to, a reference it could not resolve — each is reported and
@@ -295,7 +295,7 @@ A listing shows what each issue is waiting on and what would run it:
 ```
 ISSUE  STATE    TYPE     TITLE                      NOTE
 #1     ready    feature  Feature: order placement   no agent for this type
-#2     ready    task     Order schema               worker
+#2     ready    task     Order schema               coder
 #3     blocked  task     Order aggregate            waiting on #2
 ```
 
@@ -319,7 +319,7 @@ hold an issue in progress forever.
 
 There is no `Closes #N` automation any more, so pib reproduces the rule it enforced:
 
-1. A worker opens its pull request and records it with `pib issue link-pr <n> <url>`.
+1. A coder opens its pull request and records it with `pib issue link-pr <n> <url>`.
    The issue is now in review and drops out of the ready set.
 2. A human merges the pull request.
 3. The next listing settles it — pib asks `gh` about linked pull requests when you
@@ -361,12 +361,12 @@ pib issue followup 4 --message "address the comments I left on the PR"
 
 That resumes the session the agent left behind, so it still has everything it worked
 out the first time and the message can be as short as what you actually want changed.
-Each agent knows where its own feedback lives, so you do not have to say: the worker
+Each agent knows where its own feedback lives, so you do not have to say: the coder
 reads its pull request, the researcher and the prototype read the issue's activity.
 
 The same command answers an agent that stopped to ask a question — the message is the
 answer. It refuses when there is no session to continue, when an agent is still
-working, or when the issue is closed, which `--force` overrides. A worker followed up
+working, or when the issue is closed, which `--force` overrides. A coder followed up
 after its pull request has merged branches again and opens a new one rather than
 pushing to a merged branch.
 
@@ -382,7 +382,7 @@ An issue's type says which agent implements it. The mapping lives in
 ```toml
 [types]
 feature   = ""            # a container; never launches an agent
-task      = "worker"
+task      = "coder"
 research  = "researcher"
 prototype = "prototype"
 reviewer  = "reviewer"

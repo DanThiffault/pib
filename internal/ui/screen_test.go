@@ -1324,7 +1324,7 @@ func TestStartRefusesWhenNotReady(t *testing.T) {
 	next, _ := m.Update(startIssueMsg{issue: issues.Status{
 		Issue:        issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
 		Ready:        false,
-		Agent:        "worker",
+		Agent:        "coder",
 		Blocked:      true,
 		OpenBlockers: []int64{2},
 	}})
@@ -1341,7 +1341,7 @@ func TestStartRefusesWhenRunnerUnavailable(t *testing.T) {
 	next, _ := m.Update(startIssueMsg{issue: issues.Status{
 		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
 		Ready: true,
-		Agent: "worker",
+		Agent: "coder",
 	}})
 	m = next.(Model)
 	if !strings.Contains(m.notice, "Agent runner is not available") {
@@ -1357,11 +1357,11 @@ func TestStartReturnsBatchWithRefreshAndSpawn(t *testing.T) {
 	next, cmd := m.Update(startIssueMsg{issue: issues.Status{
 		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
 		Ready: true,
-		Agent: "worker",
+		Agent: "coder",
 	}})
 	m = next.(Model)
 
-	if !strings.Contains(m.notice, "Starting worker on #1") {
+	if !strings.Contains(m.notice, "Starting coder on #1") {
 		t.Errorf("notice = %q, want starting message", m.notice)
 	}
 	if cmd == nil {
@@ -1375,7 +1375,7 @@ func TestAgentFinishedRefreshesIssues(t *testing.T) {
 
 	next, cmd := m.Update(agentFinishedMsg{issue: issues.Status{
 		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
-		Agent: "worker",
+		Agent: "coder",
 	}})
 	m = next.(Model)
 
@@ -1550,7 +1550,7 @@ func TestStartSendsTheSameRequestAsTheCLI(t *testing.T) {
 		t.Fatalf("sent %d requests, want 1", len(reqs))
 	}
 	req := reqs[0]
-	if req.Op != protocol.OpSpawn || req.Agent != "worker" || req.Issue != 7 {
+	if req.Op != protocol.OpSpawn || req.Agent != "coder" || req.Issue != 7 {
 		t.Errorf("request = %+v", req)
 	}
 	if req.Task != runner.Briefing(7, "Issue") {
@@ -1642,6 +1642,6 @@ func startable(number int64) issues.Status {
 		Issue:      issues.Issue{Number: number, Title: "Issue", Type: "task", State: issues.StateOpen},
 		Ready:      true,
 		Launchable: true,
-		Agent:      "worker",
+		Agent:      "coder",
 	}
 }

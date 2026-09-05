@@ -263,8 +263,8 @@ func TestIssueListShowsStateAndWhatWouldRunIt(t *testing.T) {
 		t.Errorf("header = %q", lines[0])
 	}
 
-	// #2 is the schema task: ready, and the worker would run it.
-	if !strings.Contains(lines[2], "ready") || !strings.Contains(lines[2], "worker") {
+	// #2 is the schema task: ready, and the coder would run it.
+	if !strings.Contains(lines[2], "ready") || !strings.Contains(lines[2], "coder") {
 		t.Errorf("schema row = %q", lines[2])
 	}
 	// #3 waits on it.
@@ -392,7 +392,7 @@ func TestJSONOutputIsCleanAndParsable(t *testing.T) {
 	if len(listing.Issues) != 3 {
 		t.Errorf("listing = %d issues", len(listing.Issues))
 	}
-	if listing.Issues[1].Agent != "worker" {
+	if listing.Issues[1].Agent != "coder" {
 		t.Errorf("the agent is missing from json output: %+v", listing.Issues[1])
 	}
 
@@ -498,7 +498,7 @@ func TestIssueStartRunsTheMappedAgent(t *testing.T) {
 	if !strings.Contains(stdout, "implemented it") {
 		t.Errorf("stdout = %q, want the agent's answer", stdout)
 	}
-	if !strings.Contains(stderr, "Starting worker on #2") {
+	if !strings.Contains(stderr, "Starting coder on #2") {
 		t.Errorf("stderr = %q, want it to say what it started", stderr)
 	}
 
@@ -506,8 +506,8 @@ func TestIssueStartRunsTheMappedAgent(t *testing.T) {
 		t.Fatalf("spawned %d agents", len(h.agents.seen()))
 	}
 	req := h.agents.seen()[0]
-	if req.Op != protocol.OpSpawn || req.Agent != "worker" {
-		t.Errorf("request = %+v, want a worker spawn", req)
+	if req.Op != protocol.OpSpawn || req.Agent != "coder" {
+		t.Errorf("request = %+v, want a coder spawn", req)
 	}
 	if req.Issue != 2 {
 		t.Errorf("Issue = %d, want 2 so the run is recorded against it", req.Issue)
@@ -593,7 +593,7 @@ func TestFollowupResumesTheLastRun(t *testing.T) {
 	if !strings.Contains(stdout, "addressed the comments") {
 		t.Errorf("stdout = %q", stdout)
 	}
-	if !strings.Contains(stderr, "Following up with worker on #2") {
+	if !strings.Contains(stderr, "Following up with coder on #2") {
 		t.Errorf("stderr = %q", stderr)
 	}
 
@@ -610,7 +610,7 @@ func TestFollowupResumesTheLastRun(t *testing.T) {
 	if req.Answer != "address the comments I left on the PR" {
 		t.Errorf("answer = %q", req.Answer)
 	}
-	if req.Issue != 2 || req.Name != "worker #2" {
+	if req.Issue != 2 || req.Name != "coder #2" {
 		t.Errorf("request = %+v", req)
 	}
 }
@@ -675,7 +675,7 @@ func TestFollowupWaitsForALiveRun(t *testing.T) {
 	h.worked(t, "2")
 
 	// A run that started and has not ended.
-	if err := h.store.StartRun("run-live", 2, "worker", "@7"); err != nil {
+	if err := h.store.StartRun("run-live", 2, "coder", "@7"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -795,8 +795,8 @@ func TestPlanStartRunsReadyIssuesTogether(t *testing.T) {
 	started := map[int64]bool{}
 	for _, req := range h.agents.seen() {
 		started[req.Issue] = true
-		if req.Agent != "worker" {
-			t.Errorf("#%d started with agent %q, want the mapped worker", req.Issue, req.Agent)
+		if req.Agent != "coder" {
+			t.Errorf("#%d started with agent %q, want the mapped coder", req.Issue, req.Agent)
 		}
 		if !strings.Contains(req.Task, "pib issue view") {
 			t.Errorf("#%d got a briefing the CLI does not share with issue start: %q", req.Issue, req.Task)

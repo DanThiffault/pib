@@ -212,8 +212,8 @@ func TestUpdateTouchesOnlyTheAgentsNamed(t *testing.T) {
 	if _, err := InstallDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	mine := []byte("# my own worker\n")
-	if err := os.WriteFile(filepath.Join(dir, "worker.md"), mine, 0o644); err != nil {
+	mine := []byte("# my own coder\n")
+	if err := os.WriteFile(filepath.Join(dir, "coder.md"), mine, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "reviewer.md"), []byte("stale\n"), 0o644); err != nil {
@@ -224,7 +224,7 @@ func TestUpdateTouchesOnlyTheAgentsNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := os.ReadFile(filepath.Join(dir, "worker.md"))
+	got, err := os.ReadFile(filepath.Join(dir, "coder.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

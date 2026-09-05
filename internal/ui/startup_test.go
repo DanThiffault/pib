@@ -221,7 +221,7 @@ func TestOutdatedAgentsPromptBeforePlanning(t *testing.T) {
 	m := NewModel()
 	m, _ = step(t, m, detectedMsg{status: workspace.Status{GitRoot: "/repo", Dir: "/repo/.pib", Exists: true}})
 
-	next, cmd := m.Update(agentsCheckedMsg{installed: true, dir: "/home/.pib/agents", outdated: []string{"reviewer", "worker"}})
+	next, cmd := m.Update(agentsCheckedMsg{installed: true, dir: "/home/.pib/agents", outdated: []string{"reviewer", "coder"}})
 	m = next.(Model)
 
 	if m.phase != phaseConfirmUpdate {
@@ -231,7 +231,7 @@ func TestOutdatedAgentsPromptBeforePlanning(t *testing.T) {
 		t.Error("pib started loading the planner before the user answered")
 	}
 	view := m.startupView()
-	for _, want := range []string{"reviewer", "worker", "2 agents", "Update them?"} {
+	for _, want := range []string{"reviewer", "coder", "2 agents", "Update them?"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("prompt missing %q:\n%s", want, view)
 		}

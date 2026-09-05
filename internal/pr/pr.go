@@ -1,7 +1,7 @@
 // Package pr reports the state of a pull request on GitHub.
 //
 // pib owns issues; GitHub still owns pull requests. This is the one place
-// pib looks across at them, so that a merge can close the issue its worker
+// pib looks across at them, so that a merge can close the issue its coder
 // opened the pull request for.
 package pr
 

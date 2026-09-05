@@ -211,7 +211,7 @@ func TestConstraintsRejectNonsense(t *testing.T) {
 		t.Error("an issue blocking itself was accepted")
 	}
 	if _, err := store.db.Exec(`
-		INSERT INTO runs (id, issue, agent, started_at, status) VALUES ('r1', ?, 'worker', ?, 'finished')`,
+		INSERT INTO runs (id, issue, agent, started_at, status) VALUES ('r1', ?, 'coder', ?, 'finished')`,
 		issue, stamp); err == nil {
 		t.Error("an unknown run status was accepted")
 	}

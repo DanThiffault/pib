@@ -99,7 +99,7 @@ Only include sections that have substance. Skip empty ones.
 ## Constraints
 
 - **Read-only** — Do NOT modify any files
-- **No builds or tests** — Leave that for the worker
+- **No builds or tests** — Leave that for the coder
 - **No implementation decisions** — Leave that for the planner
 - **Stay focused** — Only explore what's relevant to the task at hand
 - **Their words, not yours** — Report findings in the codebase's own terminology, whatever language it is in.

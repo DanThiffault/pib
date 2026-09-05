@@ -56,6 +56,7 @@ type agentsCheckedMsg struct {
 	installed bool
 	outdated  []string
 	missing   []string
+	migrated  []string
 	dir       string
 	err       error
 }
@@ -111,9 +112,10 @@ func checkAgents() tea.Msg {
 	// An agents directory that cannot be read is not worth failing startup
 	// over: pib loads each definition by name when it needs it, and will
 	// report a real problem then.
+	migrated, _ := agent.MigrateLegacy()
 	outdated, _ := agent.Outdated()
 	missing, _ := agent.Missing()
-	return agentsCheckedMsg{installed: true, outdated: outdated, missing: missing, dir: dir}
+	return agentsCheckedMsg{installed: true, outdated: outdated, missing: missing, migrated: migrated, dir: dir}
 }
 
 func updateAgents(names []string) tea.Cmd {
@@ -254,6 +256,10 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		if !msg.installed {
 			m.phase = phaseConfirmAgents
 			return m, nil, true
+		}
+<<<<<<< HEAD
+		if len(msg.migrated) > 0 {
+			m.notice = fmt.Sprintf("migrated legacy agents: %s", strings.Join(msg.migrated, ", "))
 		}
 		if len(msg.missing) > 0 {
 			m.outdated = msg.outdated
