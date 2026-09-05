@@ -30,7 +30,7 @@ func TestLoadPathsFallsBackToDefaults(t *testing.T) {
 	if !ok || agent != "coder" {
 		t.Errorf("task maps to %q (ok=%v), want coder", agent, ok)
 	}
-	if got, want := cfg.Types(), []string{"feature", "plan-reviewer", "prototype", "research", "reviewer", "task"}; !reflect.DeepEqual(got, want) {
+	if got, want := cfg.Types(), []string{"code-reviewer", "feature", "plan-reviewer", "prototype", "research", "reviewer", "task"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Types() = %v, want %v", got, want)
 	}
 }
@@ -122,6 +122,49 @@ func TestUnknownKeysAreIgnored(t *testing.T) {
 	}
 	if agent, _ := cfg.AgentFor("task"); agent != "coder" {
 		t.Errorf("task maps to %q, want coder", agent)
+	}
+}
+
+func TestDeprecatedTypeStillResolves(t *testing.T) {
+	cfg, err := LoadPaths("", "")
+	if err != nil {
+		t.Fatalf("LoadPaths: %v", err)
+	}
+
+	agent, ok := cfg.AgentFor("reviewer")
+	if !ok || agent != "code-reviewer" {
+		t.Errorf("reviewer maps to %q (ok=%v), want code-reviewer", agent, ok)
+	}
+	replacement, deprecated := cfg.DeprecatedFor("reviewer")
+	if !deprecated || replacement != "code-reviewer" {
+		t.Errorf("DeprecatedFor(\"reviewer\") = %q, %v, want code-reviewer, true", replacement, deprecated)
+	}
+
+	// Non-deprecated types are not reported as deprecated.
+	if _, deprecated := cfg.DeprecatedFor("task"); deprecated {
+		t.Error("task should not be deprecated")
+	}
+
+	// A warning is collected when loading defaults.
+	if len(cfg.Warnings) == 0 {
+		t.Error("expected deprecation warnings, got none")
+	}
+}
+
+func TestDeprecatedTypeNotWarnedWhenOverridden(t *testing.T) {
+	dir := t.TempDir()
+	// A workspace that maps reviewer to something else should not warn.
+	global := write(t, dir, "[types]\nreviewer = \"custom-reviewer\"\n")
+
+	cfg, err := LoadPaths(global, "")
+	if err != nil {
+		t.Fatalf("LoadPaths: %v", err)
+	}
+	if agent, _ := cfg.AgentFor("reviewer"); agent != "custom-reviewer" {
+		t.Errorf("reviewer maps to %q, want custom-reviewer", agent)
+	}
+	if _, deprecated := cfg.DeprecatedFor("reviewer"); deprecated {
+		t.Error("reviewer should not be deprecated when overridden")
 	}
 }
 

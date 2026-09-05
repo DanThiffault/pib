@@ -55,7 +55,7 @@ func TestMissingAgentIsReported(t *testing.T) {
 	if _, err := InstallDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(dir, "reviewer.md")); err != nil {
+	if err := os.Remove(filepath.Join(dir, "code-reviewer.md")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -63,8 +63,8 @@ func TestMissingAgentIsReported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(missing) != 1 || missing[0] != "reviewer" {
-		t.Errorf("missing = %v, want [reviewer]", missing)
+	if len(missing) != 1 || missing[0] != "code-reviewer" {
+		t.Errorf("missing = %v, want [code-reviewer]", missing)
 	}
 
 	stale, err := Outdated()
@@ -82,7 +82,7 @@ func TestEditedAgentIsOutdatedNotMissing(t *testing.T) {
 	if _, err := InstallDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "reviewer.md"), []byte("edited\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "code-reviewer.md"), []byte("edited\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,8 +98,8 @@ func TestEditedAgentIsOutdatedNotMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stale) != 1 || stale[0] != "reviewer" {
-		t.Errorf("outdated = %v, want [reviewer]", stale)
+	if len(stale) != 1 || stale[0] != "code-reviewer" {
+		t.Errorf("outdated = %v, want [code-reviewer]", stale)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestInstallDefaultsFillsMissing(t *testing.T) {
 	if _, err := InstallDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(dir, "reviewer.md")); err != nil {
+	if err := os.Remove(filepath.Join(dir, "code-reviewer.md")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "worker.md"), []byte("edited\n"), 0o644); err != nil {
@@ -121,8 +121,8 @@ func TestInstallDefaultsFillsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(written) != 1 || written[0] != "reviewer" {
-		t.Errorf("written = %v, want [reviewer]", written)
+	if len(written) != 1 || written[0] != "code-reviewer" {
+		t.Errorf("written = %v, want [code-reviewer]", written)
 	}
 
 	got, err := os.ReadFile(filepath.Join(dir, "worker.md"))
@@ -133,16 +133,16 @@ func TestInstallDefaultsFillsMissing(t *testing.T) {
 		t.Error("an edited agent was overwritten")
 	}
 
-	want, err := defaultBody("reviewer")
+	want, err := defaultBody("code-reviewer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	now, err := os.ReadFile(filepath.Join(dir, "reviewer.md"))
+	now, err := os.ReadFile(filepath.Join(dir, "code-reviewer.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(now) != string(want) {
-		t.Error("reviewer.md was not restored with the built-in definition")
+		t.Error("code-reviewer.md was not restored with the built-in definition")
 	}
 }
 
@@ -151,7 +151,7 @@ func TestChangedAgentIsOutdated(t *testing.T) {
 	if _, err := InstallDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "reviewer.md"), []byte("stale\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "code-reviewer.md"), []byte("stale\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,8 +159,8 @@ func TestChangedAgentIsOutdated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stale) != 1 || stale[0] != "reviewer" {
-		t.Errorf("outdated = %v, want [reviewer]", stale)
+	if len(stale) != 1 || stale[0] != "code-reviewer" {
+		t.Errorf("outdated = %v, want [code-reviewer]", stale)
 	}
 }
 
@@ -171,20 +171,20 @@ func TestUpdateKeepsWhatItReplaced(t *testing.T) {
 	if _, err := InstallDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	mine := []byte("# my own reviewer\n")
-	if err := os.WriteFile(filepath.Join(dir, "reviewer.md"), mine, 0o644); err != nil {
+	mine := []byte("# my own code-reviewer\n")
+	if err := os.WriteFile(filepath.Join(dir, "code-reviewer.md"), mine, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	backup, written, err := UpdateDefaults([]string{"reviewer"}, time.Now())
+	backup, written, err := UpdateDefaults([]string{"code-reviewer"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(written) != 1 || written[0] != "reviewer" {
-		t.Errorf("written = %v, want [reviewer]", written)
+	if len(written) != 1 || written[0] != "code-reviewer" {
+		t.Errorf("written = %v, want [code-reviewer]", written)
 	}
 
-	saved, err := os.ReadFile(filepath.Join(backup, "reviewer.md"))
+	saved, err := os.ReadFile(filepath.Join(backup, "code-reviewer.md"))
 	if err != nil {
 		t.Fatalf("the replaced definition was not saved: %v", err)
 	}
@@ -192,16 +192,16 @@ func TestUpdateKeepsWhatItReplaced(t *testing.T) {
 		t.Errorf("backup = %q, want the file that was replaced", saved)
 	}
 
-	now, err := os.ReadFile(filepath.Join(dir, "reviewer.md"))
+	now, err := os.ReadFile(filepath.Join(dir, "code-reviewer.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := defaultBody("reviewer")
+	want, err := defaultBody("code-reviewer")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(now) != string(want) {
-		t.Error("reviewer.md was not replaced with the built-in definition")
+		t.Error("code-reviewer.md was not replaced with the built-in definition")
 	}
 }
 
@@ -216,11 +216,11 @@ func TestUpdateTouchesOnlyTheAgentsNamed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "coder.md"), mine, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "reviewer.md"), []byte("stale\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "code-reviewer.md"), []byte("stale\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, _, err := UpdateDefaults([]string{"reviewer"}, time.Now()); err != nil {
+	if _, _, err := UpdateDefaults([]string{"code-reviewer"}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -259,13 +259,13 @@ func TestEachUpdateGetsItsOwnBackup(t *testing.T) {
 	first := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
 	second := first.Add(time.Hour)
 
-	os.WriteFile(filepath.Join(dir, "reviewer.md"), []byte("one\n"), 0o644)
-	backupA, _, err := UpdateDefaults([]string{"reviewer"}, first)
+	os.WriteFile(filepath.Join(dir, "code-reviewer.md"), []byte("one\n"), 0o644)
+	backupA, _, err := UpdateDefaults([]string{"code-reviewer"}, first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(dir, "reviewer.md"), []byte("two\n"), 0o644)
-	backupB, _, err := UpdateDefaults([]string{"reviewer"}, second)
+	os.WriteFile(filepath.Join(dir, "code-reviewer.md"), []byte("two\n"), 0o644)
+	backupB, _, err := UpdateDefaults([]string{"code-reviewer"}, second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestEachUpdateGetsItsOwnBackup(t *testing.T) {
 	if backupA == backupB {
 		t.Fatal("the second update reused the first one's backup directory")
 	}
-	a, _ := os.ReadFile(filepath.Join(backupA, "reviewer.md"))
+	a, _ := os.ReadFile(filepath.Join(backupA, "code-reviewer.md"))
 	if string(a) != "one\n" {
 		t.Errorf("the first backup was overwritten: %q", a)
 	}

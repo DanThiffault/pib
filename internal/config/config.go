@@ -29,7 +29,8 @@ feature       = ""
 task          = "coder"
 research      = "researcher"
 prototype     = "prototype"
-reviewer      = "reviewer"
+reviewer      = "code-reviewer"
+code-reviewer = "code-reviewer"
 plan-reviewer = "plan-reviewer"
 
 # Applying a new plan adds an issue that reviews it against the codebase, and
@@ -52,9 +53,16 @@ func defaults() map[string]string {
 		"task":          "coder",
 		"research":      "researcher",
 		"prototype":     "prototype",
-		"reviewer":      "reviewer",
+		"reviewer":      "code-reviewer",
+		"code-reviewer": "code-reviewer",
 		"plan-reviewer": "plan-reviewer",
 	}
+}
+
+// deprecated maps legacy type names to the agent they resolve to. A type
+// listed here still works but carries a deprecation warning.
+var deprecated = map[string]string{
+	"reviewer": "code-reviewer",
 }
 
 // Config is the merged configuration.
@@ -62,6 +70,9 @@ type Config struct {
 	types       map[string]string
 	planReview  bool
 	planIsolate bool
+	// Warnings collects non-fatal issues found while loading, such as
+	// deprecated type names.
+	Warnings []string
 }
 
 // PlanIsolate reports whether each issue gets its own checkout. On unless a
@@ -157,6 +168,13 @@ func LoadPaths(global, workspace string) (Config, error) {
 		}
 	}
 
+	// Warn about deprecated type names.
+	for typ, replacement := range deprecated {
+		if agent, ok := cfg.types[typ]; ok && agent == replacement {
+			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("type %q is deprecated and resolves to %q", typ, replacement))
+		}
+	}
+
 	return cfg, nil
 }
 
@@ -224,6 +242,21 @@ func SeedGlobal() (bool, error) {
 func (c Config) AgentFor(issueType string) (agent string, ok bool) {
 	agent, found := c.types[issueType]
 	return agent, found && agent != ""
+}
+
+// DeprecatedFor returns the replacement agent for a deprecated type, and
+// whether the type is deprecated at all. A type that has been overridden to
+// something other than the replacement is not reported as deprecated.
+func (c Config) DeprecatedFor(issueType string) (replacement string, ok bool) {
+	replacement, ok = deprecated[issueType]
+	if !ok {
+		return "", false
+	}
+	agent, found := c.types[issueType]
+	if !found || agent != replacement {
+		return "", false
+	}
+	return replacement, true
 }
 
 // Known reports whether the type appears in the config at all. An unknown

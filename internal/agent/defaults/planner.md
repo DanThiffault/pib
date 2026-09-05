@@ -100,7 +100,7 @@ Negative: more moving parts, eventual consistency on reads
 
 Break the plan into sub-issues. Each sub-issue needs:
 
-- A `type` — `task`, `research`, `prototype` or `reviewer`. The type is how pib knows
+- A `type` — `task`, `research`, or `prototype`. The type is how pib knows
   which agent implements it, so it is not decoration.
 - A clear title and body
 - `acceptance` criteria
@@ -220,13 +220,6 @@ What the feature *is* goes on the plan; the issues are the work:
       "blockedBy": ["schema"],
       "acceptance": ["Order aggregate handles the PlaceOrder command"],
       "body": "## Task: Implement Order Aggregate\n\n…"
-    },
-    {
-      "id": "review",
-      "type": "reviewer",
-      "title": "Review: order placement",
-      "blockedBy": ["schema", "order-agg"],
-      "body": "## Review\n\nReview every task in this plan.\n\n…"
     }
   ]
 }
@@ -247,8 +240,7 @@ Notes on the document:
 
 - `id` is yours, and only exists inside the document. `blockedBy` takes one of those
   ids, or an existing issue written as `"#12"`.
-- The reviewer issue is blocked by every task, so it only becomes startable once they
-  are all closed.
+
 - `parent` exists for a task that genuinely decomposes into smaller ones. It is not how
   issues join a plan — belonging to the plan is what the document already says.
 - Applying the same plan again is an **additive merge**: known ids update, new ids are
