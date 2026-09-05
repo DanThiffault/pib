@@ -37,6 +37,7 @@ var (
 	downKeys   = key.NewBinding(key.WithKeys("down"))
 	selectKeys = key.NewBinding(key.WithKeys("right", "enter"))
 	backKeys   = key.NewBinding(key.WithKeys("left", "esc"))
+	startKeys  = key.NewBinding(key.WithKeys("s"))
 )
 
 type screen int
