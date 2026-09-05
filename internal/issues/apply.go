@@ -137,7 +137,7 @@ func (d Document) check() error {
 // The merge is additive. An id already in the plan updates that issue, an id
 // pib has not seen creates one, and an issue missing from the document is
 // left exactly as it is — never closed, never deleted. A closed issue stays
-// closed. That makes a second planner pass safe to run while workers are
+// closed. That makes a second planner pass safe to run while coders are
 // still in flight.
 func (s *Store) Apply(doc Document, opts ApplyOptions) (ApplyResult, error) {
 	if err := doc.check(); err != nil {
