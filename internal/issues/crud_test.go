@@ -476,6 +476,44 @@ func TestLinkPRAndReopen(t *testing.T) {
 	}
 }
 
+// linkRecorder captures the issues a link notified the hook with.
+type linkRecorder struct{ linked []Issue }
+
+func (r *linkRecorder) PRLinked(issue Issue) { r.linked = append(r.linked, issue) }
+
+func TestLinkPRNotifiesTheHook(t *testing.T) {
+	store := planned(t)
+	issue := task(t, store, "Alpha")
+
+	// A store with no hook behaves exactly as it does today.
+	if _, err := store.LinkPR(issue.Number, "https://github.com/o/r/pull/1"); err != nil {
+		t.Fatalf("LinkPR with no hook: %v", err)
+	}
+
+	var seen linkRecorder
+	store.OnLinked = &seen
+
+	if _, err := store.LinkPR(issue.Number, "https://github.com/o/r/pull/7"); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen.linked) != 1 {
+		t.Fatalf("hook saw %d links, want 1: %+v", len(seen.linked), seen.linked)
+	}
+	// The hook sees the row as it landed, not as it was before the write.
+	if got := seen.linked[0]; got.Number != issue.Number ||
+		got.PRURL != "https://github.com/o/r/pull/7" || got.PRState != "open" {
+		t.Errorf("hook saw %+v, want #%d with the new pull request open", got, issue.Number)
+	}
+
+	// A failed link notifies nobody.
+	if _, err := store.LinkPR(issue.Number, "  "); err == nil {
+		t.Fatal("an empty pull request url was accepted")
+	}
+	if len(seen.linked) != 1 {
+		t.Errorf("hook saw %d links after a rejected url, want 1", len(seen.linked))
+	}
+}
+
 func TestReindexRereadsEveryFile(t *testing.T) {
 	store := planned(t)
 	first := task(t, store, "Alpha")

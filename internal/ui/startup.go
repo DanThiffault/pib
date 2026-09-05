@@ -184,6 +184,11 @@ func startServer(ws workspace.Status) tea.Cmd {
 		// it as written.
 		store.OnClosed = &recheck.Hook{Spawn: agents, Issues: store}
 
+		// And whenever a worker links a pull request, review it while it is
+		// still open. internal/review supplies the hook; until it lands, a nil
+		// OnLinked means LinkPR behaves exactly as it did before.
+		store.OnLinked = nil
+
 		srv, err := server.Listen(ws.Dir, server.Router{
 			Agents: agents,
 			Issues: issueops.Handler{

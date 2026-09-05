@@ -432,7 +432,13 @@ func (s *Store) LinkPR(number int64, url string) (Issue, error) {
 		url, format(now()), number); err != nil {
 		return Issue{}, err
 	}
-	return s.Issue(number)
+
+	issue, err := s.Issue(number)
+	if err != nil {
+		return Issue{}, err
+	}
+	s.notifyLinked(issue)
+	return issue, nil
 }
 
 // Blockers lists the issues an issue is waiting on.
