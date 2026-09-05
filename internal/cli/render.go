@@ -370,6 +370,8 @@ func (a App) renderPlanStart(results []startResult, skipped []issues.Status, slu
 		switch {
 		case r.Error != "":
 			fmt.Fprintf(a.Stdout, "   did not start: %s\n", r.Error)
+		case r.Status == protocol.StatusOK:
+			fmt.Fprintf(a.Stdout, "   started\n")
 		case r.Status == "done":
 			fmt.Fprintf(a.Stdout, "   %s\n", firstLine(r.Text))
 		case r.Status == "needs_input":

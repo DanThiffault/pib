@@ -106,6 +106,8 @@ func (r Runner) Run(ctx context.Context, req protocol.Request) (protocol.Respons
 		return r.spawn(ctx, req)
 	case protocol.OpResume:
 		return r.resume(ctx, req)
+	case protocol.OpSpawnBackground:
+		return r.spawnBackground(req)
 	default:
 		return protocol.Response{}, fmt.Errorf("unknown op %q", req.Op)
 	}
@@ -148,6 +150,77 @@ func (r Runner) spawn(ctx context.Context, req protocol.Request) (protocol.Respo
 	return r.await(ctx,
 		run{id: runID, issue: req.Issue, agent: def.Name},
 		runDir, name, append([]string{agent.Executable}, args...))
+}
+
+// spawnBackground starts an agent and returns immediately, leaving it
+// running in the background. A goroutine waits for it to finish and
+// records the outcome.
+func (r Runner) spawnBackground(req protocol.Request) (protocol.Response, error) {
+	if req.Agent == "" {
+		return protocol.Response{}, errors.New("no agent named")
+	}
+	if req.Caller != "" && req.Caller == req.Agent {
+		return protocol.Response{}, fmt.Errorf("%w: %s", ErrSelfSpawn, req.Agent)
+	}
+
+	def, err := r.load(req.Agent)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+
+	runID, err := newRunID()
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	runDir := filepath.Join(r.StateDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return protocol.Response{}, err
+	}
+
+	args := []string{"--session-dir", runDir}
+	args = append(args, def.Flags(agent.Options{
+		ExtraTools: ControlTools,
+		Extensions: []string{r.ExtensionPath},
+	})...)
+	args = append(args, "--", req.Task)
+
+	name := req.Name
+	if name == "" {
+		name = def.Name
+	}
+
+	dir, err := r.dirFor(req.Issue)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+
+	window, err := newWindow(tmux.Options{
+		Name:       name,
+		Dir:        dir,
+		Env:        childEnv(runDir, r.SocketPath, def.Name, req.Issue),
+		Background: true,
+	}, append([]string{agent.Executable}, args...))
+	if err != nil {
+		return protocol.Response{}, err
+	}
+
+	if r.Record != nil {
+		if err := r.Record.StartRun(runID, req.Issue, def.Name, window.ID); err != nil {
+			tmux.Kill(window.ID)
+			return protocol.Response{}, err
+		}
+
+		go func() {
+			outcome := session.StatusUnknown
+			_, _ = r.wait(context.Background(), window.ID, runDir, &outcome)
+			_ = r.Record.FinishRun(runID, string(outcome))
+		}()
+	}
+
+	return protocol.Response{
+		Status:  protocol.StatusOK,
+		Session: runID,
+	}, nil
 }
 
 func (r Runner) resume(ctx context.Context, req protocol.Request) (protocol.Response, error) {

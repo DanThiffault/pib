@@ -17,6 +17,9 @@ const (
 	OpSpawn Op = "spawn"
 	// OpResume continues an agent that stopped to ask a question.
 	OpResume Op = "resume"
+	// OpSpawnBackground starts a new agent and returns immediately,
+	// leaving it running in the background.
+	OpSpawnBackground Op = "spawn_background"
 )
 
 // Issue and plan operations. These carry their arguments and results in
@@ -47,7 +50,7 @@ const StatusOK = "ok"
 // that hold the connection open until the agent stops; everything else
 // answers straight away.
 func (o Op) IsAgent() bool {
-	return o == OpSpawn || o == OpResume
+	return o == OpSpawn || o == OpResume || o == OpSpawnBackground
 }
 
 // Request is sent by the extension.
