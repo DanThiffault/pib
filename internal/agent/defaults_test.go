@@ -19,7 +19,7 @@ func TestDefaultNamesLeadWithPlanner(t *testing.T) {
 		t.Errorf("names[0] = %q, want the planner first", names[0])
 	}
 	for _, want := range []string{
-		"planner", "scout", "researcher", "reviewer", "coder", "prototype",
+		"planner", "scout", "researcher", "code-reviewer", "coder", "prototype",
 		"plan-reviewer", "plan-recheck",
 	} {
 		if !slices.Contains(names, want) {
@@ -100,7 +100,7 @@ func TestAgentsCanRunThePibCommandsTheyNeed(t *testing.T) {
 	needs := map[string][]string{
 		"planner":       {"pib plan apply", "pib issue ready", "blockedBy"},
 		"coder":         {"pib issue view", "pib issue link-pr"},
-		"reviewer":      {"pib issue view", "pib issue comment", "pib issue close"},
+		"code-reviewer": {"pib issue view", "pib review record"},
 		"plan-reviewer": {"pib plan view", "pib issue list --plan", "pib issue comment"},
 		"plan-recheck":  {"pib issue view", "pib issue list --plan", "pib issue comment"},
 	}
@@ -132,9 +132,9 @@ func TestNoAgentClosesATaskIssue(t *testing.T) {
 		t.Error("the coder is no longer told to leave its issue open")
 	}
 
-	body, _ = defaultAgents.ReadFile(defaultsDir + "/reviewer.md")
-	if !strings.Contains(string(body), "Never close a task issue") {
-		t.Error("the reviewer is no longer told to leave task issues alone")
+	body, _ = defaultAgents.ReadFile(defaultsDir + "/code-reviewer.md")
+	if !strings.Contains(string(body), "not closed the task issue") && !strings.Contains(string(body), "not close the task issue") {
+		t.Error("the code-reviewer is no longer told to leave task issues alone")
 	}
 }
 
@@ -247,8 +247,8 @@ func TestPlannerExampleDocumentApplies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the planner's example document does not apply: %v", err)
 	}
-	if len(result.Created) != 3 {
-		t.Errorf("created %v, want the three issues in the example", result.Created)
+	if len(result.Created) != 2 {
+		t.Errorf("created %v, want the two issues in the example", result.Created)
 	}
 	if len(result.Warnings) != 0 {
 		t.Errorf("the example applies with warnings: %v", result.Warnings)
@@ -268,8 +268,7 @@ func TestPlannerExampleDocumentApplies(t *testing.T) {
 		}
 	}
 
-	// Only the first task can start: the second waits on it, and the
-	// reviewer waits on both.
+	// Only the first task can start; the second waits on it.
 	ready, err := store.Ready(issues.Filter{}, issues.StatusOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -299,7 +298,7 @@ func jsonBlock(t *testing.T, text string) string {
 // finishing checklist is what stops that, so it has to stay in front of
 // pib_done rather than after it.
 func TestIssueAgentsRecordBeforeFinishing(t *testing.T) {
-	for _, name := range []string{"coder", "reviewer", "researcher", "prototype"} {
+	for _, name := range []string{"coder", "researcher", "prototype"} {
 		body, _ := defaultAgents.ReadFile(defaultsDir + "/" + name + ".md")
 		text := string(body)
 
@@ -316,6 +315,22 @@ func TestIssueAgentsRecordBeforeFinishing(t *testing.T) {
 		if gate < 0 || call < 0 || gate > call {
 			t.Errorf("%s: the finishing checklist is not in front of pib_done", name)
 		}
+	}
+
+	// The code-reviewer does not use $PIB_ISSUE; the issue number is passed
+	// in the task text and used as a literal in commands.
+	body, _ := defaultAgents.ReadFile(defaultsDir + "/code-reviewer.md")
+	text := string(body)
+	if !strings.Contains(text, "before you call it") {
+		t.Error("the code-reviewer does not gate pib_done on recording its work")
+	}
+	if strings.Contains(text, `"$PIB_ISSUE"`) {
+		t.Error("the code-reviewer should not reference $PIB_ISSUE")
+	}
+	gate := strings.Index(text, "before you call it")
+	call := strings.LastIndex(text, "Then call `pib_done`")
+	if gate < 0 || call < 0 || gate > call {
+		t.Error("code-reviewer: the finishing checklist is not in front of pib_done")
 	}
 }
 

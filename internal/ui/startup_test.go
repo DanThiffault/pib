@@ -385,8 +385,8 @@ func TestAcceptingAnUpdateRewritesTheFile(t *testing.T) {
 	if _, err := agent.InstallDefaults(); err != nil {
 		t.Fatal(err)
 	}
-	mine := []byte("# my reviewer\n")
-	os.WriteFile(filepath.Join(dir, "reviewer.md"), mine, 0o644)
+	mine := []byte("# my code-reviewer\n")
+	os.WriteFile(filepath.Join(dir, "code-reviewer.md"), mine, 0o644)
 
 	stale, err := agent.Outdated()
 	if err != nil || len(stale) != 1 {
@@ -412,14 +412,14 @@ func TestAcceptingAnUpdateRewritesTheFile(t *testing.T) {
 	next, _ = m.Update(msg)
 	m = next.(Model)
 
-	got, _ := os.ReadFile(filepath.Join(dir, "reviewer.md"))
-	if strings.Contains(string(got), "my reviewer") {
-		t.Error("reviewer.md was not updated")
+	got, _ := os.ReadFile(filepath.Join(dir, "code-reviewer.md"))
+	if strings.Contains(string(got), "my code-reviewer") {
+		t.Error("code-reviewer.md was not updated")
 	}
-	if !strings.Contains(string(got), "File Each Finding as an Issue") {
-		t.Error("reviewer.md is not the built-in definition")
+	if !strings.Contains(string(got), "one pull request") {
+		t.Error("code-reviewer.md is not the built-in definition")
 	}
-	saved, err := os.ReadFile(filepath.Join(msg.backup, "reviewer.md"))
+	saved, err := os.ReadFile(filepath.Join(msg.backup, "code-reviewer.md"))
 	if err != nil || string(saved) != string(mine) {
 		t.Errorf("backup missing or wrong: %q %v", saved, err)
 	}

@@ -266,6 +266,9 @@ func (m Model) handleStartIssue(issue issues.Status) (Model, tea.Cmd) {
 	m.notice = fmt.Sprintf("Starting %s on #%d — %s", issue.Agent, issue.Number, issue.Title)
 
 	cmds := []tea.Cmd{spawnAgentCmd(m.agents, issue)}
+	if replacement, deprecated := m.cfg.DeprecatedFor(issue.Type); deprecated {
+		cmds = append(cmds, deprecationCommentCmd(m.store, issue, replacement))
+	}
 	if !m.polling {
 		m.polling = true
 		cmds = append(cmds, refreshTick())
@@ -338,6 +341,36 @@ func spawnAgentCmd(r spawner, issue issues.Status) tea.Cmd {
 			return agentFinishedMsg{issue: issue, err: err}
 		}
 		return agentFinishedMsg{issue: issue, status: resp.Status}
+	}
+}
+
+// deprecationCommentMsg is a no-op message returned after checking whether
+// a deprecation comment needs to be written.
+type deprecationCommentMsg struct{}
+
+// deprecationCommentCmd reads an issue's comments and, if no deprecation
+// warning is present yet, appends one. It reports a no-op message so the
+// caller can ignore it.
+func deprecationCommentCmd(store *issues.Store, issue issues.Status, replacement string) tea.Cmd {
+	return func() tea.Msg {
+		if store == nil {
+			return deprecationCommentMsg{}
+		}
+		comments, err := store.Comments(issue.Number)
+		if err != nil {
+			return deprecationCommentMsg{}
+		}
+		marker := fmt.Sprintf("Type %q is deprecated", issue.Type)
+		for _, c := range comments {
+			if strings.Contains(c.Body, marker) {
+				return deprecationCommentMsg{}
+			}
+		}
+		body := fmt.Sprintf(
+			"Type %q is deprecated and was launched as %q. Change this issue's type; the alias goes away in a future release.",
+			issue.Type, replacement)
+		_ = store.Comment(issue.Number, "pib", body)
+		return deprecationCommentMsg{}
 	}
 }
 
