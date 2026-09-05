@@ -32,13 +32,14 @@ var (
 )
 
 var (
-	tabKeys    = key.NewBinding(key.WithKeys("tab"))
-	tab1Keys   = key.NewBinding(key.WithKeys("1"))
-	tab2Keys   = key.NewBinding(key.WithKeys("2"))
-	upKeys     = key.NewBinding(key.WithKeys("up"))
-	downKeys   = key.NewBinding(key.WithKeys("down"))
-	selectKeys = key.NewBinding(key.WithKeys("right", "enter"))
-	backKeys   = key.NewBinding(key.WithKeys("left", "esc"))
+	tabKeys       = key.NewBinding(key.WithKeys("tab"))
+	tab1Keys      = key.NewBinding(key.WithKeys("1"))
+	tab2Keys      = key.NewBinding(key.WithKeys("2"))
+	upKeys        = key.NewBinding(key.WithKeys("up"))
+	downKeys      = key.NewBinding(key.WithKeys("down"))
+	selectKeys    = key.NewBinding(key.WithKeys("right", "enter"))
+	backKeys      = key.NewBinding(key.WithKeys("left", "esc"))
+	startAllKeys  = key.NewBinding(key.WithKeys("a"))
 )
 
 type tab int
