@@ -150,6 +150,9 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.notice = ""
 				return m, nil
 			}
+			if key.Matches(keyMsg, startAllKeys) {
+				return m.handleStartAllReady()
+			}
 			m, cmd := m.issueActionKey(keyMsg, viewPlanDetail)
 			return m, cmd
 		case viewPlanDetail:
@@ -177,6 +180,8 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				return m, nil
+			case key.Matches(keyMsg, startAllKeys):
+				return m.handleStartAllReady()
 			}
 
 			m, cmd := m.issueActionKey(keyMsg, viewPlanList)
@@ -266,6 +271,48 @@ func (m Model) handleStartIssue(issue issues.Status) (Model, tea.Cmd) {
 	m.notice = fmt.Sprintf("Starting %s on #%d — %s", issue.Agent, issue.Number, issue.Title)
 
 	cmds := []tea.Cmd{spawnAgentCmd(m.agents, issue)}
+	if !m.polling {
+		m.polling = true
+		cmds = append(cmds, refreshTick())
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// handleStartAllReady starts every launchable issue in the current plan at
+// once, matching what `pib plan start` does from the command line.
+func (m Model) handleStartAllReady() (Model, tea.Cmd) {
+	if m.agents == nil {
+		m.notice = "Agent runner is not available"
+		return m, nil
+	}
+
+	var toStart []issues.Status
+	for _, issue := range m.planIssues {
+		if issue.Launchable && !m.inFlight[issue.Number] {
+			toStart = append(toStart, issue)
+		}
+	}
+
+	if len(toStart) == 0 {
+		m.notice = "No issues are ready to start"
+		return m, nil
+	}
+
+	if m.inFlight == nil {
+		m.inFlight = map[int64]bool{}
+	}
+
+	var cmds []tea.Cmd
+	for _, issue := range toStart {
+		m.inFlight[issue.Number] = true
+		cmds = append(cmds, spawnAgentCmd(m.agents, issue))
+	}
+
+	// Show every started issue as in progress immediately, so the action bar
+	// stops offering to start them and the list reflects the new state.
+	m.planIssues = m.markInFlight(append([]issues.Status(nil), m.planIssues...))
+	m.notice = fmt.Sprintf("Starting %d agents on plan %s", len(toStart), m.currentPlanSlug())
+
 	if !m.polling {
 		m.polling = true
 		cmds = append(cmds, refreshTick())

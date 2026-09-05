@@ -1800,3 +1800,138 @@ func TestASecondAgentJoinsTheExistingPoll(t *testing.T) {
 		t.Error("polling still set after the poll stopped")
 	}
 }
+
+func TestActionBarShowsStartAllWhenLaunchableIssuesExist(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{startable(1)}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "Start all") {
+		t.Errorf("action bar missing Start all:\n%s", view)
+	}
+}
+
+func TestActionBarHidesStartAllWhenNoLaunchableIssues(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Blocked"}, Blocked: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if strings.Contains(view, "Start all") {
+		t.Errorf("action bar should not show Start all for non-launchable issues:\n%s", view)
+	}
+}
+
+func TestActionBarHidesStartAllWhenAllInFlight(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.agents = &fakeSpawner{}
+	m.planIssues = []issues.Status{startable(1)}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+
+	view := m.View()
+	if strings.Contains(view, "Start all") {
+		t.Errorf("action bar should hide Start all when every launchable issue is already starting:\n%s", view)
+	}
+}
+
+func TestStartAllStartsEveryLaunchableIssue(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	agents := &fakeSpawner{}
+	m.agents = agents
+	m.planIssues = []issues.Status{startable(1), startable(2), {Issue: issues.Issue{Number: 3, Title: "Blocked"}, Blocked: true}}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("no command from [A]")
+	}
+	drain(cmd)
+
+	reqs := agents.seen()
+	if len(reqs) != 2 {
+		t.Fatalf("sent %d requests, want 2", len(reqs))
+	}
+	for i, want := range []int64{1, 2} {
+		if reqs[i].Issue != want {
+			t.Errorf("req[%d].Issue = %d, want %d", i, reqs[i].Issue, want)
+		}
+		if reqs[i].Task != runner.Briefing(want, "Issue") {
+			t.Errorf("req[%d].Task = %q, want the shared briefing", i, reqs[i].Task)
+		}
+	}
+}
+
+func TestStartAllMarksIssuesInProgressImmediately(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.agents = &fakeSpawner{}
+	m.planIssues = []issues.Status{startable(1), startable(2)}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = next.(Model)
+
+	for i := range m.planIssues {
+		if !m.planIssues[i].InProgress {
+			t.Errorf("issue #%d still reads as idle after Start all", m.planIssues[i].Number)
+		}
+		if m.planIssues[i].Ready || m.planIssues[i].Launchable {
+			t.Errorf("issue #%d still reads as startable after Start all", m.planIssues[i].Number)
+		}
+	}
+}
+
+func TestStartAllRefusesWhenNoAgentRunner(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.planIssues = []issues.Status{startable(1)}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = next.(Model)
+	if !strings.Contains(m.notice, "not available") {
+		t.Errorf("expected unavailable runner notice, got %q", m.notice)
+	}
+}
+
+func TestStartAllJoinsExistingPoll(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.agents = &fakeSpawner{}
+	m.planIssues = []issues.Status{startable(1), startable(2)}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+	if !m.polling {
+		t.Fatal("first start did not open a poll")
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = next.(Model)
+	if !m.polling {
+		t.Fatal("Start all did not join the existing poll")
+	}
+
+	// Both agents finish; the poll should close exactly once.
+	for _, n := range []int64{1, 2} {
+		next, _ = m.Update(agentFinishedMsg{issue: startable(n), status: "done"})
+		m = next.(Model)
+	}
+	next, cmd := m.Update(refreshTickMsg{})
+	m = next.(Model)
+	if cmd != nil {
+		t.Error("poll kept running after every agent finished")
+	}
+}

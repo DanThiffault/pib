@@ -105,7 +105,21 @@ func (m Model) actionBarView(width int) string {
 		return renderActionBar([]Action{{Key: "b", Label: "Back"}}, width)
 	}
 	actions := issueActions(m.planIssues[m.issueCursor])
+	if m.hasLaunchableIssues() {
+		actions = append([]Action{{Key: "a", Label: "Start all"}}, actions...)
+	}
 	return renderActionBar(actions, width)
+}
+
+// hasLaunchableIssues reports whether the current plan has at least one
+// issue that is launchable and not already starting.
+func (m Model) hasLaunchableIssues() bool {
+	for _, issue := range m.planIssues {
+		if issue.Launchable && !m.inFlight[issue.Number] {
+			return true
+		}
+	}
+	return false
 }
 
 func renderActionBar(actions []Action, width int) string {
