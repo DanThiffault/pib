@@ -34,7 +34,19 @@ type Status struct {
 	OpenBlockers []int64 `json:"openBlockers,omitempty"`
 	// Run is the live agent run, when there is one.
 	Run string `json:"run,omitempty"`
+
+	// ReviewCycle is the newest review cycle on the issue's current pull
+	// request, or zero when no review has started on it. A replacement pull
+	// request starts again at one.
+	ReviewCycle int `json:"reviewCycle,omitempty"`
+	// ReviewVerdict is what that cycle settled on, empty while the reviewer
+	// is still working. Read it with ReviewCycle: cycle 0 is "no review
+	// yet", and a cycle with no verdict is a review running now.
+	ReviewVerdict string `json:"reviewVerdict,omitempty"`
 }
+
+// ReviewRunning reports a review cycle that has been opened and not settled.
+func (s Status) ReviewRunning() bool { return s.ReviewCycle > 0 && s.ReviewVerdict == "" }
 
 // StatusOptions supplies what the store cannot work out on its own.
 type StatusOptions struct {
@@ -59,7 +71,17 @@ WITH flags AS (
 	       EXISTS (
 	           SELECT 1 FROM runs r WHERE r.issue = i.number AND r.ended_at IS NULL
 	       ) AS in_progress,
-	       (i.pr_url IS NOT NULL AND i.pr_state = 'open') AS awaiting_review
+	       (i.pr_url IS NOT NULL AND i.pr_state = 'open') AS awaiting_review,
+	       COALESCE((
+	           SELECT v.cycle FROM reviews v
+	           WHERE v.issue = i.number AND v.pr_url = i.pr_url
+	           ORDER BY v.cycle DESC LIMIT 1
+	       ), 0) AS review_cycle,
+	       COALESCE((
+	           SELECT v.verdict FROM reviews v
+	           WHERE v.issue = i.number AND v.pr_url = i.pr_url
+	           ORDER BY v.cycle DESC LIMIT 1
+	       ), '') AS review_verdict
 	FROM issues i JOIN plans p ON p.id = i.plan_id
 ), status AS (
 	SELECT *, (state = 'open' AND NOT blocked AND NOT in_progress AND NOT awaiting_review) AS ready
@@ -67,7 +89,7 @@ WITH flags AS (
 )
 SELECT number, plan_id, plan, local_id, parent, path, title, type, acceptance,
        state, closed_at, pr_url, pr_state, pr_checked_at, created_at, updated_at,
-       blocked, in_progress, awaiting_review, ready
+       blocked, in_progress, awaiting_review, ready, review_cycle, review_verdict
 FROM status
 WHERE 1 = 1`
 
@@ -136,7 +158,8 @@ func (s *Store) statuses(query string, args []any, plan string, opts StatusOptio
 	for rows.Next() {
 		var status Status
 		status.Issue, err = scanIssue(rows,
-			&status.Blocked, &status.InProgress, &status.AwaitingReview, &status.Ready)
+			&status.Blocked, &status.InProgress, &status.AwaitingReview, &status.Ready,
+			&status.ReviewCycle, &status.ReviewVerdict)
 		if err != nil {
 			return nil, err
 		}
