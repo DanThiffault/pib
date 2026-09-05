@@ -7,12 +7,12 @@ import (
 	"pib/internal/ui/theme"
 )
 
-// planView renders the Plan tab at a given terminal size.
+// planView renders the new-plan screen at a given terminal size.
 func planView(t *testing.T, width, height int) string {
 	t.Helper()
 	m := ready(t)
 	m.width, m.height = width, height
-	return m.tabPlanView()
+	return m.newPlanView()
 }
 
 // The art is the headline of the Plan tab, so it has to be there when there is

@@ -23,6 +23,7 @@ type Status struct {
 	GitRoot string // absolute path to the repository root
 	Dir     string // absolute path to the workspace directory
 	Exists  bool   // the workspace directory is present
+	Branch  string // current git branch
 }
 
 // Detect finds the repository root and inspects the workspace directory.
@@ -32,9 +33,11 @@ func Detect() (Status, error) {
 		return Status{}, err
 	}
 
+	branch, _ := currentBranch()
 	s := Status{
 		GitRoot: root,
 		Dir:     filepath.Join(root, DirName),
+		Branch:  branch,
 	}
 
 	switch fi, err := os.Stat(s.Dir); {
@@ -62,6 +65,14 @@ func gitRoot() (string, error) {
 			return "", ErrNotRepo
 		}
 		return "", fmt.Errorf("running git: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func currentBranch() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
 }

@@ -53,7 +53,7 @@ func loadPlanIssues(store *issues.Store, planSlug string, cfg config.Config) tea
 	}
 }
 
-func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case plansLoadedMsg:
 		m.plansLoading = false
@@ -125,7 +125,7 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = fmt.Sprintf("View blockers for issue #%d", msg.issue.Number)
 		return m, nil
 	case backMsg:
-		m.plansView = viewPlanList
+		m.screen = screenPlans
 		m.notice = ""
 		return m, nil
 	case editIssueMsg:
@@ -143,19 +143,19 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		switch m.plansView {
-		case viewIssueFullScreen:
+		switch m.screen {
+		case screenIssue:
 			if key.Matches(keyMsg, backKeys) {
-				m.plansView = viewPlanDetail
+				m.screen = screenPlanDetail
 				m.notice = ""
 				return m, nil
 			}
-			m, cmd := m.issueActionKey(keyMsg, viewPlanDetail)
+			m, cmd := m.issueActionKey(keyMsg, screenPlanDetail)
 			return m, cmd
-		case viewPlanDetail:
+		case screenPlanDetail:
 			switch {
 			case key.Matches(keyMsg, backKeys):
-				m.plansView = viewPlanList
+				m.screen = screenPlans
 				m.notice = ""
 				return m, nil
 			case key.Matches(keyMsg, upKeys):
@@ -172,18 +172,18 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case key.Matches(keyMsg, selectKeys):
 				if len(m.planIssues) > 0 {
-					m.plansView = viewIssueFullScreen
+					m.screen = screenIssue
 					m.notice = ""
 					return m, nil
 				}
 				return m, nil
 			}
 
-			m, cmd := m.issueActionKey(keyMsg, viewPlanList)
+			m, cmd := m.issueActionKey(keyMsg, screenPlans)
 			return m, cmd
 		}
 
-		// viewPlanList
+		// screenPlans
 		switch {
 		case key.Matches(keyMsg, upKeys):
 			if m.planCursor > 0 {
@@ -205,7 +205,7 @@ func (m Model) updateTabPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(keyMsg, selectKeys):
 			if len(m.plans) > 0 {
-				m.plansView = viewPlanDetail
+				m.screen = screenPlanDetail
 				m.issueCursor = 0
 				m.planIssues = nil
 				m.planIssuesErr = nil
@@ -348,7 +348,7 @@ func (m Model) isNarrow() bool {
 // issueActionKey dispatches a contextual action key for the selected issue.
 // The plan detail and full-screen views offer the same actions; they differ
 // only in where [B]ack goes, so back is passed in rather than assumed.
-func (m Model) issueActionKey(keyMsg tea.KeyMsg, back plansView) (Model, tea.Cmd) {
+func (m Model) issueActionKey(keyMsg tea.KeyMsg, back screen) (Model, tea.Cmd) {
 	if m.issueCursor >= len(m.planIssues) {
 		return m, nil
 	}
@@ -358,7 +358,7 @@ func (m Model) issueActionKey(keyMsg tea.KeyMsg, back plansView) (Model, tea.Cmd
 			continue
 		}
 		if a.Key == "b" {
-			m.plansView = back
+			m.screen = back
 			m.notice = ""
 			return m, nil
 		}
@@ -368,7 +368,7 @@ func (m Model) issueActionKey(keyMsg tea.KeyMsg, back plansView) (Model, tea.Cmd
 	return m, nil
 }
 
-func (m Model) tabPlansView() string {
+func (m Model) plansView() string {
 	if m.plansLoading {
 		return m.renderCentered(loadingStyle.Render("◐ Loading plans…"))
 	}
@@ -379,10 +379,10 @@ func (m Model) tabPlansView() string {
 		return m.renderCentered(helpStyle.Render("No plans yet."))
 	}
 
-	switch m.plansView {
-	case viewIssueFullScreen:
+	switch m.screen {
+	case screenIssue:
 		return m.issueFullScreenView()
-	case viewPlanDetail:
+	case screenPlanDetail:
 		return m.planDetailTwoPaneView()
 	default:
 		return m.planListTwoPaneView()
