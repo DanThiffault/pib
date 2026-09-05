@@ -121,8 +121,16 @@ The agent records its own verdict before it exits, through a new CLI verb reachi
 store over pib's socket the way every other agent operation does:
 
 ```bash
-pib review record "$PIB_ISSUE" --verdict changes --findings 2
+pib review record 44 --verdict changes --findings 2
 ```
+
+The issue number is a literal the agent copies out of its own briefing, and `$PIB_ISSUE`
+is not available to write it: §3's loop deliberately spawns the reviewer without claiming
+the issue — `runner.go` sets `PIB_ISSUE` only for a run that carries one — because the
+loop's own worker leg is a followup that a claimed issue would misroute to the reviewer.
+So the number travels in the task text, exactly as `recheck.Briefing` already passes one,
+and `pib review record` takes it as a required positional argument with no environment
+fallback.
 
 The verdict comes from the agent rather than from parsing its final message: a review
 that says "looks good apart from the SQL injection" must not be read as approval by a
