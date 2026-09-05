@@ -35,6 +35,20 @@ type ClosedHook interface {
 	IssueClosed(issue Issue)
 }
 
+// LinkedHook is notified after a pull request is linked to an issue, whether a
+// worker linked it at the end of its run or a person ran `pib issue link-pr`
+// by hand — both are a pull request arriving, and both are worth reacting to.
+// It runs after the write, so what it reads is what landed, and it must not
+// block: the caller is usually an agent finishing its work.
+//
+// The linking worker's run is still open when this fires. A hook that spawns
+// an agent against the issue has to wait for that run to end first — the issue
+// still reads as in progress, and `pib issue followup` refuses while a run is
+// live.
+type LinkedHook interface {
+	PRLinked(issue Issue)
+}
+
 // DataDir is the data directory for a workspace, normally <git root>/.pib/data.
 func DataDir(workspaceDir string) string {
 	return filepath.Join(workspaceDir, DataDirName)
@@ -48,6 +62,10 @@ type Store struct {
 	// OnClosed is notified whenever an issue closes. Optional; set it after
 	// Open and before the store is shared.
 	OnClosed ClosedHook
+
+	// OnLinked is notified whenever a pull request is linked. Optional; set
+	// it after Open and before the store is shared.
+	OnLinked LinkedHook
 }
 
 // notifyClosed tells the hook an issue closed, re-reading it so the hook sees
@@ -61,6 +79,15 @@ func (s *Store) notifyClosed(number int64) {
 		return
 	}
 	s.OnClosed.IssueClosed(issue)
+}
+
+// notifyLinked tells the hook a pull request was linked. The issue is the one
+// LinkPR read back after its write, so the hook sees the row as it landed.
+func (s *Store) notifyLinked(issue Issue) {
+	if s.OnLinked == nil {
+		return
+	}
+	s.OnLinked.PRLinked(issue)
 }
 
 // Open prepares the data directory and opens the database, applying any
