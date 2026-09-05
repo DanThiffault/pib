@@ -1701,6 +1701,46 @@ func TestRefreshDoesNotUndoInFlightState(t *testing.T) {
 
 // The poll exists only to show a running agent's progress, so it has to stop
 // once none are left rather than reloading the store forever.
+func TestBackgroundTickRefreshesIssuesOnPlansTab(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.planIssuesLoadedFor = "plan-a"
+
+	_, cmd := m.Update(backgroundTickMsg{})
+	if cmd == nil {
+		t.Fatal("background tick produced no command")
+	}
+}
+
+func TestBackgroundTickIsSilent(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.plansView = viewPlanDetail
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(backgroundTickMsg{})
+	m = next.(Model)
+	if m.planIssuesLoading {
+		t.Error("background tick raised the loading spinner; it should refresh silently")
+	}
+}
+
+func TestBackgroundTickDoesNotRefreshIssuesOnPlanTab(t *testing.T) {
+	m := readyWithTabs(t)
+	m.currentTab = tabPlan
+	m.plans = []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}
+	m.planCursor = 0
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, cmd := m.Update(backgroundTickMsg{})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("background tick produced no command")
+	}
+	if m.planIssuesLoading {
+		t.Error("background tick on Plan tab should not load issues")
+	}
+}
+
 func TestRefreshTickRunsWhileAgentsDoAndStopsAfter(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
 	m.plansView = viewPlanDetail
