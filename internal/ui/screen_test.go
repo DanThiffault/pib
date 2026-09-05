@@ -1469,7 +1469,7 @@ func TestRefreshDoesNotUndoInFlightState(t *testing.T) {
 // once none are left rather than reloading the store forever.
 func TestBackgroundTickRefreshesIssuesOnPlansTab(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssuesLoadedFor = "plan-a"
 
 	_, cmd := m.Update(backgroundTickMsg{})
@@ -1480,7 +1480,7 @@ func TestBackgroundTickRefreshesIssuesOnPlansTab(t *testing.T) {
 
 func TestBackgroundTickIsSilent(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssuesLoadedFor = "plan-a"
 
 	next, _ := m.Update(backgroundTickMsg{})
@@ -1491,8 +1491,8 @@ func TestBackgroundTickIsSilent(t *testing.T) {
 }
 
 func TestBackgroundTickDoesNotRefreshIssuesOnPlanTab(t *testing.T) {
-	m := readyWithTabs(t)
-	m.currentTab = tabPlan
+	m := ready(t)
+	m.screen = screenNewPlan
 	m.plans = []issues.Plan{{Slug: "plan-a", Title: "Plan A"}}
 	m.planCursor = 0
 	m.planIssuesLoadedFor = "plan-a"

@@ -147,7 +147,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(backgroundTickMsg); ok {
 		var cmds []tea.Cmd
 		cmds = append(cmds, backgroundTick())
-		if m.currentTab == tabPlans && m.currentPlanSlug() != "" {
+		if (m.screen == screenPlans || m.screen == screenPlanDetail || m.screen == screenIssue) && m.currentPlanSlug() != "" {
 			cmds = append(cmds, m.refreshIssues())
 		}
 		return m, tea.Batch(cmds...)
