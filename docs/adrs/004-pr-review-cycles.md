@@ -14,7 +14,7 @@ decision it is nominally there to inform.
 
 The reviewer also has no way to act on what it finds. `reviewer.md` files each finding as
 an issue, which is an improvement on a comment nobody is assigned, but the loop still runs
-through the user: they read the new issues, launch workers, and wait. A finding on an open
+through the user: they read the new issues, launch coders, and wait. A finding on an open
 pull request should be fixed on that pull request, before anyone looks at it.
 
 There are two different jobs being done by one agent name:
@@ -63,7 +63,7 @@ request is open, and an issue blocked by the task would wait for the merge that 
 exists to inform. Nothing in the dependency graph can express "after the PR, before the
 merge" — that is a lifecycle event, and lifecycle events are what hooks are for.
 
-### 3. The cycle runs reviewer → worker → reviewer, at most three times
+### 3. The cycle runs reviewer → coder → reviewer, at most three times
 
 `review.Loop` owns the sequence, in a goroutine, driving `runner.Runner` synchronously —
 `Run` already blocks for the life of an agent, which is what makes the loop expressible as
@@ -74,13 +74,13 @@ for cycle := 1; cycle <= max; cycle++ {
     spawn code-reviewer      → wait
     read the verdict it recorded
     if approved             → stop
-    followup the worker      → wait   (addresses the findings on the PR)
+    followup the coder       → wait   (addresses the findings on the PR)
 }
 stop; the pull request is the user's
 ```
 
 **Three cycles, from `[review] cycles = 3` in `config.toml`.** A fourth pass on a diff that
-two workers have already reworked is not converging, and the loop must terminate without a
+two coders have already reworked is not converging, and the loop must terminate without a
 human — pib is spending model time unattended.
 
 The loop ends in exactly one of three states, all of which leave the pull request open and
@@ -88,7 +88,7 @@ unmerged:
 
 - **Approved.** The reviewer found nothing blocking.
 - **Exhausted.** Three cycles ran and findings remain.
-- **Failed.** An agent errored, or a worker could not push.
+- **Failed.** An agent errored, or a coder could not push.
 
 pib never merges, and the loop never closes the task issue. The issue still closes the one
 way it closes today: the user merges, and reconciliation sees it.
@@ -113,8 +113,8 @@ CREATE TABLE reviews (
 );
 ```
 
-Keying on `(issue, pr_url, cycle)` means a worker that opens a *replacement* pull request
-— which `worker.md` already provides for — starts its cycles at one again. The cap is per
+Keying on `(issue, pr_url, cycle)` means a coder that opens a *replacement* pull request
+— which `coder.md` already provides for — starts its cycles at one again. The cap is per
 pull request, not per issue.
 
 The agent records its own verdict before it exits, through a new CLI verb reaching the
@@ -127,7 +127,7 @@ pib review record 44 --verdict changes --findings 2
 The issue number is a literal the agent copies out of its own briefing, and `$PIB_ISSUE`
 is not available to write it: §3's loop deliberately spawns the reviewer without claiming
 the issue — `runner.go` sets `PIB_ISSUE` only for a run that carries one — because the
-loop's own worker leg is a followup that a claimed issue would misroute to the reviewer.
+loop's own coder leg is a followup that a claimed issue would misroute to the reviewer.
 So the number travels in the task text, exactly as `recheck.Briefing` already passes one,
 and `pib review record` takes it as a required positional argument with no environment
 fallback.
@@ -141,9 +141,9 @@ newest row, so the DAG can render `PR #44 · review 2 of 3` without a second que
 
 ### 5. Findings go on the pull request; out-of-scope findings go on it differently
 
-In-scope findings are review comments on the diff, which is where the worker reads them and
+In-scope findings are review comments on the diff, which is where the coder reads them and
 where the user reads them next to the code. They are **not** filed as pib issues: the fix is
-about to happen on the same pull request, and an issue that a worker closes twenty minutes
+about to happen on the same pull request, and an issue that a coder closes twenty minutes
 later is noise in the plan.
 
 A finding the reviewer believes is real but outside the scope of this pull request is a
@@ -210,7 +210,7 @@ itself twice.
 Positive:
 - Review happens where it can change the outcome: on an open pull request, before a human
   looks at it.
-- The reviewer's findings get fixed by the loop rather than by the user launching workers
+- The reviewer's findings get fixed by the loop rather than by the user launching coders
   from a list of filed issues.
 - The user's review is of a diff that has already survived up to three adversarial passes.
 - Out-of-scope findings stop being either lost or filed presumptuously; they are filed when
@@ -222,7 +222,7 @@ Negative:
   real cost of the decision, and `[review] cycles` is the dial.
 - pib now spawns agents from a hook the user did not press a key for. The status line in
   [ADR-003](003-horizontal-tui-layout.md) exists partly because of this.
-- A wrong verdict from the reviewer burns a worker run on a finding that was not real.
+- A wrong verdict from the reviewer burns a coder run on a finding that was not real.
 - `pr-triage` reads comments from a pull request anyone can comment on, and files issues
   from them. It files only under a marker pib's own reviewer wrote, but the reply it acts
   on is arbitrary text from GitHub.

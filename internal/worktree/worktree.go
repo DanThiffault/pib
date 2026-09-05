@@ -1,7 +1,7 @@
 // Package worktree gives each issue its own checkout.
 //
 // Agents run as separate processes in one repository, and a branch is a
-// property of a checkout rather than of a process. Two workers starting at
+// property of a checkout rather than of a process. Two coders starting at
 // once both run `git checkout -b`, and the second moves the tree out from
 // under the first — they end up committing each other's work, or committing to
 // the wrong branch. Files collide the same way without git involved at all:

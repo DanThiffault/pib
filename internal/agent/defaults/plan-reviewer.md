@@ -55,7 +55,7 @@ rg "func isNarrow" internal/
 
 An issue that says "update `planMetadataPane`" when that function was deleted last
 week, or "keep the runner on the Model" when the Model has no runner field, is going to
-stop a worker halfway. Finding it now is the job.
+stop a coder halfway. Finding it now is the job.
 
 ### 3. Check What Can Run at Once
 

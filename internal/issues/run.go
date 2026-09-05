@@ -7,7 +7,7 @@ import (
 )
 
 // Run is one agent run pib started. Runs are never deleted, so an issue
-// carries every attempt made at it — the worker that failed as well as the
+// carries every attempt made at it — the coder that failed as well as the
 // one that opened the pull request.
 type Run struct {
 	ID        string    `json:"id"`

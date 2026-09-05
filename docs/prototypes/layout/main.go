@@ -157,11 +157,11 @@ func dagRows() []string {
 	return []string{
 		pad(dim.Render("  Order placement — customers can place an order end to end")),
 		blank(),
-		pad(item.Render("  #12 Order schema") + dim.Render("                    [closed]   worker      PR #41 merged")),
-		pad(item.Render("  ├─► #13 Implement Order Aggregate") + amber.Render("   [open]     worker      PR #44 · review 2 of 3")),
-		pad(item.Render("  │   ├─► #14 PlaceOrder command handler") + green.Render(" [open]     worker      ready")),
-		pad(item.Render("  │   └─► #15 Order projections") + red.Render("          [open]     worker      blocked by #13")),
-		pad(item.Render("  └─► #16 Checkout endpoint") + green.Render("           [open]     worker      ready")),
+		pad(item.Render("  #12 Order schema") + dim.Render("                    [closed]   coder      PR #41 merged")),
+		pad(item.Render("  ├─► #13 Implement Order Aggregate") + amber.Render("   [open]     coder      PR #44 · review 2 of 3")),
+		pad(item.Render("  │   ├─► #14 PlaceOrder command handler") + green.Render(" [open]     coder      ready")),
+		pad(item.Render("  │   └─► #15 Order projections") + red.Render("          [open]     coder      blocked by #13")),
+		pad(item.Render("  └─► #16 Checkout endpoint") + green.Render("           [open]     coder      ready")),
 		pad(item.Render("  #17 Review: order placement") + red.Render("          [open]     plan-reviewer  blocked by #13 #14 #15 #16")),
 	}
 }
@@ -255,10 +255,10 @@ func screenNewPlanC() []string {
 }
 
 func screenIssue() []string {
-	lines := []string{statusLine(amber.Render("● worker #13 running · 4m"))}
+	lines := []string{statusLine(amber.Render("● coder #13 running · 4m"))}
 	lines = append(lines, pad(dim.Render("  Plans › orders › ")+head.Render("#13 Implement Order Aggregate")))
 	lines = append(lines, rule("Issue"))
-	lines = append(lines, pad(item.Render("  State  ")+amber.Render("open · awaiting review")+dim.Render("      Type  task      Agent  worker      ID  order-agg")))
+	lines = append(lines, pad(item.Render("  State  ")+amber.Render("open · awaiting review")+dim.Render("      Type  task      Agent  coder      ID  order-agg")))
 	lines = append(lines, pad(item.Render("  PR     ")+accent.Render("https://github.com/dan/orders/pull/44")+dim.Render("   open · review cycle 2 of 3")))
 	lines = append(lines, blank())
 	lines = append(lines, pad(head.Render("  Acceptance")))
@@ -266,7 +266,7 @@ func screenIssue() []string {
 	lines = append(lines, pad(item.Render("  • Rejects an order with no line items, with a typed error")))
 	lines = append(lines, blank())
 	lines = append(lines, pad(head.Render("  Review")))
-	lines = append(lines, pad(dim.Render("  cycle 1  ")+red.Render("2 findings")+dim.Render("   → worker addressed them, pushed 3 commits")))
+	lines = append(lines, pad(dim.Render("  cycle 1  ")+red.Render("2 findings")+dim.Render("   → coder addressed them, pushed 3 commits")))
 	lines = append(lines, pad(dim.Render("  cycle 2  ")+amber.Render("running")+dim.Render("    code-reviewer #7 · started 1m ago")))
 	lines = append(lines, blank())
 	lines = append(lines, pad(head.Render("  Out-of-scope comments on the PR")))

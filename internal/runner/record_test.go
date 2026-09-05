@@ -81,7 +81,7 @@ func scout(t *testing.T) Runner {
 		GitRoot:  dir,
 		StateDir: dir,
 		Load: func(string) (agent.Definition, error) {
-			return agent.Definition{Name: "worker"}, nil
+			return agent.Definition{Name: "coder"}, nil
 		},
 	}
 }
@@ -94,7 +94,7 @@ func TestSpawnRecordsTheRunAgainstItsIssue(t *testing.T) {
 	r.Record = recorder
 
 	resp, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "implement it", Issue: 7,
+		Op: protocol.OpSpawn, Agent: "coder", Task: "implement it", Issue: 7,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -107,7 +107,7 @@ func TestSpawnRecordsTheRunAgainstItsIssue(t *testing.T) {
 	if start.issue != 7 {
 		t.Errorf("issue = %d, want 7", start.issue)
 	}
-	if start.agent != "worker" || start.window != "@99" {
+	if start.agent != "coder" || start.window != "@99" {
 		t.Errorf("start = %+v", start)
 	}
 	if start.id != resp.Session {
@@ -127,7 +127,7 @@ func TestSpawnWithNoIssueStillRecords(t *testing.T) {
 	r.Record = recorder
 
 	if _, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "explore",
+		Op: protocol.OpSpawn, Agent: "coder", Task: "explore",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestAnAgentThatSaysNothingIsRecordedAsUnknown(t *testing.T) {
 	r.Record = recorder
 
 	if _, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "implement it", Issue: 3,
+		Op: protocol.OpSpawn, Agent: "coder", Task: "implement it", Issue: 3,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestARunThatCannotBeRecordedDoesNotStart(t *testing.T) {
 	r.Record = recorder
 
 	_, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "implement it", Issue: 404,
+		Op: protocol.OpSpawn, Agent: "coder", Task: "implement it", Issue: 404,
 	})
 	if err == nil {
 		t.Fatal("the spawn succeeded against an issue that does not exist")
@@ -179,7 +179,7 @@ func TestResumeContinuesTheSameRun(t *testing.T) {
 	finishing(t, `{"type":"done"}`)
 
 	recorder := newRecorder()
-	recorder.known["abc123"] = "worker"
+	recorder.known["abc123"] = "coder"
 	r := scout(t)
 	r.Record = recorder
 
@@ -214,7 +214,7 @@ func TestARunnerWithNoRecorderStillWorks(t *testing.T) {
 
 	r := scout(t)
 	resp, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "implement it", Issue: 7,
+		Op: protocol.OpSpawn, Agent: "coder", Task: "implement it", Issue: 7,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -238,7 +238,7 @@ func TestTheAgentIsToldWhichIssueItIsOn(t *testing.T) {
 
 	r := scout(t)
 	if _, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "implement it", Issue: 7,
+		Op: protocol.OpSpawn, Agent: "coder", Task: "implement it", Issue: 7,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestTheAgentIsToldWhichIssueItIsOn(t *testing.T) {
 	// An agent working on nothing in particular is told nothing in
 	// particular, rather than being handed a zero.
 	if _, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "explore",
+		Op: protocol.OpSpawn, Agent: "coder", Task: "explore",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestResumeKeepsTheAgentsIdentity(t *testing.T) {
 	t.Cleanup(func() { newWindow = original })
 
 	recorder := newRecorder()
-	recorder.known["abc123"] = "worker"
+	recorder.known["abc123"] = "coder"
 	r := scout(t)
 	r.Record = recorder
 
@@ -282,18 +282,18 @@ func TestResumeKeepsTheAgentsIdentity(t *testing.T) {
 	os.WriteFile(filepath.Join(runDir, "session.jsonl"), []byte("{}\n"), 0o644)
 
 	if _, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpResume, Session: "abc123", Answer: "address the review", Name: "worker #4", Issue: 4,
+		Op: protocol.OpResume, Session: "abc123", Answer: "address the review", Name: "coder #4", Issue: 4,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if opts.Env[EnvAgent] != "worker" {
+	if opts.Env[EnvAgent] != "coder" {
 		t.Errorf("%s = %q, want the agent it has always been", EnvAgent, opts.Env[EnvAgent])
 	}
 	if opts.Env[EnvIssue] != "4" {
 		t.Errorf("%s = %q, want 4", EnvIssue, opts.Env[EnvIssue])
 	}
-	if opts.Name != "worker #4" {
+	if opts.Name != "coder #4" {
 		t.Errorf("window name = %q, want the caller's label", opts.Name)
 	}
 }

@@ -19,7 +19,7 @@ func TestDefaultNamesLeadWithPlanner(t *testing.T) {
 		t.Errorf("names[0] = %q, want the planner first", names[0])
 	}
 	for _, want := range []string{
-		"planner", "scout", "researcher", "reviewer", "worker", "prototype",
+		"planner", "scout", "researcher", "reviewer", "coder", "prototype",
 		"plan-reviewer", "plan-recheck",
 	} {
 		if !slices.Contains(names, want) {
@@ -99,7 +99,7 @@ func TestNoDefaultTracksIssuesThroughGH(t *testing.T) {
 func TestAgentsCanRunThePibCommandsTheyNeed(t *testing.T) {
 	needs := map[string][]string{
 		"planner":       {"pib plan apply", "pib issue ready", "blockedBy"},
-		"worker":        {"pib issue view", "pib issue link-pr"},
+		"coder":         {"pib issue view", "pib issue link-pr"},
 		"reviewer":      {"pib issue view", "pib issue comment", "pib issue close"},
 		"plan-reviewer": {"pib plan view", "pib issue list --plan", "pib issue comment"},
 		"plan-recheck":  {"pib issue view", "pib issue list --plan", "pib issue comment"},
@@ -124,12 +124,12 @@ func TestAgentsCanRunThePibCommandsTheyNeed(t *testing.T) {
 }
 
 // Only a merged pull request closes a task, so no agent may close one itself.
-// Both mention pib issue close: the worker to forbid it, the reviewer to close
+// Both mention pib issue close: the coder to forbid it, the reviewer to close
 // its own review issue — neither may aim it at a task.
 func TestNoAgentClosesATaskIssue(t *testing.T) {
-	body, _ := defaultAgents.ReadFile(defaultsDir + "/worker.md")
+	body, _ := defaultAgents.ReadFile(defaultsDir + "/coder.md")
 	if !strings.Contains(string(body), "must not close your issue") {
-		t.Error("the worker is no longer told to leave its issue open")
+		t.Error("the coder is no longer told to leave its issue open")
 	}
 
 	body, _ = defaultAgents.ReadFile(defaultsDir + "/reviewer.md")
@@ -205,7 +205,7 @@ func TestPlanAgentsDoNotChangeThePlan(t *testing.T) {
 	}
 }
 
-// A recheck that reports something every run reworders the plan under workers
+// A recheck that reports something every run reworders the plan under coders
 // who have already read it, which is worse than not running at all.
 func TestRecheckPrefersSilence(t *testing.T) {
 	body, _ := defaultAgents.ReadFile(defaultsDir + "/plan-recheck.md")
@@ -299,7 +299,7 @@ func jsonBlock(t *testing.T, text string) string {
 // finishing checklist is what stops that, so it has to stay in front of
 // pib_done rather than after it.
 func TestIssueAgentsRecordBeforeFinishing(t *testing.T) {
-	for _, name := range []string{"worker", "reviewer", "researcher", "prototype"} {
+	for _, name := range []string{"coder", "reviewer", "researcher", "prototype"} {
 		body, _ := defaultAgents.ReadFile(defaultsDir + "/" + name + ".md")
 		text := string(body)
 

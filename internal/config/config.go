@@ -26,7 +26,7 @@ const Template = `# Which agent implements an issue of each type.
 
 [types]
 feature       = ""
-task          = "worker"
+task          = "coder"
 research      = "researcher"
 prototype     = "prototype"
 reviewer      = "reviewer"
@@ -49,7 +49,7 @@ isolate = true
 func defaults() map[string]string {
 	return map[string]string{
 		"feature":       "",
-		"task":          "worker",
+		"task":          "coder",
 		"research":      "researcher",
 		"prototype":     "prototype",
 		"reviewer":      "reviewer",
@@ -148,6 +148,13 @@ func LoadPaths(global, workspace string) (Config, error) {
 	}
 	if over.Plan.Isolate != nil {
 		cfg.planIsolate = *over.Plan.Isolate
+	}
+
+	// Migrate legacy agent names.
+	for name, agent := range cfg.types {
+		if agent == "worker" {
+			cfg.types[name] = "coder"
+		}
 	}
 
 	return cfg, nil
