@@ -66,6 +66,10 @@ func (a App) Run() int {
 			"review": a.planReview,
 			"start":  a.planStart,
 		}, "plan")
+	case "review":
+		return a.dispatch(rest, map[string]command{
+			"record": a.reviewRecord,
+		}, "review")
 	case "issue":
 		return a.dispatch(rest, map[string]command{
 			"create":   a.issueCreate,
@@ -253,6 +257,38 @@ func (a App) planStart(args []string) error {
 	wg.Wait()
 
 	return a.renderPlanStart(results, unlaunchable, slug, *asJSON)
+}
+
+// ── review ──
+
+func (a App) reviewRecord(args []string) error {
+	fs, asJSON := a.flags("review record")
+	verdict := fs.String("verdict", "", "verdict: approved, changes or error")
+	findings := fs.Int("findings", 0, "how many findings the reviewer filed")
+
+	positional, err := parse(fs, args, 1, "<number>")
+	if err != nil {
+		return err
+	}
+	number, err := numberOf(positional[0])
+	if err != nil {
+		return err
+	}
+
+	if *verdict == "" {
+		return usagef("--verdict is required")
+	}
+	if !issues.VerdictKnown(*verdict) {
+		return usagef("%q is not a review verdict — expected approved, changes or error", *verdict)
+	}
+
+	resp, err := a.send(request(protocol.OpReviewRecord, issueops.ReviewRecordParams{
+		Number: number, Verdict: *verdict, Findings: *findings,
+	}))
+	if err != nil {
+		return err
+	}
+	return a.renderReview(resp, *asJSON)
 }
 
 // planReview turns a reviewer loose on the plan itself. Applying a new plan
@@ -915,6 +951,9 @@ already running in this repository.
   pib issue close <number> [--reason <text>]
   pib issue reopen <number>      put a closed issue back in play
   pib issue reindex [--plan <slug>]
+
+  pib review record <number> --verdict <approved|changes|error> [--findings <n>]
+                                 settle the open review cycle for an issue
 
 Every command takes --json to print the reply as json instead of text.
 `)

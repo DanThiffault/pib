@@ -101,6 +101,13 @@ type (
 	ReindexParams struct {
 		Plan string `json:"plan,omitempty"`
 	}
+
+	// ReviewRecordParams settles the newest open review cycle for an issue.
+	ReviewRecordParams struct {
+		Number   int64  `json:"number"`
+		Verdict  string `json:"verdict"`
+		Findings int    `json:"findings"`
+	}
 )
 
 // Results returned in a response payload.
@@ -179,6 +186,8 @@ func (h Handler) Run(ctx context.Context, req protocol.Request) (protocol.Respon
 		return h.issueReopen(req)
 	case protocol.OpIssueReindex:
 		return h.issueReindex(req)
+	case protocol.OpReviewRecord:
+		return h.reviewRecord(req)
 
 	default:
 		return protocol.Response{}, fmt.Errorf("unknown op %q", req.Op)
@@ -378,6 +387,19 @@ func (h Handler) issueReopen(req protocol.Request) (protocol.Response, error) {
 		return protocol.Response{}, err
 	}
 	return h.detail(params.Number)
+}
+
+func (h Handler) reviewRecord(req protocol.Request) (protocol.Response, error) {
+	params, err := decode[ReviewRecordParams](req)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+
+	review, err := h.Store.RecordReview(params.Number, params.Verdict, params.Findings)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	return reply(review)
 }
 
 func (h Handler) issueReindex(req protocol.Request) (protocol.Response, error) {

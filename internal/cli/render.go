@@ -183,6 +183,20 @@ func (a App) renderRun(resp protocol.Response, asJSON bool) error {
 	return nil
 }
 
+func (a App) renderReview(resp protocol.Response, asJSON bool) error {
+	var result issues.Review
+	if done, err := a.decode(resp, asJSON, &result); done || err != nil {
+		return err
+	}
+
+	fmt.Fprintf(a.Stdout, "Recorded review #%d on %s: %s", result.Cycle, result.PRURL, result.Verdict)
+	if result.Findings > 0 {
+		fmt.Fprintf(a.Stdout, " (%d %s)", result.Findings, plural(result.Findings, "finding", "findings"))
+	}
+	fmt.Fprintln(a.Stdout)
+	return nil
+}
+
 func (a App) renderReindex(resp protocol.Response, asJSON bool) error {
 	var result issueops.ReindexResult
 	if done, err := a.decode(resp, asJSON, &result); done || err != nil {

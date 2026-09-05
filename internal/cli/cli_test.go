@@ -685,6 +685,79 @@ func TestFollowupWaitsForALiveRun(t *testing.T) {
 	}
 }
 
+func TestReviewRecordSettlesAnOpenCycle(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+
+	// Link a PR and open a review cycle directly on the store.
+	h.ok(t, "issue", "link-pr", "2", "https://github.com/o/r/pull/1")
+	if _, err := h.store.OpenReview(2, "https://github.com/o/r/pull/1", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	out := h.ok(t, "review", "record", "2", "--verdict", "changes", "--findings", "3")
+	if !strings.Contains(out, "changes") || !strings.Contains(out, "3 findings") {
+		t.Errorf("output = %q", out)
+	}
+
+	// Verify the cycle is settled.
+	reviews, err := h.store.Reviews(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews) != 1 || reviews[0].Verdict != issues.VerdictChanges || reviews[0].Findings != 3 {
+		t.Errorf("reviews = %+v", reviews)
+	}
+}
+
+func TestReviewRecordRequiresAnIssueNumber(t *testing.T) {
+	h := setup(t)
+
+	cases := [][]string{
+		{"review", "record"},
+		{"review", "record", "banana", "--verdict", "approved"},
+		{"review", "record", "2"},
+		{"review", "record", "2", "--verdict", "looks-fine"},
+	}
+	for _, args := range cases {
+		if code, _, _ := h.run(t, args...); code != 2 {
+			t.Errorf("pib %s exited %d, want a usage error", strings.Join(args, " "), code)
+		}
+	}
+}
+
+func TestReviewRecordReportsAStoreError(t *testing.T) {
+	h := setup(t)
+
+	code, _, stderr := h.run(t, "review", "record", "2", "--verdict", "approved")
+	if code != 1 || !strings.Contains(stderr, "not found") {
+		t.Errorf("record on missing issue: %d: %s", code, stderr)
+	}
+}
+
+func TestReviewRecordFailsWithNoOpenCycle(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+
+	// Link a PR but never open a review cycle.
+	h.ok(t, "issue", "link-pr", "2", "https://github.com/o/r/pull/1")
+
+	code, _, stderr := h.run(t, "review", "record", "2", "--verdict", "approved")
+	if code != 1 || !strings.Contains(stderr, "no open review cycle") {
+		t.Errorf("record with no cycle: %d: %s", code, stderr)
+	}
+}
+
+func TestReviewRecordFailsWithNoLinkedPR(t *testing.T) {
+	h := setup(t)
+	h.applied(t)
+
+	code, _, stderr := h.run(t, "review", "record", "2", "--verdict", "approved")
+	if code != 1 || !strings.Contains(stderr, "no linked pull request") {
+		t.Errorf("record with no PR: %d: %s", code, stderr)
+	}
+}
+
 func TestPlanReviewSpawnsTheReviewer(t *testing.T) {
 	h := setup(t)
 	h.ok(t, "plan", "apply", h.planFile(t))
