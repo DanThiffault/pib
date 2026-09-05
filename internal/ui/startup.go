@@ -314,7 +314,7 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		m.socket = msg.socket
 		m.cfg = msg.config
 		m.phase = phasePrompt
-		return m, m.input.Focus(), true
+		return m, tea.Batch(m.input.Focus(), backgroundTick()), true
 
 	case tea.KeyMsg:
 		switch m.phase {

@@ -310,6 +310,14 @@ func refreshTick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return refreshTickMsg(t) })
 }
 
+// backgroundTickMsg drives the periodic silent refresh that keeps the plan
+// view up to date even when no agent is running.
+type backgroundTickMsg time.Time
+
+func backgroundTick() tea.Cmd {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg { return backgroundTickMsg(t) })
+}
+
 // spawner starts an agent. The UI names the one method it needs rather than
 // taking *runner.Runner, so the launch path can be tested without tmux.
 type spawner interface {

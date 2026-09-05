@@ -153,6 +153,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if _, ok := msg.(backgroundTickMsg); ok {
+		var cmds []tea.Cmd
+		cmds = append(cmds, backgroundTick())
+		if m.currentTab == tabPlans && m.currentPlanSlug() != "" {
+			cmds = append(cmds, m.refreshIssues())
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		// Quitting works from every tab, not just the one that used to be
 		// the whole interface — except when esc means "back" in a drill-down.
