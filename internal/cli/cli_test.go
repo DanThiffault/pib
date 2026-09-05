@@ -50,7 +50,11 @@ func (f *fakeAgents) Run(_ context.Context, req protocol.Request) (protocol.Resp
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if id := f.resp.Session; id != "" && f.store != nil {
+	resp := f.resp
+	if req.Op == protocol.OpSpawnBackground {
+		resp = protocol.Response{Status: protocol.StatusOK, Session: f.resp.Session}
+	}
+	if id := resp.Session; id != "" && f.store != nil {
 		agent := req.Agent
 		if agent == "" {
 			agent, _ = f.store.RunAgent(id)
@@ -58,11 +62,13 @@ func (f *fakeAgents) Run(_ context.Context, req protocol.Request) (protocol.Resp
 		if err := f.store.StartRun(id, req.Issue, agent, "@1"); err != nil {
 			return protocol.Response{}, err
 		}
-		if err := f.store.FinishRun(id, f.resp.Status); err != nil {
-			return protocol.Response{}, err
+		if req.Op != protocol.OpSpawnBackground {
+			if err := f.store.FinishRun(id, resp.Status); err != nil {
+				return protocol.Response{}, err
+			}
 		}
 	}
-	return f.resp, nil
+	return resp, nil
 }
 
 const planDocument = `{
@@ -818,5 +824,35 @@ func TestPlanStartReportsWhatItCannotRun(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "#1") {
 		t.Errorf("stderr does not mention the issue it could not run: %q", stderr)
+	}
+}
+
+func TestPlanStartIsNonBlockingByDefault(t *testing.T) {
+	h := setup(t)
+	h.ok(t, "plan", "apply", h.planFile(t))
+
+	out := h.ok(t, "plan", "start", "orders")
+
+	reqs := h.agents.seen()
+	if len(reqs) != 1 || reqs[0].Op != protocol.OpSpawnBackground {
+		t.Fatalf("expected OpSpawnBackground, got %+v", reqs)
+	}
+	if !strings.Contains(out, "started") {
+		t.Errorf("output does not say the agent started: %q", out)
+	}
+}
+
+func TestPlanStartBlocksWithWaitFlag(t *testing.T) {
+	h := setup(t)
+	h.ok(t, "plan", "apply", h.planFile(t))
+
+	out := h.ok(t, "plan", "start", "--wait", "orders")
+
+	reqs := h.agents.seen()
+	if len(reqs) != 1 || reqs[0].Op != protocol.OpSpawn {
+		t.Fatalf("expected OpSpawn with --wait, got %+v", reqs)
+	}
+	if !strings.Contains(out, "implemented it") {
+		t.Errorf("output does not contain the agent result: %q", out)
 	}
 }

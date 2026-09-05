@@ -186,6 +186,7 @@ func (a App) planView(args []string) error {
 // again when you want the next round.
 func (a App) planStart(args []string) error {
 	fs, asJSON := a.flags("plan start")
+	wait := fs.Bool("wait", false, "block until all agents finish")
 	positional, err := parse(fs, args, 1, "<slug>")
 	if err != nil {
 		return err
@@ -222,17 +223,22 @@ func (a App) planStart(args []string) error {
 		fmt.Fprintln(a.Stderr)
 	}
 
-	// Every spawn holds its connection until its agent exits, so they have to
-	// go out together or this would be a sequential queue wearing a fan-out's
-	// clothes.
+	// By default each agent is launched in the background so the command
+	// returns immediately after the server acknowledges the spawn. With --wait
+	// the connection is held until the agent exits, giving the same behaviour
+	// as `pib issue start`.
 	results := make([]startResult, len(launch))
 	var wg sync.WaitGroup
 	for i, issue := range launch {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			op := protocol.OpSpawnBackground
+			if *wait {
+				op = protocol.OpSpawn
+			}
 			resp, err := a.send(protocol.Request{
-				Op:    protocol.OpSpawn,
+				Op:    op,
 				Agent: issue.Agent,
 				Name:  fmt.Sprintf("%s #%d", issue.Agent, issue.Number),
 				Task:  runner.Briefing(issue.Number, issue.Title),

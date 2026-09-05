@@ -26,20 +26,21 @@ func TestRouterSplitsAgentOperationsFromIssueOperations(t *testing.T) {
 	router := Router{Agents: agents, Issues: issues}
 
 	cases := map[protocol.Op]string{
-		protocol.OpSpawn:        "agents",
-		protocol.OpResume:       "agents",
-		protocol.OpPlanApply:    "issues",
-		protocol.OpPlanList:     "issues",
-		protocol.OpPlanView:     "issues",
-		protocol.OpIssueCreate:  "issues",
-		protocol.OpIssueList:    "issues",
-		protocol.OpIssueView:    "issues",
-		protocol.OpIssueEdit:    "issues",
-		protocol.OpIssueComment: "issues",
-		protocol.OpIssueLinkPR:  "issues",
-		protocol.OpIssueClose:   "issues",
-		protocol.OpIssueReady:   "issues",
-		protocol.OpIssueReindex: "issues",
+		protocol.OpSpawn:           "agents",
+		protocol.OpResume:          "agents",
+		protocol.OpSpawnBackground: "agents",
+		protocol.OpPlanApply:       "issues",
+		protocol.OpPlanList:        "issues",
+		protocol.OpPlanView:        "issues",
+		protocol.OpIssueCreate:     "issues",
+		protocol.OpIssueList:       "issues",
+		protocol.OpIssueView:       "issues",
+		protocol.OpIssueEdit:       "issues",
+		protocol.OpIssueComment:    "issues",
+		protocol.OpIssueLinkPR:     "issues",
+		protocol.OpIssueClose:      "issues",
+		protocol.OpIssueReady:      "issues",
+		protocol.OpIssueReindex:    "issues",
 	}
 
 	for op, want := range cases {
@@ -52,8 +53,8 @@ func TestRouterSplitsAgentOperationsFromIssueOperations(t *testing.T) {
 		}
 	}
 
-	if len(agents.seen) != 2 {
-		t.Errorf("the runner saw %v, want just spawn and resume", agents.seen)
+	if len(agents.seen) != 3 {
+		t.Errorf("the runner saw %v, want spawn, resume, and spawn_background", agents.seen)
 	}
 }
 

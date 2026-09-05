@@ -184,7 +184,9 @@ func (s *Server) handle(conn net.Conn) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go watchClose(conn, cancel)
+	if req.Op != protocol.OpSpawnBackground {
+		go watchClose(conn, cancel)
+	}
 
 	resp, err := s.handler.Run(ctx, req)
 	if err != nil {
