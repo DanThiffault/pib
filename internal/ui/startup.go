@@ -257,7 +257,6 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 			m.phase = phaseConfirmAgents
 			return m, nil, true
 		}
-<<<<<<< HEAD
 		if len(msg.migrated) > 0 {
 			m.notice = fmt.Sprintf("migrated legacy agents: %s", strings.Join(msg.migrated, ", "))
 		}

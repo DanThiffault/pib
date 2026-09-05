@@ -42,10 +42,10 @@ var (
 type screen int
 
 const (
-	screenPlans screen = iota   // plans list + DAG of the selected plan
-	screenNewPlan               // plans list + prompt
-	screenPlanDetail            // issue list + detail of the selected issue
-	screenIssue                 // breadcrumb + full-width issue detail
+	screenPlans      screen = iota // plans list + DAG of the selected plan
+	screenNewPlan                  // plans list + prompt
+	screenPlanDetail               // issue list + detail of the selected issue
+	screenIssue                    // breadcrumb + full-width issue detail
 )
 
 type Model struct {
