@@ -85,7 +85,7 @@ var launchPlanner = func(cfg launchConfig) tea.Cmd {
 	})
 }
 
-func (m Model) updateTabPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateScreenNewPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case sessionOpenedMsg:
 		if msg.err != nil {
@@ -161,7 +161,7 @@ const piArt = `
 // wins space the prompt needs.
 const piMinHeight = 30
 
-func (m Model) tabPlanView() string {
+func (m Model) newPlanView() string {
 	var b strings.Builder
 
 	// Wide enough for two panes elsewhere, and tall enough that the art does

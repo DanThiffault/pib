@@ -325,6 +325,7 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		m.extension = msg.extension
 		m.socket = msg.socket
 		m.cfg = msg.config
+		m.screen = screenNewPlan
 		m.phase = phasePrompt
 		return m, tea.Batch(m.input.Focus(), backgroundTick()), true
 

@@ -226,6 +226,16 @@ func (s *Store) depIndex() (all, open map[int64][]int64, err error) {
 	return all, open, rows.Err()
 }
 
+// LiveRunCount returns the number of agent runs currently in progress.
+func (s *Store) LiveRunCount() int {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM runs WHERE ended_at IS NULL AND issue IS NOT NULL`).Scan(&count)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
 // liveRuns maps issues to the agent run currently working on them. A run row
 // with no end is a run still going; pib closes orphans out at startup, so a
 // dead process cannot hold an issue in progress forever.

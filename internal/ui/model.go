@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -32,28 +33,19 @@ var (
 )
 
 var (
-	tabKeys    = key.NewBinding(key.WithKeys("tab"))
-	tab1Keys   = key.NewBinding(key.WithKeys("1"))
-	tab2Keys   = key.NewBinding(key.WithKeys("2"))
 	upKeys     = key.NewBinding(key.WithKeys("up"))
 	downKeys   = key.NewBinding(key.WithKeys("down"))
 	selectKeys = key.NewBinding(key.WithKeys("right", "enter"))
 	backKeys   = key.NewBinding(key.WithKeys("left", "esc"))
 )
 
-type tab int
+type screen int
 
 const (
-	tabPlan tab = iota
-	tabPlans
-)
-
-type plansView int
-
-const (
-	viewPlanList plansView = iota
-	viewPlanDetail
-	viewIssueFullScreen
+	screenPlans screen = iota   // plans list + DAG of the selected plan
+	screenNewPlan               // plans list + prompt
+	screenPlanDetail            // issue list + detail of the selected issue
+	screenIssue                 // breadcrumb + full-width issue detail
 )
 
 type Model struct {
@@ -76,8 +68,7 @@ type Model struct {
 	installed []string
 	outdated  []string
 
-	currentTab          tab
-	plansView           plansView
+	screen              screen
 	plans               []issues.Plan
 	plansErr            error
 	plansLoading        bool
@@ -163,43 +154,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		// Quitting works from every tab, not just the one that used to be
-		// the whole interface — except when esc means "back" in a drill-down.
+		// Quitting works from the top level; below it esc means back.
 		quitting := key.Matches(keyMsg, cancelKeys)
-		if m.currentTab == tabPlans && (m.plansView == viewPlanDetail || m.plansView == viewIssueFullScreen) && key.Matches(keyMsg, backKeys) {
+		if (m.screen == screenPlanDetail || m.screen == screenIssue) && key.Matches(keyMsg, backKeys) {
 			quitting = false
 		}
 		if quitting {
 			return m, tea.Quit
 		}
-
-		// Tab always switches: it is not a character the prompt can hold.
-		if key.Matches(keyMsg, tabKeys) {
-			m = m.switchTab()
-			return m.maybeLoadPlans()
-		}
-
-		// The number keys are shortcuts only where they are not also text.
-		// While the prompt has focus they belong to whoever is typing — a
-		// description mentioning "v2" must not switch tabs and swallow the
-		// rest of the sentence.
-		if !m.input.Focused() {
-			switch {
-			case key.Matches(keyMsg, tab1Keys):
-				m.currentTab = tabPlan
-				return m, m.input.Focus()
-			case key.Matches(keyMsg, tab2Keys):
-				m.currentTab = tabPlans
-				return m.maybeLoadPlans()
-			}
-		}
 	}
 
-	switch m.currentTab {
-	case tabPlan:
-		return m.updateTabPlan(msg)
-	case tabPlans:
-		return m.updateTabPlans(msg)
+	switch m.screen {
+	case screenNewPlan:
+		return m.updateScreenNewPlan(msg)
+	case screenPlans:
+		return m.updateScreenPlans(msg)
+	case screenPlanDetail:
+		return m.updateScreenPlans(msg)
+	case screenIssue:
+		return m.updateScreenPlans(msg)
 	default:
 		return m, nil
 	}
@@ -211,12 +184,19 @@ func (m Model) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(m.tabBarView() + "\n")
-	switch m.currentTab {
-	case tabPlan:
-		b.WriteString(m.tabPlanView())
-	case tabPlans:
-		b.WriteString(m.tabPlansView())
+	b.WriteString(m.statusLineView() + "\n")
+	if m.screen == screenPlanDetail || m.screen == screenIssue {
+		b.WriteString(m.breadcrumbView() + "\n")
+	}
+	switch m.screen {
+	case screenNewPlan:
+		b.WriteString(m.newPlanView())
+	case screenPlans:
+		b.WriteString(m.plansView())
+	case screenPlanDetail:
+		b.WriteString(m.plansView())
+	case screenIssue:
+		b.WriteString(m.plansView())
 	}
 	return m.ground(b.String())
 }
@@ -234,42 +214,50 @@ func (m Model) ground(view string) string {
 	return theme.Default.Base.Width(m.width).Render(view)
 }
 
-// switchTab moves to the next tab. The prompt gives up focus on the way out
-// and takes it back on the way in, which is what lets the number shortcuts
-// work on every tab but the one being typed into.
-func (m Model) switchTab() Model {
-	switch m.currentTab {
-	case tabPlan:
-		m.currentTab = tabPlans
-		m.input.Blur()
-	case tabPlans:
-		m.currentTab = tabPlan
-	}
-	return m
-}
-
-func (m Model) maybeLoadPlans() (tea.Model, tea.Cmd) {
-	if m.currentTab == tabPlan {
-		return m, m.input.Focus()
-	}
-	if len(m.plans) == 0 && !m.plansLoading && m.plansErr == nil {
-		m.plansLoading = true
-		return m, loadPlans(m.store)
-	}
-	return m, nil
-}
-
-func (m Model) tabBarView() string {
-	var tabs []string
-	for i, label := range []string{"Plan", "Plans"} {
-		t := tab(i)
-		if t == m.currentTab {
-			tabs = append(tabs, activeTabStyle.Render(label))
-		} else {
-			tabs = append(tabs, inactiveTabStyle.Render(label))
+func (m Model) statusLineView() string {
+	left := "pib"
+	if m.workspace.GitRoot != "" {
+		parts := strings.Split(m.workspace.GitRoot, "/")
+		name := parts[len(parts)-1]
+		if name != "" {
+			left += " · " + name
 		}
 	}
-	return tabBarStyle.Render(lipgloss.JoinHorizontal(lipgloss.Top, tabs...))
+	if m.workspace.Branch != "" {
+		left += " · " + m.workspace.Branch
+	}
+
+	var right string
+	if m.store != nil {
+		if n := m.store.LiveRunCount(); n > 0 {
+			right = fmt.Sprintf("%d run", n)
+			if n > 1 {
+				right += "s"
+			}
+		}
+	}
+
+	width := m.width
+	if width < 1 {
+		width = 1
+	}
+
+	avail := width - lipgloss.Width(left)
+	if right != "" && avail > lipgloss.Width(right)+3 {
+		return left + strings.Repeat(" ", avail-lipgloss.Width(right)) + right
+	}
+	return truncate(left, width)
+}
+
+func (m Model) breadcrumbView() string {
+	parts := []string{"Plans"}
+	if m.planCursor < len(m.plans) {
+		parts = append(parts, m.plans[m.planCursor].Slug)
+	}
+	if m.screen == screenIssue && m.issueCursor < len(m.planIssues) {
+		parts = append(parts, fmt.Sprintf("#%d %s", m.planIssues[m.issueCursor].Number, m.planIssues[m.issueCursor].Title))
+	}
+	return strings.Join(parts, " › ")
 }
 
 const (
@@ -294,7 +282,10 @@ func paneWidths(total int) (left, right int) {
 }
 
 func (m Model) contentHeight() int {
-	h := m.height - 3 // tab bar + help line
+	h := m.height - 1 // status line
+	if m.screen == screenPlanDetail || m.screen == screenIssue {
+		h-- // breadcrumb
+	}
 	if h < 1 {
 		h = 1
 	}

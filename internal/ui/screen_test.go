@@ -21,182 +21,212 @@ func mustParse(s string) time.Time {
 	return t
 }
 
-func readyWithTabs(t *testing.T) Model {
-	m := ready(t)
-	m.currentTab = tabPlan
-	return m
-}
-
-func TestTabBarRenders(t *testing.T) {
-	m := readyWithTabs(t)
-	view := m.View()
-	if !strings.Contains(view, "Plan") {
-		t.Errorf("view missing Plan tab:\n%s", view)
-	}
-	if !strings.Contains(view, "Plans") {
-		t.Errorf("view missing Plans tab:\n%s", view)
-	}
-}
-
-func TestTab1SwitchesToPlanTab(t *testing.T) {
-	m := readyWithTabs(t)
-	// Get to the Plans tab the way a user does, so the prompt gives up
-	// focus and the number shortcuts are live.
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = next.(Model)
-
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
-	m = next.(Model)
-
-	if m.currentTab != tabPlan {
-		t.Errorf("currentTab = %v, want tabPlan", m.currentTab)
-	}
-}
-
-func TestTab2SwitchesToPlansTab(t *testing.T) {
-	m := readyWithTabs(t)
-	// The prompt has focus on the Plan tab, so the shortcut is not live
-	// there; leave with tab first, as a user would.
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = next.(Model)
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
-	m = next.(Model)
-
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = next.(Model)
-
-	if m.currentTab != tabPlans {
-		t.Errorf("currentTab = %v, want tabPlans", m.currentTab)
-	}
-}
-
-// The prompt is a textarea, and a description is allowed to contain digits.
-// A shortcut that fires while someone is typing swallows the keystroke and
-// everything after it.
-func TestNumberKeysDoNotStealFromThePrompt(t *testing.T) {
-	m := readyWithTabs(t)
-	m = typeText(m, "plan v2 of the thing, in 1 pass")
-
-	if got, want := m.input.Value(), "plan v2 of the thing, in 1 pass"; got != want {
-		t.Errorf("prompt holds %q, want %q", got, want)
-	}
-	if m.currentTab != tabPlan {
-		t.Errorf("currentTab = %v; typing must not switch tabs", m.currentTab)
-	}
-}
-
-// Away from the prompt there is nothing to type into, so the shortcuts are
-// live again.
-func TestNumberKeysSwitchTabsWhenNotTyping(t *testing.T) {
-	m := readyWithTabs(t)
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab}) // leave the prompt
-	m = next.(Model)
-	if m.input.Focused() {
-		t.Fatal("the prompt kept focus after switching away from it")
-	}
-
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
-	m = next.(Model)
-	if m.currentTab != tabPlan {
-		t.Errorf("currentTab = %v, want tabPlan", m.currentTab)
-	}
-	if !m.input.Focused() {
-		t.Error("returning to the Plan tab did not give the prompt focus back")
-	}
-}
-
-// Quitting used to live in the prompt handler, which only runs on one tab.
-func TestQuitWorksFromEveryTab(t *testing.T) {
-	for _, start := range []tab{tabPlan, tabPlans} {
-		for _, keyMsg := range []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyCtrlC}} {
-			m := readyWithTabs(t)
-			m.currentTab = start
-			if start == tabPlans {
-				m.input.Blur()
-			}
-
-			_, cmd := m.Update(keyMsg)
-			if cmd == nil {
-				t.Fatalf("tab %v: %v produced no command, want quit", start, keyMsg)
-			}
-			if _, quitting := cmd().(tea.QuitMsg); !quitting {
-				t.Errorf("tab %v: %v did not quit", start, keyMsg)
-			}
-		}
-	}
-}
-
-func TestTabKeyCyclesTabs(t *testing.T) {
-	m := readyWithTabs(t)
-
-	// tab switches from Plan to Plans
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = next.(Model)
-	if m.currentTab != tabPlans {
-		t.Errorf("currentTab = %v, want tabPlans after first tab", m.currentTab)
-	}
-
-	// tab switches back to Plan
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = next.(Model)
-	if m.currentTab != tabPlan {
-		t.Errorf("currentTab = %v, want tabPlan after second tab", m.currentTab)
-	}
-}
-
-func TestTabPlanPreservesPromptBehavior(t *testing.T) {
-	launches := captureLaunches(t)
-	m := readyWithTabs(t)
-	m = typeText(m, "a todo app")
-
-	// Enter should still launch planner while in tabPlan
-	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-
-	if len(*launches) != 1 {
-		t.Errorf("launched %d sessions, want 1", len(*launches))
-	}
-}
-
-func TestPlansTabShowsLoadingState(t *testing.T) {
-	m := readyWithTabs(t)
-	m.currentTab = tabPlans
-	m.plansLoading = true
-
-	view := m.View()
-	if !strings.Contains(view, "Loading") {
-		t.Errorf("view missing loading indicator:\n%s", view)
-	}
-}
-
-func TestTabBarHighlightsActiveTab(t *testing.T) {
-	m := readyWithTabs(t)
-	view := m.View()
-
-	// Both tabs should be present in the tab bar
-	if !strings.Contains(view, "Plan") || !strings.Contains(view, "Plans") {
-		t.Error("tab bar missing one or both tabs")
-	}
-}
-
-func TestPromptViewShowsTabBar(t *testing.T) {
-	m := readyWithTabs(t)
-	view := m.View()
-
-	// The Plan tab content should still be visible below the tab bar
-	if !strings.Contains(view, "What do you want to plan?") {
-		t.Errorf("prompt missing below tab bar:\n%s", view)
-	}
-}
-
 func plansModel(t *testing.T, plans []issues.Plan) Model {
-	m := readyWithTabs(t)
-	m.currentTab = tabPlans
+	m := ready(t)
+	m.screen = screenPlans
 	m.input.Blur()
 	m.plans = plans
 	m.width = 100
 	m.height = 30
 	return m
+}
+
+func TestStatusLineShowsGitRootAndBranch(t *testing.T) {
+	m := ready(t)
+	m.width = 100
+	m.workspace.GitRoot = "/repo"
+	m.workspace.Branch = "main"
+
+	line := m.statusLineView()
+	if !strings.Contains(line, "pib") {
+		t.Errorf("status line missing 'pib': %q", line)
+	}
+	if !strings.Contains(line, "repo") {
+		t.Errorf("status line missing repo name: %q", line)
+	}
+	if !strings.Contains(line, "main") {
+		t.Errorf("status line missing branch: %q", line)
+	}
+}
+
+func TestBreadcrumbShowsPlanAndIssue(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "orders", Title: "Orders"}})
+	m.screen = screenPlanDetail
+	line := m.breadcrumbView()
+	if !strings.Contains(line, "Plans") {
+		t.Errorf("breadcrumb missing Plans: %q", line)
+	}
+	if !strings.Contains(line, "orders") {
+		t.Errorf("breadcrumb missing plan slug: %q", line)
+	}
+
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{{Issue: issues.Issue{Number: 13, Title: "Add cart"}}}
+	m.issueCursor = 0
+	line = m.breadcrumbView()
+	if !strings.Contains(line, "#13") {
+		t.Errorf("breadcrumb missing issue: %q", line)
+	}
+}
+
+func TestEscQuitsFromTopLevel(t *testing.T) {
+	for _, start := range []screen{screenPlans, screenNewPlan} {
+		m := ready(t)
+		m.screen = start
+		if start == screenPlans {
+			m.input.Blur()
+		}
+
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		if cmd == nil {
+			t.Fatalf("screen %v: esc produced no command, want quit", start)
+		}
+		if _, quitting := cmd().(tea.QuitMsg); !quitting {
+			t.Errorf("screen %v: esc did not quit", start)
+		}
+	}
+}
+
+func TestCtrlCQuitsFromEveryScreen(t *testing.T) {
+	for _, start := range []screen{screenPlans, screenNewPlan, screenPlanDetail, screenIssue} {
+		m := ready(t)
+		m.screen = start
+		if start == screenPlans || start == screenPlanDetail || start == screenIssue {
+			m.input.Blur()
+		}
+
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+		if cmd == nil {
+			t.Fatalf("screen %v: ctrl+c produced no command, want quit", start)
+		}
+		if _, quitting := cmd().(tea.QuitMsg); !quitting {
+			t.Errorf("screen %v: ctrl+c did not quit", start)
+		}
+	}
+}
+
+func TestEscInDetailGoesBack(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenPlanDetail
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.screen != screenPlans {
+		t.Errorf("screen = %v, want screenPlans after esc", m.screen)
+	}
+}
+
+func TestEscInDetailDoesNotQuit(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenPlanDetail
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		return // going back returns nil command, which is fine
+	}
+	if _, quitting := cmd().(tea.QuitMsg); quitting {
+		t.Error("esc in detail view should go back, not quit")
+	}
+}
+
+func TestLeftInDetailGoesBack(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenPlanDetail
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = next.(Model)
+	if m.screen != screenPlans {
+		t.Errorf("screen = %v, want screenPlans after left", m.screen)
+	}
+}
+
+func TestEscInFullScreenReturnsToDetail(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.screen != screenPlanDetail {
+		t.Errorf("screen = %v, want screenPlanDetail after esc", m.screen)
+	}
+}
+
+func TestEscInFullScreenDoesNotQuit(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		return
+	}
+	if _, quitting := cmd().(tea.QuitMsg); quitting {
+		t.Error("esc in full-screen view should go back, not quit")
+	}
+}
+
+func TestLeftInFullScreenReturnsToDetail(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = next.(Model)
+	if m.screen != screenPlanDetail {
+		t.Errorf("screen = %v, want screenPlanDetail after left", m.screen)
+	}
+}
+
+func TestBackKeyInDetailViewReturnsToList(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	m = next.(Model)
+	if m.screen != screenPlans {
+		t.Errorf("screen = %v, want screenPlans", m.screen)
+	}
+}
+
+func TestBackKeyInFullScreenReturnsToDetail(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	m = next.(Model)
+	if m.screen != screenPlanDetail {
+		t.Errorf("screen = %v, want screenPlanDetail", m.screen)
+	}
 }
 
 func TestPlanListNavigation(t *testing.T) {
@@ -264,8 +294,8 @@ func TestEnterOpensPlanDetail(t *testing.T) {
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	if m.plansView != viewPlanDetail {
-		t.Errorf("plansView = %v, want viewPlanDetail", m.plansView)
+	if m.screen != screenPlanDetail {
+		t.Errorf("screen = %v, want screenPlanDetail", m.screen)
 	}
 }
 
@@ -276,55 +306,48 @@ func TestRightOpensPlanDetail(t *testing.T) {
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = next.(Model)
-	if m.plansView != viewPlanDetail {
-		t.Errorf("plansView = %v, want viewPlanDetail", m.plansView)
+	if m.screen != screenPlanDetail {
+		t.Errorf("screen = %v, want screenPlanDetail", m.screen)
 	}
 }
 
-func TestEscInDetailViewGoesBack(t *testing.T) {
+func TestRightArrowFromDetailOpensFullScreen(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	m = next.(Model)
-	if m.plansView != viewPlanList {
-		t.Errorf("plansView = %v, want viewPlanList after esc", m.plansView)
+	if m.screen != screenIssue {
+		t.Errorf("screen = %v, want screenIssue", m.screen)
 	}
 }
 
-func TestEscInDetailViewDoesNotQuit(t *testing.T) {
+func TestEnterFromDetailOpensFullScreen(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
-
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if cmd == nil {
-		return // going back returns nil command, which is fine
+	m.screen = screenPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
 	}
-	if _, quitting := cmd().(tea.QuitMsg); quitting {
-		t.Error("esc in detail view should go back, not quit")
-	}
-}
+	m.planIssuesLoadedFor = "plan-a"
 
-func TestLeftInDetailViewGoesBack(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewPlanDetail
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	if m.plansView != viewPlanList {
-		t.Errorf("plansView = %v, want viewPlanList after left", m.plansView)
+	if m.screen != screenIssue {
+		t.Errorf("screen = %v, want screenIssue", m.screen)
 	}
 }
 
-func TestPlansTabShowsEmptyState(t *testing.T) {
-	m := readyWithTabs(t)
-	m.currentTab = tabPlans
+func TestPlansScreenShowsEmptyState(t *testing.T) {
+	m := ready(t)
+	m.screen = screenPlans
 	m.plans = nil
 	m.plansLoading = false
 	m.plansErr = nil
@@ -335,9 +358,9 @@ func TestPlansTabShowsEmptyState(t *testing.T) {
 	}
 }
 
-func TestPlansTabShowsErrorState(t *testing.T) {
-	m := readyWithTabs(t)
-	m.currentTab = tabPlans
+func TestPlansScreenShowsErrorState(t *testing.T) {
+	m := ready(t)
+	m.screen = screenPlans
 	m.plans = nil
 	m.plansLoading = false
 	m.plansErr = errors.New("store unreachable")
@@ -352,8 +375,8 @@ func TestPlansTabShowsErrorState(t *testing.T) {
 }
 
 func TestPlansLoadedMsgPopulatesCounts(t *testing.T) {
-	m := readyWithTabs(t)
-	m.currentTab = tabPlans
+	m := ready(t)
+	m.screen = screenPlans
 	m.plansLoading = true
 
 	plans := []issues.Plan{{Slug: "plan-x", Title: "Plan X"}}
@@ -369,303 +392,6 @@ func TestPlansLoadedMsgPopulatesCounts(t *testing.T) {
 	}
 }
 
-func TestRightArrowFromDetailOpensFullScreen(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewPlanDetail
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	m = next.(Model)
-	if m.plansView != viewIssueFullScreen {
-		t.Errorf("plansView = %v, want viewIssueFullScreen", m.plansView)
-	}
-}
-
-func TestEnterFromDetailOpensFullScreen(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewPlanDetail
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(Model)
-	if m.plansView != viewIssueFullScreen {
-		t.Errorf("plansView = %v, want viewIssueFullScreen", m.plansView)
-	}
-}
-
-func TestEscInFullScreenReturnsToDetail(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(Model)
-	if m.plansView != viewPlanDetail {
-		t.Errorf("plansView = %v, want viewPlanDetail after esc", m.plansView)
-	}
-}
-
-func TestEscInFullScreenDoesNotQuit(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if cmd == nil {
-		return
-	}
-	if _, quitting := cmd().(tea.QuitMsg); quitting {
-		t.Error("esc in full-screen view should go back, not quit")
-	}
-}
-
-func TestLeftInFullScreenReturnsToDetail(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	m = next.(Model)
-	if m.plansView != viewPlanDetail {
-		t.Errorf("plansView = %v, want viewPlanDetail after left", m.plansView)
-	}
-}
-
-func TestFullScreenShowsIssueDetails(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "First Issue", State: issues.StateOpen, Type: "task", Acceptance: []string{"it works"}, CreatedAt: mustParse("2024-01-15T10:00:00Z")}, Ready: true, Agent: "builder", Run: "run-123"},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-	m.issueCursor = 0
-
-	view := m.View()
-	if !strings.Contains(view, "First Issue") {
-		t.Errorf("view missing issue title:\n%s", view)
-	}
-	if !strings.Contains(view, "#1") {
-		t.Errorf("view missing issue number:\n%s", view)
-	}
-	if !strings.Contains(view, "ready") {
-		t.Errorf("view missing ready flag:\n%s", view)
-	}
-	if !strings.Contains(view, "builder") {
-		t.Errorf("view missing agent:\n%s", view)
-	}
-	if !strings.Contains(view, "run-123") {
-		t.Errorf("view missing run:\n%s", view)
-	}
-	if !strings.Contains(view, "it works") {
-		t.Errorf("view missing acceptance criteria:\n%s", view)
-	}
-	if !strings.Contains(view, "Created:") {
-		t.Errorf("view missing created timestamp:\n%s", view)
-	}
-}
-
-func TestFullScreenActionBarAtBottom(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	view := m.View()
-	if !strings.Contains(view, "Start") {
-		t.Errorf("action bar missing Start:\n%s", view)
-	}
-	if !strings.Contains(view, "Back") {
-		t.Errorf("action bar missing Back:\n%s", view)
-	}
-}
-
-func TestTabNavigatesFromFullScreen(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = next.(Model)
-	if m.currentTab != tabPlan {
-		t.Errorf("currentTab = %v, want tabPlan after tab", m.currentTab)
-	}
-}
-
-func TestNumberKeysSwitchTabsFromFullScreen(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-	m.input.Blur()
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
-	m = next.(Model)
-	if m.currentTab != tabPlan {
-		t.Errorf("currentTab = %v, want tabPlan after 1", m.currentTab)
-	}
-}
-
-func TestBackKeyInFullScreenReturnsToDetail(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
-	m = next.(Model)
-	if m.plansView != viewPlanDetail {
-		t.Errorf("plansView = %v, want viewPlanDetail after back key", m.plansView)
-	}
-}
-
-func TestFullScreenActionKeyEmitsMessage(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
-	m = next.(Model)
-	if m.notice == "" {
-		t.Error("expected notice after pressing start in full-screen")
-	}
-	if cmd == nil {
-		t.Fatal("expected command from start key in full-screen")
-	}
-	msg := cmd()
-	if _, ok := msg.(startIssueMsg); !ok {
-		t.Errorf("cmd returned %T, want startIssueMsg", msg)
-	}
-}
-
-func TestFullScreenNoEmptyWhenNoIssues(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-
-	view := m.View()
-	if !strings.Contains(view, "No issues") {
-		t.Errorf("view missing empty state:\n%s", view)
-	}
-}
-
-func TestFullScreenShowsLoading(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssuesLoading = true
-
-	view := m.View()
-	if !strings.Contains(view, "Loading") {
-		t.Errorf("view missing loading indicator:\n%s", view)
-	}
-}
-
-func TestFullScreenShowsError(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssuesErr = errors.New("store failed")
-
-	view := m.View()
-	if !strings.Contains(view, "Error loading issues") {
-		t.Errorf("view missing error state:\n%s", view)
-	}
-}
-
-func TestFullScreenShowsBlockers(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Blocked"}, Blocked: true, OpenBlockers: []int64{2, 3}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-	m.issueCursor = 0
-
-	view := m.View()
-	if !strings.Contains(view, "#2") {
-		t.Errorf("view missing blocker #2:\n%s", view)
-	}
-	if !strings.Contains(view, "#3") {
-		t.Errorf("view missing blocker #3:\n%s", view)
-	}
-	if !strings.Contains(view, "blocked") {
-		t.Errorf("view missing blocked flag:\n%s", view)
-	}
-}
-
-func TestCtrlCQuitsFromFullScreen(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-	})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if cmd == nil {
-		t.Fatal("ctrl+c produced no command, want quit")
-	}
-	if _, quitting := cmd().(tea.QuitMsg); !quitting {
-		t.Error("ctrl+c in full-screen view should quit")
-	}
-}
-
 func TestEnterOpensPlanDetailAndLoadsIssues(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
@@ -673,8 +399,8 @@ func TestEnterOpensPlanDetailAndLoadsIssues(t *testing.T) {
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(Model)
-	if m.plansView != viewPlanDetail {
-		t.Errorf("plansView = %v, want viewPlanDetail", m.plansView)
+	if m.screen != screenPlanDetail {
+		t.Errorf("screen = %v, want screenPlanDetail", m.screen)
 	}
 	if !m.planIssuesLoading {
 		t.Error("planIssuesLoading = false, want true")
@@ -696,7 +422,7 @@ func TestPlanIssuesLoadedMsgPopulatesIssues(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssuesLoading = true
 
 	statuses := []issues.Status{
@@ -725,7 +451,7 @@ func TestIssueListNavigation(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
 		{Issue: issues.Issue{Number: 2, Title: "Issue 2"}},
@@ -769,7 +495,7 @@ func TestPlanDetailShowsTwoPanes(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "First Issue", State: issues.StateOpen, Type: "task", Acceptance: []string{"it works"}, CreatedAt: mustParse("2024-01-15T10:00:00Z")}, Ready: true, Agent: "builder"},
 		{Issue: issues.Issue{Number: 2, Title: "Second Issue", State: issues.StateOpen, Type: "task"}, Blocked: true, OpenBlockers: []int64{1}},
@@ -799,7 +525,7 @@ func TestPlanDetailShowsLoadingState(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssuesLoading = true
 
 	view := m.View()
@@ -812,7 +538,7 @@ func TestPlanDetailShowsEmptyState(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssuesLoading = false
 	m.planIssuesErr = nil
 	m.planIssues = nil
@@ -828,7 +554,7 @@ func TestPlanDetailShowsErrorState(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssuesLoading = false
 	m.planIssuesErr = errors.New("store failed")
 	m.planIssuesLoadedFor = "plan-a"
@@ -848,7 +574,7 @@ func TestPlanDetailShowsErrorState(t *testing.T) {
 func TestIssueListRowsStayWithinThePane(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
 	m.height = 15
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssuesLoadedFor = "plan-a"
 	titles := []string{
 		"Add Tab Framework and Refactor Prompt into TabPlan",
@@ -902,7 +628,7 @@ func TestNarrowTerminalShowsSinglePane(t *testing.T) {
 		t.Errorf("narrow plan list should not contain pane divider:\n%s", view)
 	}
 
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
 	}
@@ -961,7 +687,7 @@ func TestVeryNarrowWidthNoPanic(t *testing.T) {
 
 	_ = m.View() // should not panic
 
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
 	}
@@ -970,7 +696,7 @@ func TestVeryNarrowWidthNoPanic(t *testing.T) {
 }
 
 func TestResizeUpdatesDimensions(t *testing.T) {
-	m := readyWithTabs(t)
+	m := ready(t)
 	if m.width != 0 || m.height != 0 {
 		t.Skipf("initial dimensions non-zero: %dx%d", m.width, m.height)
 	}
@@ -1003,7 +729,7 @@ func TestResizeHandledInPlanDetailView(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "Issue 1"}},
 	}
@@ -1019,8 +745,8 @@ func TestResizeHandledInPlanDetailView(t *testing.T) {
 }
 
 func TestLoadingIndicatorVisible(t *testing.T) {
-	m := readyWithTabs(t)
-	m.currentTab = tabPlans
+	m := ready(t)
+	m.screen = screenPlans
 	m.plansLoading = true
 
 	view := m.View()
@@ -1036,7 +762,7 @@ func TestDetailLoadingIndicatorVisible(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssuesLoading = true
 
 	view := m.View()
@@ -1048,27 +774,6 @@ func TestDetailLoadingIndicatorVisible(t *testing.T) {
 	}
 }
 
-func TestTabBarKeysSwitchTabsButNavigationWorksInPane(t *testing.T) {
-	m := plansModel(t, []issues.Plan{
-		{Slug: "plan-a", Title: "Plan A"},
-		{Slug: "plan-b", Title: "Plan B"},
-	})
-
-	// Up/down navigate within the pane.
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = next.(Model)
-	if m.planCursor != 1 {
-		t.Errorf("planCursor = %d, want 1 after down", m.planCursor)
-	}
-
-	// Tab still switches tabs globally.
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	m = next.(Model)
-	if m.currentTab != tabPlan {
-		t.Errorf("currentTab = %v, want tabPlan after tab key", m.currentTab)
-	}
-}
-
 // Entering a plan starts a load and leaving starts another, so two responses
 // can be in flight. The older one must not land on the newer plan's view.
 func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
@@ -1076,7 +781,7 @@ func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
 		{Slug: "plan-a", Title: "Plan A"},
 		{Slug: "plan-b", Title: "Plan B"},
 	})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planCursor = 1
 
 	next, _ := m.Update(planIssuesLoadedMsg{
@@ -1160,7 +865,7 @@ func TestPlanDAGPaneRendersTree(t *testing.T) {
 
 func TestActionBarShowsForLaunchableIssue(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "Launchable Issue"}, Launchable: true, Ready: true},
 	}
@@ -1180,7 +885,7 @@ func TestActionBarShowsForLaunchableIssue(t *testing.T) {
 
 func TestActionBarShowsForInProgressIssue(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 2, Title: "In Progress Issue"}, InProgress: true},
 	}
@@ -1200,7 +905,7 @@ func TestActionBarShowsForInProgressIssue(t *testing.T) {
 
 func TestActionBarShowsForBlockedIssue(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 3, Title: "Blocked Issue"}, Blocked: true},
 	}
@@ -1217,7 +922,7 @@ func TestActionBarShowsForBlockedIssue(t *testing.T) {
 
 func TestActionBarShowsForAwaitingReviewIssue(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 4, Title: "Awaiting Review Issue"}, AwaitingReview: true},
 	}
@@ -1240,7 +945,7 @@ func TestActionBarShowsForAwaitingReviewIssue(t *testing.T) {
 
 func TestActionBarShowsForClosedIssue(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 5, Title: "Closed Issue", State: issues.StateClosed}},
 	}
@@ -1260,7 +965,7 @@ func TestActionBarShowsForClosedIssue(t *testing.T) {
 
 func TestActionKeyEmitsNotice(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
 	}
@@ -1275,7 +980,7 @@ func TestActionKeyEmitsNotice(t *testing.T) {
 
 func TestStartKeyEmitsStartMessage(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
 	}
@@ -1295,24 +1000,9 @@ func TestStartKeyEmitsStartMessage(t *testing.T) {
 	}
 }
 
-func TestBackKeyInDetailViewReturnsToList(t *testing.T) {
-	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
-	m.planIssues = []issues.Status{
-		{Issue: issues.Issue{Number: 1, Title: "Issue"}},
-	}
-	m.planIssuesLoadedFor = "plan-a"
-
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
-	m = next.(Model)
-	if m.plansView != viewPlanList {
-		t.Errorf("plansView = %v, want viewPlanList", m.plansView)
-	}
-}
-
 func TestNavigationClearsNotice(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "First"}},
 		{Issue: issues.Issue{Number: 2, Title: "Second"}},
@@ -1331,7 +1021,7 @@ func TestNavigationClearsNotice(t *testing.T) {
 func TestActionBarDoesNotAddExtraHeight(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
 	m.height = 15
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
 	}
@@ -1418,7 +1108,7 @@ func TestFullScreenActionBarSurvivesWrappingContent(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{100, 30}, {40, 30}, {30, 20}, {20, 12}} {
 		m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
 		m.width, m.height = size.w, size.h
-		m.plansView = viewIssueFullScreen
+		m.screen = screenIssue
 		m.planIssues = []issues.Status{{
 			Issue: issues.Issue{
 				Number: 14, Title: "An issue with a title long enough to wrap on its own",
@@ -1458,7 +1148,7 @@ func TestPreviewPaneStaysWithinItsPane(t *testing.T) {
 // which one that is. The preview pane has no room for it.
 func TestFullScreenShowsThePullRequest(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
-	m.plansView = viewIssueFullScreen
+	m.screen = screenIssue
 	m.planIssues = []issues.Status{{
 		Issue: issues.Issue{
 			Number: 14, Title: "T", State: issues.StateOpen, Type: "task",
@@ -1477,9 +1167,144 @@ func TestFullScreenShowsThePullRequest(t *testing.T) {
 
 // A closed blocker still explains why an issue is shaped the way it is, so the
 // full-screen view shows the whole edge rather than only what is outstanding.
+func TestFullScreenShowsEveryBlockerNotJustOpenOnes(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{{
+		Issue: issues.Issue{
+			Number: 16, Title: "T", State: issues.StateOpen, Type: "task",
+			BlockedBy: []int64{13, 14},
+		},
+		Blocked:      true,
+		OpenBlockers: []int64{14},
+	}}
+
+	view := m.issueFullScreenView()
+	for _, want := range []string{"#13", "#14"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("full-screen view missing blocker %s", want)
+		}
+	}
+}
+
+func TestFullScreenShowsIssueDetails(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "First Issue", State: issues.StateOpen, Type: "task", Acceptance: []string{"it works"}, CreatedAt: mustParse("2024-01-15T10:00:00Z")}, Ready: true, Agent: "builder", Run: "run-123"},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+	m.issueCursor = 0
+
+	view := m.View()
+	if !strings.Contains(view, "First Issue") {
+		t.Errorf("view missing issue title:\n%s", view)
+	}
+	if !strings.Contains(view, "#1") {
+		t.Errorf("view missing issue number:\n%s", view)
+	}
+	if !strings.Contains(view, "ready") {
+		t.Errorf("view missing ready flag:\n%s", view)
+	}
+	if !strings.Contains(view, "builder") {
+		t.Errorf("view missing agent:\n%s", view)
+	}
+	if !strings.Contains(view, "run-123") {
+		t.Errorf("view missing run:\n%s", view)
+	}
+	if !strings.Contains(view, "it works") {
+		t.Errorf("view missing acceptance criteria:\n%s", view)
+	}
+	if !strings.Contains(view, "Created:") {
+		t.Errorf("view missing created timestamp:\n%s", view)
+	}
+}
+
+func TestFullScreenActionBarAtBottom(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	view := m.View()
+	if !strings.Contains(view, "Start") {
+		t.Errorf("action bar missing Start:\n%s", view)
+	}
+	if !strings.Contains(view, "Back") {
+		t.Errorf("action bar missing Back:\n%s", view)
+	}
+}
+
+func TestFullScreenNoEmptyWhenNoIssues(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenIssue
+
+	view := m.View()
+	if !strings.Contains(view, "No issues") {
+		t.Errorf("view missing empty state:\n%s", view)
+	}
+}
+
+func TestFullScreenShowsLoading(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenIssue
+	m.planIssuesLoading = true
+
+	view := m.View()
+	if !strings.Contains(view, "Loading") {
+		t.Errorf("view missing loading indicator:\n%s", view)
+	}
+}
+
+func TestFullScreenShowsError(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenIssue
+	m.planIssuesErr = errors.New("store failed")
+
+	view := m.View()
+	if !strings.Contains(view, "Error loading issues") {
+		t.Errorf("view missing error state:\n%s", view)
+	}
+}
+
+func TestFullScreenShowsBlockers(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Blocked"}, Blocked: true, OpenBlockers: []int64{2, 3}},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+	m.issueCursor = 0
+
+	view := m.View()
+	if !strings.Contains(view, "#2") {
+		t.Errorf("view missing blocker #2:\n%s", view)
+	}
+	if !strings.Contains(view, "#3") {
+		t.Errorf("view missing blocker #3:\n%s", view)
+	}
+	if !strings.Contains(view, "blocked") {
+		t.Errorf("view missing blocked flag:\n%s", view)
+	}
+}
+
 func TestStartRefusesWhenNoAgentMapped(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 
 	next, _ := m.Update(startIssueMsg{issue: issues.Status{
 		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "feature", State: issues.StateOpen},
@@ -1494,7 +1319,7 @@ func TestStartRefusesWhenNoAgentMapped(t *testing.T) {
 
 func TestStartRefusesWhenNotReady(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 
 	next, _ := m.Update(startIssueMsg{issue: issues.Status{
 		Issue:        issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
@@ -1511,7 +1336,7 @@ func TestStartRefusesWhenNotReady(t *testing.T) {
 
 func TestStartRefusesWhenRunnerUnavailable(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 
 	next, _ := m.Update(startIssueMsg{issue: issues.Status{
 		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
@@ -1526,7 +1351,7 @@ func TestStartRefusesWhenRunnerUnavailable(t *testing.T) {
 
 func TestStartReturnsBatchWithRefreshAndSpawn(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.agents = &fakeSpawner{}
 
 	next, cmd := m.Update(startIssueMsg{issue: issues.Status{
@@ -1546,7 +1371,7 @@ func TestStartReturnsBatchWithRefreshAndSpawn(t *testing.T) {
 
 func TestAgentFinishedRefreshesIssues(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 
 	next, cmd := m.Update(agentFinishedMsg{issue: issues.Status{
 		Issue: issues.Issue{Number: 1, Title: "Issue", Type: "task", State: issues.StateOpen},
@@ -1566,72 +1391,13 @@ func TestAgentFinishedRefreshesIssues(t *testing.T) {
 	}
 }
 
-func TestFullScreenShowsEveryBlockerNotJustOpenOnes(t *testing.T) {
-	m := plansModel(t, []issues.Plan{{Slug: "p", Title: "P"}})
-	m.plansView = viewIssueFullScreen
-	m.planIssues = []issues.Status{{
-		Issue: issues.Issue{
-			Number: 16, Title: "T", State: issues.StateOpen, Type: "task",
-			BlockedBy: []int64{13, 14},
-		},
-		Blocked:      true,
-		OpenBlockers: []int64{14},
-	}}
-
-	view := m.issueFullScreenView()
-	for _, want := range []string{"#13", "#14"} {
-		if !strings.Contains(view, want) {
-			t.Errorf("full-screen view missing blocker %s", want)
-		}
-	}
-}
-
-// fakeSpawner stands in for the runner. Run blocks until released, the way a
-// real spawn blocks for as long as the agent runs.
-type fakeSpawner struct {
-	mu      sync.Mutex
-	reqs    []protocol.Request
-	release chan struct{}
-	err     error
-}
-
-func (f *fakeSpawner) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
-	f.mu.Lock()
-	f.reqs = append(f.reqs, req)
-	release := f.release
-	f.mu.Unlock()
-
-	if release != nil {
-		<-release
-	}
-	if f.err != nil {
-		return protocol.Response{}, f.err
-	}
-	return protocol.Response{Status: "done", Session: "s1"}, nil
-}
-
-func (f *fakeSpawner) seen() []protocol.Request {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]protocol.Request(nil), f.reqs...)
-}
-
-func startable(number int64) issues.Status {
-	return issues.Status{
-		Issue:      issues.Issue{Number: number, Title: "Issue", Type: "task", State: issues.StateOpen},
-		Ready:      true,
-		Launchable: true,
-		Agent:      "worker",
-	}
-}
-
 // The run is recorded only after a worktree is checked out and tmux has
 // opened, so a refresh that lands in between still calls the issue ready.
 // Until the store catches up the UI has to carry that knowledge itself, or the
 // action bar goes on offering to start an issue that is already starting.
 func TestStartShowsInProgressBeforeTheStoreAgrees(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.agents = &fakeSpawner{}
 	m.planIssues = []issues.Status{startable(1)}
 
@@ -1655,7 +1421,7 @@ func TestStartShowsInProgressBeforeTheStoreAgrees(t *testing.T) {
 // issue — the collision worktrees exist to prevent.
 func TestStartRefusesASecondAgentOnTheSameIssue(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	agents := &fakeSpawner{}
 	m.agents = agents
 	m.planIssues = []issues.Status{startable(1)}
@@ -1682,7 +1448,7 @@ func TestStartRefusesASecondAgentOnTheSameIssue(t *testing.T) {
 // A stale refresh must not resurrect [S]tart for an issue already starting.
 func TestRefreshDoesNotUndoInFlightState(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.agents = &fakeSpawner{}
 	m.planIssues = []issues.Status{startable(1), startable(2)}
 
@@ -1743,7 +1509,7 @@ func TestBackgroundTickDoesNotRefreshIssuesOnPlanTab(t *testing.T) {
 
 func TestRefreshTickRunsWhileAgentsDoAndStopsAfter(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.agents = &fakeSpawner{}
 	m.planIssues = []issues.Status{startable(1)}
 
@@ -1767,7 +1533,7 @@ func TestRefreshTickRunsWhileAgentsDoAndStopsAfter(t *testing.T) {
 // same act as `pib issue start`.
 func TestStartSendsTheSameRequestAsTheCLI(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	agents := &fakeSpawner{}
 	m.agents = agents
 	m.planIssues = []issues.Status{startable(7)}
@@ -1813,7 +1579,7 @@ func drain(cmd tea.Cmd) {
 // second one, or every start/finish cycle leaves another chain behind.
 func TestASecondAgentJoinsTheExistingPoll(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
-	m.plansView = viewPlanDetail
+	m.screen = screenPlanDetail
 	m.agents = &fakeSpawner{}
 	m.planIssues = []issues.Status{startable(1), startable(2)}
 
@@ -1838,5 +1604,44 @@ func TestASecondAgentJoinsTheExistingPoll(t *testing.T) {
 	}
 	if m.polling {
 		t.Error("polling still set after the poll stopped")
+	}
+}
+
+// fakeSpawner stands in for the runner. Run blocks until released, the way a
+// real spawn blocks for as long as the agent runs.
+type fakeSpawner struct {
+	mu      sync.Mutex
+	reqs    []protocol.Request
+	release chan struct{}
+	err     error
+}
+
+func (f *fakeSpawner) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
+	f.mu.Lock()
+	f.reqs = append(f.reqs, req)
+	release := f.release
+	f.mu.Unlock()
+
+	if release != nil {
+		<-release
+	}
+	if f.err != nil {
+		return protocol.Response{}, f.err
+	}
+	return protocol.Response{Status: "done", Session: "s1"}, nil
+}
+
+func (f *fakeSpawner) seen() []protocol.Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]protocol.Request(nil), f.reqs...)
+}
+
+func startable(number int64) issues.Status {
+	return issues.Status{
+		Issue:      issues.Issue{Number: number, Title: "Issue", Type: "task", State: issues.StateOpen},
+		Ready:      true,
+		Launchable: true,
+		Agent:      "worker",
 	}
 }
