@@ -49,11 +49,13 @@ type plannerLoadedMsg struct {
 	err     error
 }
 
-// agentsCheckedMsg reports whether ~/.pib/agents is already set up, and which
-// of the definitions there no longer match the ones built into this pib.
+// agentsCheckedMsg reports whether ~/.pib/agents is already set up, which
+// of the definitions there no longer match the ones built into this pib, and
+// which defaults are missing from disk entirely.
 type agentsCheckedMsg struct {
 	installed bool
 	outdated  []string
+	missing   []string
 	dir       string
 	err       error
 }
@@ -110,7 +112,8 @@ func checkAgents() tea.Msg {
 	// over: pib loads each definition by name when it needs it, and will
 	// report a real problem then.
 	outdated, _ := agent.Outdated()
-	return agentsCheckedMsg{installed: true, outdated: outdated, dir: dir}
+	missing, _ := agent.Missing()
+	return agentsCheckedMsg{installed: true, outdated: outdated, missing: missing, dir: dir}
 }
 
 func updateAgents(names []string) tea.Cmd {
@@ -252,6 +255,10 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 			m.phase = phaseConfirmAgents
 			return m, nil, true
 		}
+		if len(msg.missing) > 0 {
+			m.outdated = msg.outdated
+			return m, installAgents, true
+		}
 		if len(msg.outdated) > 0 {
 			m.outdated = msg.outdated
 			m.phase = phaseConfirmUpdate
@@ -282,7 +289,12 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		}
 		m.installed = msg.written
 		if len(msg.written) > 0 {
-			m.notice = fmt.Sprintf("installed %d agents in %s", len(msg.written), m.agentsDir)
+			m.notice = fmt.Sprintf("installed %s in %s: %s",
+				countAgents(len(msg.written)), m.agentsDir, strings.Join(msg.written, ", "))
+		}
+		if len(m.outdated) > 0 {
+			m.phase = phaseConfirmUpdate
+			return m, nil, true
 		}
 		m.phase = phaseLoadingPlanner
 		return m, loadPlanner, true

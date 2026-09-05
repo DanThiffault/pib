@@ -390,3 +390,20 @@ func TestInstalledFalseWithoutDirectory(t *testing.T) {
 		t.Error("Installed() = true with no ~/.pib")
 	}
 }
+
+// An empty agents directory is still filled by InstallDefaults.
+func TestInstallDefaultsOnEmptyDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".pib", "agents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	written, err := InstallDefaults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != len(DefaultNames()) {
+		t.Errorf("wrote %d agents, want %d", len(written), len(DefaultNames()))
+	}
+}

@@ -101,6 +101,28 @@ func defaultBody(name string) ([]byte, error) {
 	return defaultAgents.ReadFile(defaultsDir + "/" + name + ".md")
 }
 
+// Missing names the default agents whose files do not exist on disk. It is
+// meant for existing installations that already have an agents directory: a
+// name that is new in the binary shows up here until it is written.
+func Missing() ([]string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return nil, err
+	}
+
+	var missing []string
+	for _, name := range DefaultNames() {
+		_, err := os.Stat(filepath.Join(dir, name+".md"))
+		if os.IsNotExist(err) {
+			missing = append(missing, name)
+		} else if err != nil {
+			return nil, err
+		}
+	}
+
+	return missing, nil
+}
+
 // Outdated names the installed agents whose file no longer matches the
 // definition built into this pib.
 //
