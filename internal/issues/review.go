@@ -23,6 +23,10 @@ const (
 // silent decision to keep going.
 var verdicts = map[string]bool{VerdictApproved: true, VerdictChanges: true, VerdictError: true}
 
+// VerdictKnown reports whether a string is one of the three verdicts the
+// schema recognises.
+func VerdictKnown(v string) bool { return verdicts[v] }
+
 // Review is one pass a code reviewer made over a pull request. Cycles are
 // numbered per pull request, so a replacement pull request on the same issue
 // starts again at one — the cap is per diff, not per issue.
@@ -71,6 +75,40 @@ func (s *Store) OpenReview(issue int64, prURL, run string) (Review, error) {
 	}
 
 	return s.review(id)
+}
+
+// RecordReview settles the newest open review cycle for an issue's current
+// pull request. It is the command-line path: the issue number is what the user
+// gives, and the open cycle is what pib works out.
+func (s *Store) RecordReview(issue int64, verdict string, findings int) (Review, error) {
+	if !verdicts[verdict] {
+		return Review{}, fmt.Errorf("%q is not a review verdict", verdict)
+	}
+	if findings < 0 {
+		findings = 0
+	}
+
+	iss, err := s.Issue(issue)
+	if err != nil {
+		return Review{}, err
+	}
+	if iss.PRURL == "" {
+		return Review{}, fmt.Errorf("issue #%d has no linked pull request", issue)
+	}
+
+	var id string
+	err = s.db.QueryRow(`
+		SELECT id FROM reviews
+		WHERE issue = ? AND pr_url = ? AND verdict IS NULL AND ended_at IS NULL
+		ORDER BY cycle DESC LIMIT 1`, issue, iss.PRURL).Scan(&id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Review{}, fmt.Errorf("issue #%d has no open review cycle", issue)
+		}
+		return Review{}, err
+	}
+
+	return s.CloseReview(id, verdict, findings)
 }
 
 // CloseReview settles a cycle with the verdict its reviewer reached and how

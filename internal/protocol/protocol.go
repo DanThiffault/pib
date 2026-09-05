@@ -38,8 +38,10 @@ const (
 	OpIssueLinkPR  Op = "issue.link_pr"
 	OpIssueClose   Op = "issue.close"
 	OpIssueReopen  Op = "issue.reopen"
-	OpIssueReady   Op = "issue.ready"
-	OpIssueReindex Op = "issue.reindex"
+	OpIssueReady    Op = "issue.ready"
+	OpIssueReindex  Op = "issue.reindex"
+
+	OpReviewRecord Op = "review.record"
 )
 
 // StatusOK is the status of a successful issue or plan operation. Agent

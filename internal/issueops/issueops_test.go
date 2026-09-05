@@ -301,6 +301,105 @@ func TestReindex(t *testing.T) {
 	}
 }
 
+func TestReviewRecordSettlesACycle(t *testing.T) {
+	h := handler(t)
+	run(t, h, protocol.OpPlanApply, document())
+
+	list := into[StatusList](t, run(t, h, protocol.OpIssueList, ListParams{Type: "task"}))
+	if len(list.Issues) == 0 {
+		t.Fatal("no tasks")
+	}
+	number := list.Issues[0].Number
+
+	// Link a pull request and open a review cycle.
+	run(t, h, protocol.OpIssueLinkPR, LinkPRParams{Number: number, URL: "https://github.com/o/r/pull/1"})
+	if _, err := h.Store.OpenReview(number, "https://github.com/o/r/pull/1", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Settle it.
+	resp, err := h.Run(context.Background(), protocol.Request{
+		Op: protocol.OpReviewRecord,
+		Payload: mustJSON(t, ReviewRecordParams{Number: number, Verdict: issues.VerdictChanges, Findings: 3}),
+	})
+	if err != nil {
+		t.Fatalf("review.record: %v", err)
+	}
+	var result issues.Review
+	if err := json.Unmarshal(resp.Payload, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Verdict != issues.VerdictChanges || result.Findings != 3 {
+		t.Errorf("result = %+v", result)
+	}
+
+	// The cycle is no longer running.
+	status, err := h.Store.Status(number, issues.StatusOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ReviewRunning() {
+		t.Error("review still running after record")
+	}
+}
+
+func TestReviewRecordNeedsAPullRequestAndOpenCycle(t *testing.T) {
+	h := handler(t)
+	run(t, h, protocol.OpPlanApply, document())
+
+	list := into[StatusList](t, run(t, h, protocol.OpIssueList, ListParams{Type: "task"}))
+	number := list.Issues[0].Number
+
+	// No PR linked yet.
+	_, err := h.Run(context.Background(), protocol.Request{
+		Op: protocol.OpReviewRecord,
+		Payload: mustJSON(t, ReviewRecordParams{Number: number, Verdict: issues.VerdictApproved, Findings: 0}),
+	})
+	if err == nil || !strings.Contains(err.Error(), "no linked pull request") {
+		t.Errorf("record without PR: %v", err)
+	}
+
+	// PR linked, but no cycle opened.
+	run(t, h, protocol.OpIssueLinkPR, LinkPRParams{Number: number, URL: "https://github.com/o/r/pull/1"})
+	_, err = h.Run(context.Background(), protocol.Request{
+		Op: protocol.OpReviewRecord,
+		Payload: mustJSON(t, ReviewRecordParams{Number: number, Verdict: issues.VerdictApproved, Findings: 0}),
+	})
+	if err == nil || !strings.Contains(err.Error(), "no open review cycle") {
+		t.Errorf("record without open cycle: %v", err)
+	}
+}
+
+func TestReviewRecordRejectsAnUnknownVerdict(t *testing.T) {
+	h := handler(t)
+	run(t, h, protocol.OpPlanApply, document())
+
+	list := into[StatusList](t, run(t, h, protocol.OpIssueList, ListParams{Type: "task"}))
+	number := list.Issues[0].Number
+
+	run(t, h, protocol.OpIssueLinkPR, LinkPRParams{Number: number, URL: "https://github.com/o/r/pull/1"})
+	if _, err := h.Store.OpenReview(number, "https://github.com/o/r/pull/1", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := h.Run(context.Background(), protocol.Request{
+		Op: protocol.OpReviewRecord,
+		Payload: mustJSON(t, ReviewRecordParams{Number: number, Verdict: "looks-fine", Findings: 0}),
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a review verdict") {
+		t.Errorf("unknown verdict: %v", err)
+	}
+}
+
+func mustJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func TestBadRequests(t *testing.T) {
 	h := handler(t)
 
