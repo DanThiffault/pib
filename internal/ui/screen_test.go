@@ -592,7 +592,7 @@ func TestIssueListRowsStayWithinThePane(t *testing.T) {
 	}
 	m.issueCursor = len(titles) - 1
 
-	w, _ := paneWidths(m.width)
+	w := m.width
 	h := m.contentHeight()
 	lines := strings.Split(m.issueListPane(w, h), "\n")
 
@@ -616,16 +616,16 @@ func TestIssueListRowsStayWithinThePane(t *testing.T) {
 	}
 }
 
-func TestNarrowTerminalShowsSinglePane(t *testing.T) {
+func TestShortTerminalShowsSinglePane(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
-	m.width = 60
-	m.height = 20
+	m.width = 100
+	m.height = 19
 
 	view := m.View()
-	if strings.Contains(view, "│") {
-		t.Errorf("narrow plan list should not contain pane divider:\n%s", view)
+	if strings.Contains(view, "──") {
+		t.Errorf("short plan list should not contain pane divider:\n%s", view)
 	}
 
 	m.screen = screenPlanDetail
@@ -634,12 +634,12 @@ func TestNarrowTerminalShowsSinglePane(t *testing.T) {
 	}
 	m.planIssuesLoadedFor = "plan-a"
 	view = m.View()
-	if strings.Contains(view, "│") {
-		t.Errorf("narrow detail view should not contain pane divider:\n%s", view)
+	if strings.Contains(view, "──") {
+		t.Errorf("short detail view should not contain pane divider:\n%s", view)
 	}
 }
 
-func TestWideTerminalShowsTwoPanes(t *testing.T) {
+func TestTallTerminalShowsTwoPanes(t *testing.T) {
 	m := plansModel(t, []issues.Plan{
 		{Slug: "plan-a", Title: "Plan A"},
 	})
@@ -647,8 +647,8 @@ func TestWideTerminalShowsTwoPanes(t *testing.T) {
 	m.height = 20
 
 	view := m.View()
-	if !strings.Contains(view, "│") {
-		t.Errorf("wide plan list should contain pane divider:\n%s", view)
+	if !strings.Contains(view, "──") {
+		t.Errorf("tall plan list should contain pane divider:\n%s", view)
 	}
 }
 

@@ -341,8 +341,8 @@ func spawnAgentCmd(r spawner, issue issues.Status) tea.Cmd {
 	}
 }
 
-func (m Model) isNarrow() bool {
-	return m.width < 80
+func (m Model) isShort() bool {
+	return m.height < 20
 }
 
 // issueActionKey dispatches a contextual action key for the selected issue.
@@ -394,17 +394,42 @@ func (m Model) renderCentered(content string) string {
 	return lipgloss.NewStyle().Height(h).Render(content)
 }
 
+func titledRule(w int, title string) string {
+	if w < 1 {
+		w = 1
+	}
+	prefix := "── "
+	minSuffix := 2
+	avail := w - lipgloss.Width(prefix) - minSuffix - 1 // space after title
+	if avail < 1 {
+		return dividerStyle.Render(strings.Repeat("─", w))
+	}
+	label := truncate(title, avail)
+	rendered := prefix + label + " "
+	remaining := w - lipgloss.Width(rendered)
+	if remaining < 0 {
+		remaining = 0
+	}
+	return dividerStyle.Render(rendered + strings.Repeat("─", remaining))
+}
+
 func (m Model) planListTwoPaneView() string {
 	h := m.contentHeight()
-	if m.isNarrow() {
+	if m.isShort() {
 		return m.planListPane(m.width, h)
 	}
 
-	leftW, rightW := paneWidths(m.width)
-	leftPane := m.planListPane(leftW, h)
-	rightPane := m.planDAGPane(rightW, h)
+	topH, bottomH := paneHeights(h)
+	topPane := m.planListPane(m.width, topH)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane, dividerStyle.Render("│"), rightPane)
+	title := m.currentPlanSlug()
+	if title == "" {
+		title = "plan"
+	}
+	rule := titledRule(m.width, title)
+	bottomPane := m.planDAGPane(m.width, bottomH)
+
+	return lipgloss.JoinVertical(lipgloss.Left, topPane, rule, bottomPane)
 }
 
 // listPane renders the left pane of a two-pane view: a themed header above a
@@ -696,22 +721,30 @@ func (m Model) planDetailTwoPaneView() string {
 	}
 
 	h := m.contentHeight()
-	paneH := h - 1
+	paneH := h - 1 // action bar
 	if paneH < 1 {
 		paneH = 1
 	}
-	if m.isNarrow() {
+	if m.isShort() {
 		actionBar := m.actionBarView(m.width)
 		return lipgloss.JoinVertical(lipgloss.Left, m.issueListPane(m.width, paneH), actionBar)
 	}
 
-	leftW, rightW := paneWidths(m.width)
-	leftPane := m.issueListPane(leftW, paneH)
-	rightPane := m.issuePreviewPane(rightW, paneH)
+	topH, bottomH := paneHeights(paneH)
+	topPane := m.issueListPane(m.width, topH)
+
+	title := "issue"
+	if m.issueCursor < len(m.planIssues) {
+		title = fmt.Sprintf("#%d", m.planIssues[m.issueCursor].Number)
+	}
+	rule := titledRule(m.width, title)
+	bottomPane := m.issuePreviewPane(m.width, bottomH)
 	actionBar := m.actionBarView(m.width)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		lipgloss.JoinHorizontal(lipgloss.Top, leftPane, dividerStyle.Render("│"), rightPane),
+		topPane,
+		rule,
+		bottomPane,
 		actionBar,
 	)
 }
