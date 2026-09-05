@@ -1,7 +1,9 @@
 # ADR-001: Tabbed TUI Architecture for Plan Browser
 
 ## Status
-Accepted
+Superseded by [ADR-003](003-horizontal-tui-layout.md), which replaces the tab bar with a
+status line and stacks the panes horizontally. The async loading pattern in section 2 and
+the keybinding conventions in section 4 still hold.
 
 ## Context
 

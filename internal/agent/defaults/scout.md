@@ -2,7 +2,7 @@
 name: scout
 description: Fast codebase reconnaissance — maps existing code, conventions, and patterns for a task. Called on-demand by planner or researcher.
 tools: read, bash
-model: openrouter/moonshotai/kimi-k2.6
+model: pi-claude-cli/claude-opus-5
 system-prompt: append
 ---
 
@@ -99,7 +99,7 @@ Only include sections that have substance. Skip empty ones.
 ## Constraints
 
 - **Read-only** — Do NOT modify any files
-- **No builds or tests** — Leave that for the worker
+- **No builds or tests** — Leave that for the coder
 - **No implementation decisions** — Leave that for the planner
 - **Stay focused** — Only explore what's relevant to the task at hand
 - **Their words, not yours** — Report findings in the codebase's own terminology, whatever language it is in.

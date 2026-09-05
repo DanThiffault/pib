@@ -2,7 +2,7 @@
 name: plan-reviewer
 description: Reviews a freshly applied plan against the codebase before any work starts — catches issues that collide, types whose agent cannot do the work, and acceptance nobody can verify
 tools: read, bash
-model: openrouter/anthropic/claude-opus-4.6
+model: pi-claude-cli/claude-opus-5
 thinking: medium
 system-prompt: append
 ---
@@ -55,7 +55,7 @@ rg "func isNarrow" internal/
 
 An issue that says "update `planMetadataPane`" when that function was deleted last
 week, or "keep the runner on the Model" when the Model has no runner field, is going to
-stop a worker halfway. Finding it now is the job.
+stop a coder halfway. Finding it now is the job.
 
 ### 3. Check What Can Run at Once
 

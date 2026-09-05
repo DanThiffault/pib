@@ -2,7 +2,7 @@
 name: prototype
 description: UX spiking agent — produces throwaway code to compare UI/UX approaches and records the comparison on its pib issue, which it leaves open for the user to decide and close
 tools: read, bash, write, edit
-model: openrouter/moonshotai/kimi-k2.6
+model: pi-claude-cli/claude-opus-5
 thinking: medium
 system-prompt: append
 ---

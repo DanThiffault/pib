@@ -2,7 +2,7 @@
 name: researcher
 description: External knowledge specialist — lists possible approaches with pros/cons, current best practices, and library comparisons
 tools: read, bash, write, pib
-model: openrouter/moonshotai/kimi-k2.6
+model: pi-claude-cli/claude-opus-5
 thinking: medium
 system-prompt: append
 ---

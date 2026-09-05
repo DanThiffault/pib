@@ -27,7 +27,7 @@ func handler(t *testing.T) Handler {
 	path := filepath.Join(dir, config.FileName)
 	// Review off: these tests are about the operations, not the review gate,
 	// and an extra issue blocking every root would rewrite every expectation.
-	body := "[types]\nfeature = \"\"\ntask = \"worker\"\nresearch = \"researcher\"\n" +
+	body := "[types]\nfeature = \"\"\ntask = \"coder\"\nresearch = \"researcher\"\n" +
 		"[plan]\nreview = false\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -228,8 +228,8 @@ func TestListAndReady(t *testing.T) {
 	for _, status := range ready.Issues {
 		byType[status.Type] = status
 	}
-	if got := byType["task"]; got.Agent != "worker" || !got.Launchable {
-		t.Errorf("task = %+v, want a launchable worker", got)
+	if got := byType["task"]; got.Agent != "coder" || !got.Launchable {
+		t.Errorf("task = %+v, want a launchable coder", got)
 	}
 	if got := byType["feature"]; got.Agent != "" || got.Launchable {
 		t.Errorf("feature = %+v, want a container nothing runs", got)
