@@ -76,8 +76,8 @@ func TestOverTheSocket(t *testing.T) {
 		t.Fatalf("ready = %d issues, want 2", len(list.Issues))
 	}
 	for _, status := range list.Issues {
-		if status.Type == "task" && status.Agent != "worker" {
-			t.Errorf("#%d would be run by %q, want the worker", status.Number, status.Agent)
+		if status.Type == "task" && status.Agent != "coder" {
+			t.Errorf("#%d would be run by %q, want the coder", status.Number, status.Agent)
 		}
 	}
 

@@ -57,7 +57,7 @@ type pending struct {
 // issues whose pull request has merged.
 //
 // This is how a task issue closes now that GitHub's "Closes #N" automation
-// is gone: the worker links its pull request, a human merges it, and the
+// is gone: the coder links its pull request, a human merges it, and the
 // next reconciliation pass closes the issue and frees whatever it blocked.
 // Only a merge closes a task, exactly as before.
 //

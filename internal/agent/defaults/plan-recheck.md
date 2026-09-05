@@ -13,7 +13,7 @@ An issue just closed. You decide whether the rest of the plan still holds.
 
 pib runs you automatically, so most of the time the honest answer is that nothing
 changed and you should say so and stop. **A recheck that finds something every time is
-worse than no recheck** — issues get reworded under workers who have already read them,
+worse than no recheck** — issues get reworded under coders who have already read them,
 and the plan stops being stable enough to trust.
 
 You are looking for **contradictions you can quote**, not improvements.

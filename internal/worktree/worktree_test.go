@@ -60,14 +60,14 @@ func TestBranchesInOneWorktreeDoNotMoveAnother(t *testing.T) {
 		t.Fatal("two issues were given the same checkout")
 	}
 
-	git(t, first, "checkout", "-b", "worker/11-one")
-	git(t, second, "checkout", "-b", "worker/12-two")
+	git(t, first, "checkout", "-b", "coder/11-one")
+	git(t, second, "checkout", "-b", "coder/12-two")
 
-	if got := git(t, first, "rev-parse", "--abbrev-ref", "HEAD"); got != "worker/11-one" {
-		t.Errorf("#11's checkout is on %q, want worker/11-one", got)
+	if got := git(t, first, "rev-parse", "--abbrev-ref", "HEAD"); got != "coder/11-one" {
+		t.Errorf("#11's checkout is on %q, want coder/11-one", got)
 	}
-	if got := git(t, second, "rev-parse", "--abbrev-ref", "HEAD"); got != "worker/12-two" {
-		t.Errorf("#12's checkout is on %q, want worker/12-two", got)
+	if got := git(t, second, "rev-parse", "--abbrev-ref", "HEAD"); got != "coder/12-two" {
+		t.Errorf("#12's checkout is on %q, want coder/12-two", got)
 	}
 	// And the repository the user is sitting in was not dragged along.
 	if got := git(t, m.GitRoot, "rev-parse", "--abbrev-ref", "HEAD"); got != "main" {
@@ -84,7 +84,7 @@ func TestSameIssueComesBackToTheSameCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	git(t, first, "checkout", "-b", "worker/11-one")
+	git(t, first, "checkout", "-b", "coder/11-one")
 	if err := os.WriteFile(filepath.Join(first, "wip.txt"), []byte("half done"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestSameIssueComesBackToTheSameCheckout(t *testing.T) {
 	if again != first {
 		t.Fatalf("followup got %s, want the earlier %s", again, first)
 	}
-	if got := git(t, again, "rev-parse", "--abbrev-ref", "HEAD"); got != "worker/11-one" {
+	if got := git(t, again, "rev-parse", "--abbrev-ref", "HEAD"); got != "coder/11-one" {
 		t.Errorf("followup landed on %q, not the branch its run created", got)
 	}
 	if _, err := os.Stat(filepath.Join(again, "wip.txt")); err != nil {
@@ -112,7 +112,7 @@ func TestRemoveKeepsTheBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	git(t, dir, "checkout", "-b", "worker/11-one")
+	git(t, dir, "checkout", "-b", "coder/11-one")
 	git(t, dir, "commit", "--allow-empty", "-m", "work")
 
 	if err := m.Remove(11); err != nil {
@@ -121,7 +121,7 @@ func TestRemoveKeepsTheBranch(t *testing.T) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("the checkout is still there: %v", err)
 	}
-	if branches := git(t, m.GitRoot, "branch", "--list", "worker/11-one"); branches == "" {
+	if branches := git(t, m.GitRoot, "branch", "--list", "coder/11-one"); branches == "" {
 		t.Error("removing the checkout deleted the branch with the work on it")
 	}
 

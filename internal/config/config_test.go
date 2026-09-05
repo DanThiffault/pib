@@ -27,8 +27,8 @@ func TestLoadPathsFallsBackToDefaults(t *testing.T) {
 	}
 
 	agent, ok := cfg.AgentFor("task")
-	if !ok || agent != "worker" {
-		t.Errorf("task maps to %q (ok=%v), want worker", agent, ok)
+	if !ok || agent != "coder" {
+		t.Errorf("task maps to %q (ok=%v), want coder", agent, ok)
 	}
 	if got, want := cfg.Types(), []string{"feature", "plan-reviewer", "prototype", "research", "reviewer", "task"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Types() = %v, want %v", got, want)
@@ -84,8 +84,8 @@ func TestEmptyWorkspaceTableOverridesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPaths: %v", err)
 	}
-	if agent, ok := cfg.AgentFor("task"); !ok || agent != "worker" {
-		t.Errorf("task maps to %q (ok=%v), want worker", agent, ok)
+	if agent, ok := cfg.AgentFor("task"); !ok || agent != "coder" {
+		t.Errorf("task maps to %q (ok=%v), want coder", agent, ok)
 	}
 }
 
@@ -120,8 +120,8 @@ func TestUnknownKeysAreIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPaths: %v", err)
 	}
-	if agent, _ := cfg.AgentFor("task"); agent != "worker" {
-		t.Errorf("task maps to %q, want worker", agent)
+	if agent, _ := cfg.AgentFor("task"); agent != "coder" {
+		t.Errorf("task maps to %q, want coder", agent)
 	}
 }
 
@@ -211,8 +211,8 @@ func TestLoadUsesHomeAndWorkspace(t *testing.T) {
 	if agent, _ := cfg.AgentFor("reviewer"); agent != "picky-reviewer" {
 		t.Errorf("reviewer maps to %q, want picky-reviewer", agent)
 	}
-	if agent, _ := cfg.AgentFor("task"); agent != "worker" {
-		t.Errorf("task maps to %q, want the seeded worker", agent)
+	if agent, _ := cfg.AgentFor("task"); agent != "coder" {
+		t.Errorf("task maps to %q, want the seeded coder", agent)
 	}
 }
 
@@ -251,7 +251,7 @@ func TestPlanReviewDefaultsOnAndCanBeTurnedOff(t *testing.T) {
 	if cfg.PlanReview() {
 		t.Error("PlanReview() = true after the workspace turned it off")
 	}
-	if agent, ok := cfg.AgentFor("task"); !ok || agent != "worker" {
+	if agent, ok := cfg.AgentFor("task"); !ok || agent != "coder" {
 		t.Errorf("task maps to %q (ok=%v); the override should not have dropped types", agent, ok)
 	}
 }

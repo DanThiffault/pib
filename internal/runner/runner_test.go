@@ -228,10 +228,10 @@ func scoutRunner(t *testing.T, dir string) Runner {
 		SocketPath:    "/x/pib.sock",
 		Load: func(string) (agent.Definition, error) {
 			return agent.Definition{
-				Name:  "worker",
+				Name:  "coder",
 				Tools: []string{"read", "bash"},
 				Model: "m",
-				Body:  "You are a worker.",
+				Body:  "You are a coder.",
 			}, nil
 		},
 	}
@@ -249,7 +249,7 @@ func TestAgentsRunInTheirIssuesOwnCheckout(t *testing.T) {
 
 	for _, issue := range []int64{11, 12} {
 		if _, err := r.Run(context.Background(), protocol.Request{
-			Op: protocol.OpSpawn, Agent: "worker", Task: "work", Issue: issue,
+			Op: protocol.OpSpawn, Agent: "coder", Task: "work", Issue: issue,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -275,7 +275,7 @@ func TestAgentWithNoIssueRunsInTheRepository(t *testing.T) {
 	r.Workspace = workspaces{dirs: map[int64]string{0: dir}}
 
 	if _, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "look around",
+		Op: protocol.OpSpawn, Agent: "coder", Task: "look around",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestWithoutIsolationEveryAgentRunsInTheRepository(t *testing.T) {
 
 	r := scoutRunner(t, dir)
 	if _, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "work", Issue: 11,
+		Op: protocol.OpSpawn, Agent: "coder", Task: "work", Issue: 11,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestNoCheckoutMeansNoAgent(t *testing.T) {
 	r.Workspace = workspaces{err: errors.New("disk full")}
 
 	if _, err := r.Run(context.Background(), protocol.Request{
-		Op: protocol.OpSpawn, Agent: "worker", Task: "work", Issue: 11,
+		Op: protocol.OpSpawn, Agent: "coder", Task: "work", Issue: 11,
 	}); err == nil {
 		t.Error("spawned an agent with no checkout of its own")
 	}

@@ -11,7 +11,7 @@ import (
 var agents = StatusOptions{AgentFor: func(issueType string) (string, bool) {
 	switch issueType {
 	case "task":
-		return "worker", true
+		return "coder", true
 	case "research":
 		return "researcher", true
 	case "feature":
@@ -179,7 +179,7 @@ func TestARunningAgentTakesAnIssueOutOfTheReadySet(t *testing.T) {
 	store := fixture(t)
 
 	if _, err := store.db.Exec(
-		`INSERT INTO runs (id, issue, agent, started_at) VALUES ('run-1', 1, 'worker', ?)`, stamp); err != nil {
+		`INSERT INTO runs (id, issue, agent, started_at) VALUES ('run-1', 1, 'coder', ?)`, stamp); err != nil {
 		t.Fatal(err)
 	}
 
@@ -262,8 +262,8 @@ func TestLaunchableNeedsAMappedType(t *testing.T) {
 	for _, status := range list {
 		switch status.Number {
 		case 1:
-			if !status.Launchable || status.Agent != "worker" {
-				t.Errorf("#1: launchable=%v agent=%q, want the worker", status.Launchable, status.Agent)
+			if !status.Launchable || status.Agent != "coder" {
+				t.Errorf("#1: launchable=%v agent=%q, want the coder", status.Launchable, status.Agent)
 			}
 		case 7:
 			if status.Launchable || status.Agent != "" {
@@ -288,8 +288,8 @@ func TestAgentExplainsWhyAnIssueCannotRun(t *testing.T) {
 	store := fixture(t)
 
 	agent, err := store.Agent(1, agents)
-	if err != nil || agent != "worker" {
-		t.Errorf("Agent(#1) = %q, %v; want the worker", agent, err)
+	if err != nil || agent != "coder" {
+		t.Errorf("Agent(#1) = %q, %v; want the coder", agent, err)
 	}
 
 	if _, err := store.Agent(4, agents); err == nil || !strings.Contains(err.Error(), "blocked by #2 and #3") {
@@ -307,7 +307,7 @@ func TestAgentExplainsWhyAnIssueCannotRun(t *testing.T) {
 	}
 
 	if _, err := store.db.Exec(
-		`INSERT INTO runs (id, issue, agent, started_at) VALUES ('run-1', 2, 'worker', ?)`, stamp); err != nil {
+		`INSERT INTO runs (id, issue, agent, started_at) VALUES ('run-1', 2, 'coder', ?)`, stamp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Agent(2, agents); err == nil || !strings.Contains(err.Error(), "already working") {

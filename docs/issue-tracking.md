@@ -308,7 +308,7 @@ existing issue as `"#12"`. pib allocates real numbers on apply.
 
 **Re-apply is an additive merge.** Matching on `(plan, local id)`: known ids update,
 unknown ids are created, and issues absent from the document are left completely alone.
-Closed issues are never reopened. Safe to re-run while workers are in flight.
+Closed issues are never reopened. Safe to re-run while coders are in flight.
 
 **Validation warns, it does not block** — the whole document is written in one
 transaction, and warnings come back in the response so the planner can see them:
@@ -327,7 +327,7 @@ without changing the shape of anything.
 
 ## Closure and PR reconciliation
 
-1. The worker runs `pib issue link-pr <n> <url>`. `pr_state` becomes `open` and the issue
+1. The coder runs `pib issue link-pr <n> <url>`. `pr_state` becomes `open` and the issue
    is now `awaiting_review` — derived, so it drops out of the ready set immediately.
 2. `issue.list`, `issue.ready` and `plan.view` reconcile first, shelling out to
    `gh pr view <url> --json state`. Results are cached with `pr_checked_at`; a check
@@ -353,7 +353,7 @@ you want to harden it.
 `protocol.Request` gains an optional issue number. When the server spawns an agent for an
 issue it inserts a run row before the window opens and updates it with the outcome from
 `session.Collect` when the agent stops. Runs are never deleted, so an issue carries the
-history of every attempt — the failed first worker as well as the one that opened the PR.
+history of every attempt — the failed first coder as well as the one that opened the PR.
 
 This is what makes `in_progress` derivable rather than a label somebody forgot to clear,
 and it gives the TUI the tmux window to reattach to.
@@ -368,7 +368,7 @@ install prompt that already exists:
 ```toml
 [types]
 feature   = ""            # container; never launches an agent
-task      = "worker"
+task      = "coder"
 research  = "researcher"
 prototype = "prototype"
 reviewer  = "reviewer"
@@ -429,7 +429,7 @@ best effort by contrast: the agent's answer matters more, and orphan cleanup cat
 
 ## Deliberately not here
 
-- **Agent rewrites.** The planner, worker and reviewer keep calling `gh` until a later pass.
+- **Agent rewrites.** The planner, coder and reviewer keep calling `gh` until a later pass.
 - **The TUI.** Browsing a plan and launching ready agents singly or in parallel. Every
   query and command it needs is in: `Statuses` and `Ready` return issues annotated with
   the agent that would run them, `Status.Run` gives the tmux window to reattach to, and
@@ -445,7 +445,7 @@ best effort by contrast: the agent's answer matters more, and orphan cleanup cat
 ## Open notes
 
 **Acceptance criteria are frontmatter, not checkboxes.** They are therefore authored data
-rather than something a worker ticks off as it goes. Workers already report criteria with
+rather than something a coder ticks off as it goes. Coders already report criteria with
 evidence in the PR body, so nothing is lost today — but if you later want per-criterion
 progress on the issue itself, that is a schema change, not a formatting one.
 
