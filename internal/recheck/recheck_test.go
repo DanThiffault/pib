@@ -102,30 +102,76 @@ func TestBriefingNamesTheTypeAndPlan(t *testing.T) {
 	}
 }
 
-// Neither review is worth reacting to: a code reviewer closing ends the plan,
-// and a plan reviewer closing means the plan has not started, so nothing has
-// been produced that could contradict what is queued.
+// A plan reviewer closing is not worth reacting to: the opening pass means
+// the plan has not started, so nothing has been produced that could
+// contradict what is queued; the closing pass is what we spawn ourselves.
 func TestReviewClosesLaunchNothing(t *testing.T) {
-	for _, kind := range []string{"reviewer", ReviewerName} {
-		s := &spy{}
-		h := &Hook{Spawn: s, Issues: lister{open: 2}}
+	s := &spy{}
+	h := &Hook{Spawn: s, Issues: lister{open: 2}}
 
-		h.IssueClosed(closed(7, kind))
-		time.Sleep(20 * time.Millisecond)
-		if got := s.count(); got != 0 {
-			t.Errorf("launched %d rechecks after a %s closed, want 0", got, kind)
-		}
+	h.IssueClosed(closed(7, ReviewerName))
+	time.Sleep(20 * time.Millisecond)
+	if got := s.count(); got != 0 {
+		t.Errorf("launched %d rechecks after a %s closed, want 0", got, ReviewerName)
 	}
 }
 
 func TestNothingOpenLaunchesNothing(t *testing.T) {
+	// With no closing-pass agent configured, a close that leaves nothing
+	// open spawns nothing.
 	s := &spy{}
 	h := &Hook{Spawn: s, Issues: lister{open: 0}}
 
 	h.IssueClosed(closed(4, "task"))
 	time.Sleep(20 * time.Millisecond)
 	if got := s.count(); got != 0 {
-		t.Errorf("launched %d rechecks with nothing left open, want 0", got)
+		t.Errorf("launched %d with nothing open and no reviewer, want 0", got)
+	}
+}
+
+func TestClosingPassSpawnsPlanReviewer(t *testing.T) {
+	s := &spy{}
+	h := &Hook{Spawn: s, Issues: lister{open: 0}, ReviewAgent: ReviewerName}
+
+	h.IssueClosed(closed(4, "task"))
+	if !waitFor(t, 1, s) {
+		t.Fatal("no closing review launched")
+	}
+
+	req := s.requests[0]
+	if req.Agent != ReviewerName {
+		t.Errorf("agent = %q, want %q", req.Agent, ReviewerName)
+	}
+	if req.Issue != 0 {
+		t.Errorf("issue = %d, want 0 — a closing review does not claim an issue", req.Issue)
+	}
+	if !strings.Contains(req.Task, "closing pass") {
+		t.Errorf("the briefing does not name the closing pass: %q", req.Task)
+	}
+	if !strings.Contains(req.Task, "orders") {
+		t.Errorf("the briefing does not name the plan: %q", req.Task)
+	}
+	if req.Op != protocol.OpSpawn {
+		t.Errorf("op = %q, want spawn", req.Op)
+	}
+}
+
+// The closing pass happens at most once per plan.
+func TestClosingPassRunsOncePerPlan(t *testing.T) {
+	s := &spy{}
+	h := &Hook{Spawn: s, Issues: lister{open: 0}, ReviewAgent: ReviewerName}
+
+	h.IssueClosed(closed(4, "task"))
+	if !waitFor(t, 1, s) {
+		t.Fatal("first closing review never started")
+	}
+
+	// Another close while the plan still has nothing open should not
+	// start a second closing review.
+	h.IssueClosed(closed(5, "task"))
+	time.Sleep(20 * time.Millisecond)
+	if got := s.count(); got != 1 {
+		t.Errorf("launched %d closing reviews, want 1", got)
 	}
 }
 
