@@ -9,12 +9,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"pib/internal/config"
 	"pib/internal/issueops"
 	"pib/internal/issues"
 	"pib/internal/protocol"
 	"pib/internal/recheck"
+	"pib/internal/runner"
 	"pib/internal/server"
 )
 
@@ -33,17 +35,34 @@ type harness struct {
 type fakeAgents struct {
 	// mu guards requests: `pib plan start` spawns every ready issue at once,
 	// so several of these land in parallel.
-	mu       sync.Mutex
-	requests []protocol.Request
-	resp     protocol.Response
-	err      error
-	store    *issues.Store
+	mu        sync.Mutex
+	requests  []protocol.Request
+	active    int
+	maxActive int
+	block     chan struct{}
+	resp      protocol.Response
+	err       error
+	store     *issues.Store
 }
 
 func (f *fakeAgents) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
 	f.mu.Lock()
+	f.active++
+	if f.active > f.maxActive {
+		f.maxActive = f.active
+	}
 	f.requests = append(f.requests, req)
+	block := f.block
 	f.mu.Unlock()
+
+	if block != nil {
+		<-block
+	}
+
+	f.mu.Lock()
+	f.active--
+	f.mu.Unlock()
+
 	if f.err != nil {
 		return protocol.Response{}, f.err
 	}
@@ -927,5 +946,67 @@ func TestPlanStartBlocksWithWaitFlag(t *testing.T) {
 	}
 	if !strings.Contains(out, "implemented it") {
 		t.Errorf("output does not contain the agent result: %q", out)
+	}
+}
+
+func TestPlanStartCapsConcurrency(t *testing.T) {
+	h := setup(t)
+
+	document := `{
+	  "plan": { "slug": "sixpack", "title": "Six tasks" },
+	  "issues": [
+	    { "id": "a", "type": "task", "title": "Task A" },
+	    { "id": "b", "type": "task", "title": "Task B" },
+	    { "id": "c", "type": "task", "title": "Task C" },
+	    { "id": "d", "type": "task", "title": "Task D" },
+	    { "id": "e", "type": "task", "title": "Task E" },
+	    { "id": "f", "type": "task", "title": "Task F" }
+	  ]
+	}`
+	path := filepath.Join(h.dir, "sixpack.json")
+	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.ok(t, "plan", "apply", path)
+
+	h.agents.block = make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.run(t, "plan", "start", "--wait", "sixpack")
+	}()
+
+	// Wait for at least some agents to be active.
+	for {
+		h.agents.mu.Lock()
+		active := h.agents.active
+		h.agents.mu.Unlock()
+		if active > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// At no point should more than the limit be active concurrently.
+	h.agents.mu.Lock()
+	maxActive := h.agents.maxActive
+	h.agents.mu.Unlock()
+	if maxActive > runner.MaxConcurrentAgents {
+		t.Errorf("max concurrent agents = %d, want at most %d", maxActive, runner.MaxConcurrentAgents)
+	}
+
+	// Release all blocked agents.
+	for i := 0; i < 6; i++ {
+		h.agents.block <- struct{}{}
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("plan start did not finish")
+	}
+
+	if len(h.agents.seen()) != 6 {
+		t.Errorf("started %d agents, want 6", len(h.agents.seen()))
 	}
 }
