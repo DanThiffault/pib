@@ -128,6 +128,10 @@ func TestReconcileLeavesAnOpenPullRequestAlone(t *testing.T) {
 	if len(result.Closed) != 0 || len(result.Checked) != 1 {
 		t.Errorf("result = %+v, want one check and no closures", result)
 	}
+	wantOpen := []OpenPR{{Number: issue.Number, URL: "https://github.com/o/r/pull/1"}}
+	if !reflect.DeepEqual(result.Open, wantOpen) {
+		t.Errorf("open = %v, want %v", result.Open, wantOpen)
+	}
 
 	status, err := store.Status(issue.Number, agents)
 	if err != nil {

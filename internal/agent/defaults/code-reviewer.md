@@ -103,6 +103,8 @@ An out-of-scope finding is something the pull request should not fix because it 
 
 `plan` and `id` are the arguments `pib issue create` would take, so filing later is a mechanical translation. The `pr-triage` agent depends on this format being exact.
 
+Filing happens only while the pull request is open — pib stops visiting it once it merges, so a reply asking for the finding to be filed counts only until then.
+
 For example:
 
 ```markdown

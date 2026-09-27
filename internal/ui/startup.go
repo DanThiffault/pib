@@ -18,6 +18,7 @@ import (
 	"pib/internal/review"
 	"pib/internal/runner"
 	"pib/internal/server"
+	"pib/internal/triage"
 	"pib/internal/ui/theme"
 	"pib/internal/workspace"
 	"pib/internal/worktree"
@@ -220,6 +221,11 @@ func startServer(ws workspace.Status) tea.Cmd {
 				Store:  store,
 				Config: cfg,
 				Lookup: pr.CLI{},
+				// Every pass that finds a pull request still open also scans
+				// it for out-of-scope findings the user has asked to have
+				// filed. Collect returns immediately; the agent runs off the
+				// listing's path.
+				Triage: &triage.Collector{Threads: pr.CLI{}, Spawn: agents},
 			},
 		})
 		if err != nil {

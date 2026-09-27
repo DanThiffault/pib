@@ -26,6 +26,16 @@ type Handler struct {
 	// Lookup settles linked pull requests against GitHub. A nil Lookup
 	// leaves automatic closure switched off; everything else still works.
 	Lookup issues.PRLookup
+	// Triage scans the pull requests a pass found still open for
+	// out-of-scope findings to file. It must not block — reconcile calls it
+	// while a client is waiting on a listing. Optional.
+	Triage Triager
+}
+
+// Triager scans open linked pull requests for out-of-scope findings the
+// user has asked to have filed. internal/triage implements it.
+type Triager interface {
+	Collect(prs []issues.OpenPR)
 }
 
 // Parameters for the operations that take them. The payload of plan.apply is
@@ -445,6 +455,9 @@ func (h Handler) reconcile(ctx context.Context, filter issues.Filter) ([]string,
 	result, err := h.Store.Reconcile(ctx, filter, issues.ReconcileOptions{Lookup: h.Lookup})
 	if err != nil {
 		return nil, err
+	}
+	if h.Triage != nil && len(result.Open) > 0 {
+		h.Triage.Collect(result.Open)
 	}
 	return result.Warnings, nil
 }
