@@ -41,9 +41,16 @@ plan-reviewer = "plan-reviewer"
 # working different issues at once cannot move each other's branch. Turn it off
 # for a project where a fresh checkout needs expensive setup — installed
 # dependencies, a build cache — and run one agent at a time instead.
+#
+# How many review cycles to run per pull request. Three is the default;
+# a fourth pass on a diff two coders have already reworked is unlikely to
+# converge, and the loop must terminate without a human.
 [plan]
 review = true
 isolate = true
+
+[review]
+cycles = 3
 `
 
 // defaults mirrors Template. Used when no global config exists yet.
@@ -67,13 +74,18 @@ var deprecated = map[string]string{
 
 // Config is the merged configuration.
 type Config struct {
-	types       map[string]string
-	planReview  bool
-	planIsolate bool
+	types        map[string]string
+	planReview   bool
+	planIsolate  bool
+	reviewCycles int
 	// Warnings collects non-fatal issues found while loading, such as
 	// deprecated type names.
 	Warnings []string
 }
+
+// ReviewCycles reports how many reviewer → coder follow-up passes to run
+// on a linked pull request. Defaults to 3.
+func (c Config) ReviewCycles() int { return c.reviewCycles }
 
 // PlanIsolate reports whether each issue gets its own checkout. On unless a
 // config turns it off.
@@ -93,6 +105,10 @@ type file struct {
 		Review  *bool `toml:"review"`
 		Isolate *bool `toml:"isolate"`
 	} `toml:"plan"`
+	Review struct {
+		// Pointer so an absent [review] section leaves the default alone.
+		Cycles *int `toml:"cycles"`
+	} `toml:"review"`
 }
 
 // Dir is pib's home directory, ~/.pib.
@@ -128,7 +144,7 @@ func Load(workspaceDir string) (Config, error) {
 // it exists, so a type deleted from it stays deleted; the built-in defaults
 // apply only while there is no global file at all.
 func LoadPaths(global, workspace string) (Config, error) {
-	cfg := Config{planReview: true, planIsolate: true}
+	cfg := Config{planReview: true, planIsolate: true, reviewCycles: 3}
 
 	base, found, err := read(global)
 	if err != nil {
@@ -137,12 +153,16 @@ func LoadPaths(global, workspace string) (Config, error) {
 	cfg.types = base.types()
 	if !found {
 		cfg.types = defaults()
+		cfg.reviewCycles = 3
 	}
 	if base.Plan.Review != nil {
 		cfg.planReview = *base.Plan.Review
 	}
 	if base.Plan.Isolate != nil {
 		cfg.planIsolate = *base.Plan.Isolate
+	}
+	if base.Review.Cycles != nil {
+		cfg.reviewCycles = *base.Review.Cycles
 	}
 
 	over, found, err := read(workspace)
@@ -159,6 +179,9 @@ func LoadPaths(global, workspace string) (Config, error) {
 	}
 	if over.Plan.Isolate != nil {
 		cfg.planIsolate = *over.Plan.Isolate
+	}
+	if over.Review.Cycles != nil {
+		cfg.reviewCycles = *over.Review.Cycles
 	}
 
 	// Migrate legacy agent names.
