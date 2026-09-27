@@ -45,6 +45,16 @@ type ReconcileResult struct {
 	// Warnings are lookups that failed. A pull request pib could not reach
 	// is left exactly as it was.
 	Warnings []string `json:"warnings,omitempty"`
+	// Open are the issues whose pull request was checked and is still open.
+	// Triage scans these for out-of-scope findings the user has asked to
+	// have filed.
+	Open []OpenPR `json:"open,omitempty"`
+}
+
+// OpenPR is an issue whose pull request reconciliation found still open.
+type OpenPR struct {
+	Number int64  `json:"number"`
+	URL    string `json:"url"`
 }
 
 // pending is one issue with a pull request worth asking about.
@@ -101,6 +111,8 @@ func (s *Store) Reconcile(ctx context.Context, f Filter, opts ReconcileOptions) 
 		}
 		if closed {
 			result.Closed = append(result.Closed, item.number)
+		} else if states[item.number] == "open" {
+			result.Open = append(result.Open, OpenPR{Number: item.number, URL: item.url})
 		}
 	}
 
