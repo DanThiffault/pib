@@ -186,8 +186,8 @@ func startServer(ws workspace.Status) tea.Cmd {
 
 		// Whenever an issue closes — explicitly, or because pib saw its pull
 		// request merge — look at what is left of the plan before anyone works
-		// it as written.
-		store.OnClosed = &recheck.Hook{Spawn: agents, Issues: store}
+		// it as written, and run a closing review when nothing is left.
+		store.OnClosed = &recheck.Hook{Spawn: agents, Issues: store, ReviewAgent: recheck.ReviewerName}
 
 		// And whenever a worker links a pull request, review it while it is
 		// still open. internal/review supplies the hook; until it lands, a nil

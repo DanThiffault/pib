@@ -101,7 +101,7 @@ func TestAgentsCanRunThePibCommandsTheyNeed(t *testing.T) {
 		"planner":       {"pib plan apply", "pib issue ready", "blockedBy"},
 		"coder":         {"pib issue view", "pib issue link-pr"},
 		"code-reviewer": {"pib issue view", "pib review record"},
-		"plan-reviewer": {"pib plan view", "pib issue list --plan", "pib issue comment"},
+		"plan-reviewer": {"pib plan view", "pib issue list --plan", "pib issue comment", "pib issue create"},
 		"plan-recheck":  {"pib issue view", "pib issue list --plan", "pib issue comment"},
 	}
 

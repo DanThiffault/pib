@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	// AgentName is the definition the hook launches when an issue closes.
+	// AgentName is the definition the hook launches when work remains.
 	AgentName = "plan-recheck"
-	// ReviewerName reviews a whole plan before any of it is worked. Nothing
-	// launches it on its own; `pib plan review` does.
+	// ReviewerName reviews a whole plan before any of it is worked. `pib plan
+	// review` and the closing pass launch it.
 	ReviewerName = "plan-reviewer"
 )
 
@@ -34,8 +34,13 @@ type Lister interface {
 // Hook launches the recheck agent when an issue closes. It satisfies
 // issues.ClosedHook.
 type Hook struct {
-	// Agent is the definition to launch. Defaults to AgentName.
+	// Agent is the recheck definition to launch when work remains.
+	// Defaults to AgentName.
 	Agent string
+	// ReviewAgent is the definition to launch for the closing pass,
+	// when a close leaves nothing open. Empty means the closing pass
+	// is disabled.
+	ReviewAgent string
 	// Spawn launches it.
 	Spawn Spawner
 	// Issues reports what is left in the plan.
@@ -45,6 +50,7 @@ type Hook struct {
 
 	mu      sync.Mutex
 	running map[string]bool
+	done    map[string]bool // plans that have had their closing pass
 }
 
 // IssueClosed launches a recheck for the plan the issue belonged to, unless
@@ -53,10 +59,10 @@ type Hook struct {
 // It returns immediately: reconciliation calls this with a client waiting on a
 // listing, and the agent it starts runs for minutes.
 func (h *Hook) IssueClosed(issue issues.Issue) {
-	// Neither review closing is worth reacting to. A code reviewer closing
-	// means the plan is over; a plan reviewer closing means it has not begun,
-	// so nothing has been produced that could contradict what is queued.
-	if issue.Type == "reviewer" || issue.Type == ReviewerName {
+	// A plan reviewer closing means the plan has not begun (opening pass) or
+	// has just finished (closing pass). Either way, it is not worth reacting
+	// to here.
+	if issue.Type == ReviewerName {
 		return
 	}
 
@@ -66,6 +72,22 @@ func (h *Hook) IssueClosed(issue issues.Issue) {
 		return
 	}
 	if open == 0 {
+		if h.ReviewAgent == "" {
+			return
+		}
+		if h.hasDone(issue.Plan) {
+			return
+		}
+		if !h.claim(issue.Plan) {
+			return
+		}
+		h.markDone(issue.Plan)
+		go func() {
+			defer h.release(issue.Plan)
+			if _, err := h.Spawn.Run(context.Background(), h.closingRequest(issue)); err != nil {
+				h.report(fmt.Errorf("closing review after #%d: %w", issue.Number, err))
+			}
+		}()
 		return
 	}
 
@@ -77,17 +99,20 @@ func (h *Hook) IssueClosed(issue issues.Issue) {
 
 	go func() {
 		defer h.release(issue.Plan)
-		if _, err := h.Spawn.Run(context.Background(), h.request(issue)); err != nil {
+		if _, err := h.Spawn.Run(context.Background(), h.recheckRequest(issue)); err != nil {
 			h.report(fmt.Errorf("recheck after #%d: %w", issue.Number, err))
 		}
 	}()
 }
 
-func (h *Hook) request(issue issues.Issue) protocol.Request {
-	agent := h.Agent
-	if agent == "" {
-		agent = AgentName
+func (h *Hook) recheckAgent() string {
+	if h.Agent != "" {
+		return h.Agent
 	}
+	return AgentName
+}
+
+func (h *Hook) recheckRequest(issue issues.Issue) protocol.Request {
 	// Deliberately not Issue: issue.Number. That column means "an agent
 	// working this issue", and `pib issue followup` resumes the newest run
 	// against one — so claiming the issue here would hand a followup meant
@@ -95,9 +120,18 @@ func (h *Hook) request(issue issues.Issue) protocol.Request {
 	// The number reaches the agent through the briefing instead.
 	return protocol.Request{
 		Op:    protocol.OpSpawn,
-		Agent: agent,
+		Agent: h.recheckAgent(),
 		Name:  fmt.Sprintf("recheck #%d", issue.Number),
 		Task:  Briefing(issue),
+	}
+}
+
+func (h *Hook) closingRequest(issue issues.Issue) protocol.Request {
+	return protocol.Request{
+		Op:    protocol.OpSpawn,
+		Agent: h.ReviewAgent,
+		Name:  fmt.Sprintf("closing review %s", issue.Plan),
+		Task:  ClosingBriefing(issue.Plan),
 	}
 }
 
@@ -112,6 +146,20 @@ func Briefing(issue issues.Issue) string {
 			"plan. Most closes change nothing — say so and finish rather than looking "+
 			"for something to report.",
 		issue.Number, issue.Plan, issue.Type, issue.Title)
+}
+
+// ClosingBriefing tells the plan reviewer this is the closing pass: every
+// issue has been worked and the review is against the plan's own acceptance
+// criteria.
+func ClosingBriefing(plan string) string {
+	return fmt.Sprintf(
+		"This is the closing pass for plan %q. Every issue in the plan has been "+
+			"worked and closed. Read the plan with `pib plan view %s`, then check "+
+			"whether the plan achieved what it set out to do — goals that were dropped, "+
+			"acceptance criteria nothing satisfies, scope that drifted across pull "+
+			"requests nobody read end to end. What you find, file as new issues in the "+
+			"plan. There is no open pull request left to comment on.",
+		plan, plan)
 }
 
 func (h *Hook) openInPlan(plan string) (int, error) {
@@ -142,6 +190,21 @@ func (h *Hook) release(plan string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.running, plan)
+}
+
+func (h *Hook) hasDone(plan string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.done[plan]
+}
+
+func (h *Hook) markDone(plan string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.done == nil {
+		h.done = map[string]bool{}
+	}
+	h.done[plan] = true
 }
 
 func (h *Hook) report(err error) {
