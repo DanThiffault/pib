@@ -298,3 +298,39 @@ func TestPlanReviewDefaultsOnAndCanBeTurnedOff(t *testing.T) {
 		t.Errorf("task maps to %q (ok=%v); the override should not have dropped types", agent, ok)
 	}
 }
+
+func TestReviewCyclesDefaultsToThree(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := LoadPaths(filepath.Join(dir, "missing.toml"), "")
+	if err != nil {
+		t.Fatalf("LoadPaths: %v", err)
+	}
+	if cfg.ReviewCycles() != 3 {
+		t.Errorf("ReviewCycles() = %d, want 3", cfg.ReviewCycles())
+	}
+}
+
+func TestReviewCyclesCanBeOverridden(t *testing.T) {
+	globalDir := t.TempDir()
+	global := write(t, globalDir, "[review]\ncycles = 5\n")
+	cfg, err := LoadPaths(global, "")
+	if err != nil {
+		t.Fatalf("LoadPaths: %v", err)
+	}
+	if cfg.ReviewCycles() != 5 {
+		t.Errorf("ReviewCycles() = %d, want 5", cfg.ReviewCycles())
+	}
+}
+
+func TestWorkspaceCanOverrideReviewCycles(t *testing.T) {
+	globalDir, workspaceDir := t.TempDir(), t.TempDir()
+	global := write(t, globalDir, "[review]\ncycles = 5\n")
+	workspace := write(t, workspaceDir, "[review]\ncycles = 1\n")
+	cfg, err := LoadPaths(global, workspace)
+	if err != nil {
+		t.Fatalf("LoadPaths: %v", err)
+	}
+	if cfg.ReviewCycles() != 1 {
+		t.Errorf("ReviewCycles() = %d, want 1", cfg.ReviewCycles())
+	}
+}

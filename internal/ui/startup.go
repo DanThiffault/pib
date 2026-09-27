@@ -15,6 +15,7 @@ import (
 	"pib/internal/issues"
 	"pib/internal/pr"
 	"pib/internal/recheck"
+	"pib/internal/review"
 	"pib/internal/runner"
 	"pib/internal/server"
 	"pib/internal/workspace"
@@ -189,10 +190,14 @@ func startServer(ws workspace.Status) tea.Cmd {
 		// it as written, and run a closing review when nothing is left.
 		store.OnClosed = &recheck.Hook{Spawn: agents, Issues: store, ReviewAgent: recheck.ReviewerName}
 
-		// And whenever a worker links a pull request, review it while it is
-		// still open. internal/review supplies the hook; until it lands, a nil
-		// OnLinked means LinkPR behaves exactly as it did before.
-		store.OnLinked = nil
+		// And whenever a coder links a pull request, review it while it is
+		// still open.
+		store.OnLinked = &review.Hook{
+			Spawn:   agents,
+			Runs:    store,
+			Reviews: store,
+			Cycles:  cfg.ReviewCycles(),
+		}
 
 		srv, err := server.Listen(ws.Dir, server.Router{
 			Agents: agents,
