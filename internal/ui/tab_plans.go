@@ -302,10 +302,11 @@ func (m Model) handleStartAllReady() (Model, tea.Cmd) {
 		m.inFlight = map[int64]bool{}
 	}
 
+	sem := make(chan struct{}, runner.MaxConcurrentAgents)
 	var cmds []tea.Cmd
 	for _, issue := range toStart {
 		m.inFlight[issue.Number] = true
-		cmds = append(cmds, spawnAgentCmd(m.agents, issue))
+		cmds = append(cmds, spawnAgentCmd(m.agents, issue, sem))
 	}
 
 	// Show every started issue as in progress immediately, so the action bar
@@ -371,8 +372,12 @@ type spawner interface {
 	Run(ctx context.Context, req protocol.Request) (protocol.Response, error)
 }
 
-func spawnAgentCmd(r spawner, issue issues.Status) tea.Cmd {
+func spawnAgentCmd(r spawner, issue issues.Status, sem ...chan struct{}) tea.Cmd {
 	return func() tea.Msg {
+		if len(sem) > 0 && sem[0] != nil {
+			sem[0] <- struct{}{}
+			defer func() { <-sem[0] }()
+		}
 		req := protocol.Request{
 			Op:    protocol.OpSpawn,
 			Agent: issue.Agent,

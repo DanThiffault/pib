@@ -38,6 +38,10 @@ const (
 // pollInterval is how often a running window is checked.
 const pollInterval = 250 * time.Millisecond
 
+// MaxConcurrentAgents limits how many agents may be active at once when
+// starting all ready issues in a plan.
+const MaxConcurrentAgents = 4
+
 // newWindow is a variable so tests can see exactly how a child would be
 // started without needing a terminal.
 var newWindow = tmux.NewWindow

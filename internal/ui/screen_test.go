@@ -1612,14 +1612,20 @@ func TestASecondAgentJoinsTheExistingPoll(t *testing.T) {
 // fakeSpawner stands in for the runner. Run blocks until released, the way a
 // real spawn blocks for as long as the agent runs.
 type fakeSpawner struct {
-	mu      sync.Mutex
-	reqs    []protocol.Request
-	release chan struct{}
-	err     error
+	mu        sync.Mutex
+	reqs      []protocol.Request
+	active    int
+	maxActive int
+	release   chan struct{}
+	err       error
 }
 
 func (f *fakeSpawner) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
 	f.mu.Lock()
+	f.active++
+	if f.active > f.maxActive {
+		f.maxActive = f.active
+	}
 	f.reqs = append(f.reqs, req)
 	release := f.release
 	f.mu.Unlock()
@@ -1627,6 +1633,10 @@ func (f *fakeSpawner) Run(_ context.Context, req protocol.Request) (protocol.Res
 	if release != nil {
 		<-release
 	}
+	f.mu.Lock()
+	f.active--
+	f.mu.Unlock()
+
 	if f.err != nil {
 		return protocol.Response{}, f.err
 	}
@@ -1780,5 +1790,55 @@ func TestStartAllJoinsExistingPoll(t *testing.T) {
 	m = next.(Model)
 	if cmd != nil {
 		t.Error("poll kept running after every agent finished")
+	}
+}
+
+func TestStartAllCapsConcurrency(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenPlanDetail
+	agents := &fakeSpawner{release: make(chan struct{})}
+	m.agents = agents
+	m.planIssues = []issues.Status{
+		startable(1), startable(2), startable(3), startable(4),
+		startable(5), startable(6),
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	m, cmd := m.handleStartAllReady()
+	if cmd == nil {
+		t.Fatal("no command from Start all")
+	}
+
+	go drain(cmd)
+
+	// Wait for some agents to become active.
+	for {
+		agents.mu.Lock()
+		active := agents.active
+		agents.mu.Unlock()
+		if active > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	agents.mu.Lock()
+	maxActive := agents.maxActive
+	agents.mu.Unlock()
+	if maxActive > runner.MaxConcurrentAgents {
+		t.Errorf("max concurrent agents = %d, want at most %d", maxActive, runner.MaxConcurrentAgents)
+	}
+
+	// Release all blocked agents.
+	for i := 0; i < 6; i++ {
+		agents.release <- struct{}{}
+	}
+
+	// Give goroutines time to finish.
+	time.Sleep(100 * time.Millisecond)
+
+	reqs := agents.seen()
+	if len(reqs) != 6 {
+		t.Errorf("sent %d requests, want 6", len(reqs))
 	}
 }

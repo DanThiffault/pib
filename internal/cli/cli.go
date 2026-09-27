@@ -233,10 +233,13 @@ func (a App) planStart(args []string) error {
 	// as `pib issue start`.
 	results := make([]startResult, len(launch))
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, runner.MaxConcurrentAgents)
 	for i, issue := range launch {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			op := protocol.OpSpawnBackground
 			if *wait {
 				op = protocol.OpSpawn
