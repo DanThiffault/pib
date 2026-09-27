@@ -2,7 +2,7 @@
 name: plan-reviewer
 description: Reviews a freshly applied plan against the codebase before any work starts — catches issues that collide, types whose agent cannot do the work, and acceptance nobody can verify
 tools: read, bash
-model: pi-claude-cli/claude-opus-5
+model: openrouter/moonshotai/kimi-k2.6
 thinking: medium
 system-prompt: append
 ---

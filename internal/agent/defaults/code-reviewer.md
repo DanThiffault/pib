@@ -2,7 +2,7 @@
 name: code-reviewer
 description: Code review agent — reviews one pull request for quality, security, and correctness, and comments findings on the diff. Records its verdict so the review loop can decide what happens next.
 tools: read, bash
-model: pi-claude-cli/claude-opus-5
+model: openrouter/moonshotai/kimi-k2.6
 thinking: medium
 system-prompt: append
 ---

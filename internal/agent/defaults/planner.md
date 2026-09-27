@@ -2,7 +2,7 @@
 name: planner
 description: Product planning specialist — asks questions, designs implementation, delegates to sub-agents, applies the plan as pib issues
 tools: read, write, bash, edit, pib
-model: pi-claude-cli/claude-opus-5
+model: openrouter/moonshotai/kimi-k2.6
 thinking: medium
 auto-exit: false
 system-prompt: append
