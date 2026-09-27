@@ -18,6 +18,7 @@ import (
 	"pib/internal/review"
 	"pib/internal/runner"
 	"pib/internal/server"
+	"pib/internal/ui/theme"
 	"pib/internal/workspace"
 	"pib/internal/worktree"
 )
@@ -93,6 +94,20 @@ var (
 	quitKeys   = key.NewBinding(key.WithKeys("q", "Q", "ctrl+c", "esc"))
 	anyKeyHint = "press any key to exit"
 )
+
+// piArt is the mark the prompt screen currently carries.
+const piArt = ` ██████████████████
+███████████████████
+    ███       ███
+    ███       ███
+    ███       ███
+   ███        ███
+  ████        ████`
+
+// piMinHeight is the terminal height the art needs on the startup screen.
+// The art is eight lines; below twenty or so the startup content itself is
+// tight and the art should drop out.
+const piMinHeight = 20
 
 func detectWorkspace() tea.Msg {
 	status, err := workspace.Detect()
@@ -395,15 +410,21 @@ func (m Model) afterWorkspaceExists() (Model, tea.Cmd) {
 }
 
 func (m Model) startupView() string {
+	var art string
+	if m.width >= 80 && m.height >= piMinHeight {
+		art = theme.Default.Primary.Render(piArt) + "\n\n"
+	}
+
 	switch m.phase {
 	case phaseDetecting:
-		return helpStyle.Render("Checking workspace…")
+		return art + helpStyle.Render("Checking workspace…")
 
 	case phaseCheckingAgents:
-		return helpStyle.Render("Checking agents…")
+		return art + helpStyle.Render("Checking agents…")
 
 	case phaseConfirmAgents:
 		var b strings.Builder
+		b.WriteString(art)
 		b.WriteString(titleStyle.Render("pib") + "\n\n")
 		b.WriteString(itemStyle.Render(fmt.Sprintf("No agents are installed in %s", m.agentsDir)) + "\n")
 		b.WriteString(itemStyle.Render("pib runs agents defined there; it cannot plan without them.") + "\n\n")
@@ -416,6 +437,7 @@ func (m Model) startupView() string {
 
 	case phaseConfirmUpdate:
 		var b strings.Builder
+		b.WriteString(art)
 		b.WriteString(titleStyle.Render("pib") + "\n\n")
 		differ := "differ"
 		if len(m.outdated) == 1 {
@@ -435,25 +457,25 @@ func (m Model) startupView() string {
 		return b.String()
 
 	case phaseLoadingPlanner:
-		return helpStyle.Render("Loading planner agent…")
+		return art + helpStyle.Render("Loading planner agent…")
 
 	case phaseStartingServer:
-		return helpStyle.Render("Starting agent server…")
+		return art + helpStyle.Render("Starting agent server…")
 
 	case phaseFailed:
-		return titleStyle.Render("pib") + "\n\n" +
+		return art + titleStyle.Render("pib") + "\n\n" +
 			errorStyle.Render(m.err.Error()) + "\n\n" +
 			helpStyle.Render(anyKeyHint)
 
 	case phaseConfirmCreate:
-		return titleStyle.Render("pib") + "\n\n" +
+		return art + titleStyle.Render("pib") + "\n\n" +
 			itemStyle.Render(fmt.Sprintf("No %s directory found in %s", workspace.DirName, m.workspace.GitRoot)) + "\n" +
 			itemStyle.Render("pib keeps its workspace there.") + "\n\n" +
 			promptStyle.Render(fmt.Sprintf("Create %s?", m.workspace.Dir)) + "\n\n" +
 			helpStyle.Render("y/enter create • n/q exit")
 	}
 
-	return ""
+	return art
 }
 
 // countAgents renders "1 agent" or "3 agents".

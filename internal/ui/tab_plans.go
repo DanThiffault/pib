@@ -188,8 +188,12 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// screenPlans
 		switch {
 		case key.Matches(keyMsg, upKeys):
-			if m.planCursor > 0 {
+			if m.planCursor > 1 {
 				m.planCursor--
+			} else if m.planCursor == 1 {
+				m.screen = screenNewPlan
+				m.planCursor = 0
+				return m, m.input.Focus()
 			}
 			if slug := m.currentPlanSlug(); slug != "" && m.planIssuesLoadedFor != slug {
 				m.planIssuesLoading = true
@@ -197,7 +201,7 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case key.Matches(keyMsg, downKeys):
-			if m.planCursor < len(m.plans)-1 {
+			if m.planCursor < len(m.plans) {
 				m.planCursor++
 			}
 			if slug := m.currentPlanSlug(); slug != "" && m.planIssuesLoadedFor != slug {
@@ -206,7 +210,11 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case key.Matches(keyMsg, selectKeys):
-			if len(m.plans) > 0 {
+			if m.planCursor == 0 {
+				m.screen = screenNewPlan
+				return m, m.input.Focus()
+			}
+			if m.planCursor <= len(m.plans) {
 				m.screen = screenPlanDetail
 				m.issueCursor = 0
 				m.planIssues = nil
@@ -214,9 +222,13 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.planIssuesLoading = true
 				m.planIssuesLoadedFor = ""
 				m.notice = ""
-				return m, loadPlanIssues(m.store, m.plans[m.planCursor].Slug, m.cfg)
+				return m, loadPlanIssues(m.store, m.plans[m.planCursor-1].Slug, m.cfg)
 			}
 			return m, nil
+		case key.Matches(keyMsg, newPlanKeys):
+			m.screen = screenNewPlan
+			m.planCursor = 0
+			return m, m.input.Focus()
 		}
 	}
 
@@ -230,10 +242,10 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // currentPlanSlug is the plan the cursor is on, empty when there is none.
 func (m Model) currentPlanSlug() string {
-	if m.planCursor >= len(m.plans) {
+	if m.planCursor == 0 || m.planCursor > len(m.plans) {
 		return ""
 	}
-	return m.plans[m.planCursor].Slug
+	return m.plans[m.planCursor-1].Slug
 }
 
 func (m Model) handleStartIssue(issue issues.Status) (Model, tea.Cmd) {
@@ -457,9 +469,6 @@ func (m Model) plansView() string {
 	if m.plansErr != nil {
 		return m.renderCentered(errorStyle.Render("Error loading plans: " + m.plansErr.Error()))
 	}
-	if len(m.plans) == 0 {
-		return m.renderCentered(helpStyle.Render("No plans yet."))
-	}
 
 	switch m.screen {
 	case screenIssue:
@@ -608,9 +617,10 @@ func listPane(header string, labels []string, cursor, w, h int) string {
 }
 
 func (m Model) planListPane(w, h int) string {
-	labels := make([]string, len(m.plans))
+	labels := make([]string, len(m.plans)+1)
+	labels[0] = "+ New plan    describe something to plan"
 	for i, plan := range m.plans {
-		labels[i] = plan.Slug
+		labels[i+1] = plan.Slug
 	}
 	return listPane("Plans", labels, m.planCursor, w, h)
 }

@@ -101,15 +101,19 @@ func TestAltEnterInsertsNewlineInsteadOfLaunching(t *testing.T) {
 	}
 }
 
-func TestQuitFromPrompt(t *testing.T) {
+func TestEscFromPromptReturnsToPlans(t *testing.T) {
 	m := ready(t)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if cmd == nil {
-		t.Fatal("esc returned no command, want tea.Quit")
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+
+	if m.screen != screenPlans {
+		t.Errorf("screen = %v, want screenPlans after esc", m.screen)
 	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Errorf("cmd = %T, want tea.QuitMsg", cmd())
+	if cmd != nil {
+		if _, quitting := cmd().(tea.QuitMsg); quitting {
+			t.Error("esc from prompt should not quit")
+		}
 	}
 }
 
@@ -205,6 +209,7 @@ func TestSessionErrorSurfaces(t *testing.T) {
 
 func TestPromptViewShowsContext(t *testing.T) {
 	m := ready(t)
+	m.width, m.height = 100, 30
 	m.planner.Model = "openrouter/moonshotai/kimi-k2.6"
 
 	view := m.View()
