@@ -28,6 +28,9 @@ func plansModel(t *testing.T, plans []issues.Plan) Model {
 	m.plans = plans
 	m.width = 100
 	m.height = 30
+	if len(plans) > 0 {
+		m.planCursor = 1 // first real plan; row 0 is the synthetic "+ New plan"
+	}
 	return m
 }
 
@@ -70,7 +73,7 @@ func TestBreadcrumbShowsPlanAndIssue(t *testing.T) {
 }
 
 func TestEscQuitsFromTopLevel(t *testing.T) {
-	for _, start := range []screen{screenPlans, screenNewPlan} {
+	for _, start := range []screen{screenPlans} {
 		m := ready(t)
 		m.screen = start
 		if start == screenPlans {
@@ -236,38 +239,74 @@ func TestPlanListNavigation(t *testing.T) {
 		{Slug: "plan-c", Title: "Plan C"},
 	})
 
-	// Down moves cursor
+	// Down moves cursor (starts at 1 because plansModel skips the synthetic row)
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = next.(Model)
-	if m.planCursor != 1 {
-		t.Errorf("planCursor = %d, want 1", m.planCursor)
+	if m.planCursor != 2 {
+		t.Errorf("planCursor = %d, want 2", m.planCursor)
 	}
 
 	// Another down moves cursor again
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = next.(Model)
-	if m.planCursor != 2 {
-		t.Errorf("planCursor = %d, want 2", m.planCursor)
+	if m.planCursor != 3 {
+		t.Errorf("planCursor = %d, want 3", m.planCursor)
 	}
 
 	// Down at bottom stays at bottom
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = next.(Model)
-	if m.planCursor != 2 {
-		t.Errorf("planCursor = %d, want 2", m.planCursor)
+	if m.planCursor != 3 {
+		t.Errorf("planCursor = %d, want 3", m.planCursor)
 	}
 
 	// Up moves cursor back
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = next.(Model)
-	if m.planCursor != 1 {
-		t.Errorf("planCursor = %d, want 1", m.planCursor)
+	if m.planCursor != 2 {
+		t.Errorf("planCursor = %d, want 2", m.planCursor)
 	}
 
-	// Up at top stays at top
-	m.planCursor = 0
+	// Up at top of real plans transitions to new-plan screen
+	m.planCursor = 1
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m = next.(Model)
+	if m.screen != screenNewPlan {
+		t.Errorf("screen = %v, want screenNewPlan after up from first plan", m.screen)
+	}
+	if m.planCursor != 0 {
+		t.Errorf("planCursor = %d, want 0", m.planCursor)
+	}
+}
+
+func TestEnterOnNewPlanRowOpensPrompt(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+	})
+	m.planCursor = 0 // synthetic "+ New plan" row
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.screen != screenNewPlan {
+		t.Errorf("screen = %v, want screenNewPlan after enter on row 0", m.screen)
+	}
+	if !m.input.Focused() {
+		t.Error("prompt input not focused after enter on row 0")
+	}
+}
+
+func TestNKeyReachesNewPlanPromptFromAnyRow(t *testing.T) {
+	m := plansModel(t, []issues.Plan{
+		{Slug: "plan-a", Title: "Plan A"},
+		{Slug: "plan-b", Title: "Plan B"},
+	})
+	m.planCursor = 2
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	m = next.(Model)
+	if m.screen != screenNewPlan {
+		t.Errorf("screen = %v, want screenNewPlan after n", m.screen)
+	}
 	if m.planCursor != 0 {
 		t.Errorf("planCursor = %d, want 0", m.planCursor)
 	}
@@ -351,10 +390,12 @@ func TestPlansScreenShowsEmptyState(t *testing.T) {
 	m.plans = nil
 	m.plansLoading = false
 	m.plansErr = nil
+	m.width = 100
+	m.height = 30
 
 	view := m.View()
-	if !strings.Contains(view, "No plans yet") {
-		t.Errorf("view missing empty state:\n%s", view)
+	if !strings.Contains(view, "+ New plan") {
+		t.Errorf("view missing '+ New plan' synthetic row:\n%s", view)
 	}
 }
 
@@ -782,7 +823,7 @@ func TestStalePlanIssuesResponseIsIgnored(t *testing.T) {
 		{Slug: "plan-b", Title: "Plan B"},
 	})
 	m.screen = screenPlanDetail
-	m.planCursor = 1
+	m.planCursor = 2 // cursor indexes rows; row 2 is plan-b
 
 	next, _ := m.Update(planIssuesLoadedMsg{
 		planSlug: "plan-b",

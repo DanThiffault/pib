@@ -15,19 +15,36 @@ func planView(t *testing.T, width, height int) string {
 	return m.newPlanView()
 }
 
-// The art is the headline of the Plan tab, so it has to be there when there is
-// room — and gone when there is not, in either dimension.
+// The art renders on the startup screen when there is room, and nowhere
+// else — especially not in the new-plan lower pane, where eight lines is
+// more space than the pane has.
 func TestPiArtAppearsOnlyWhenThereIsRoomForIt(t *testing.T) {
 	art := strings.TrimSpace(strings.Split(strings.TrimSpace(piArt), "\n")[0])
 
-	if view := planView(t, 120, piMinHeight); !strings.Contains(view, art) {
-		t.Errorf("no art on a %d-line terminal, which is the threshold:\n%s", piMinHeight, view)
+	m := ready(t)
+	m.width, m.height = 120, piMinHeight
+	// Put the model back into a startup phase so the startup view renders.
+	m.phase = phaseCheckingAgents
+	if view := m.startupView(); !strings.Contains(view, art) {
+		t.Errorf("no art on a %d-line startup screen, which is the threshold:\n%s", piMinHeight, view)
 	}
-	if view := planView(t, 120, piMinHeight-1); strings.Contains(view, art) {
+
+	m.height = piMinHeight - 1
+	if view := m.startupView(); strings.Contains(view, art) {
 		t.Error("art rendered one line below the threshold, where the prompt needs the space")
 	}
-	if view := planView(t, 40, 60); strings.Contains(view, art) {
+
+	m.width = 40
+	m.height = piMinHeight
+	if view := m.startupView(); strings.Contains(view, art) {
 		t.Error("art rendered on a narrow terminal, where it clips")
+	}
+
+	// The new-plan view never contains the art.
+	m = ready(t)
+	m.width, m.height = 120, 60
+	if view := m.newPlanView(); strings.Contains(view, art) {
+		t.Error("art rendered in the new-plan lower pane")
 	}
 }
 

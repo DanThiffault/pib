@@ -33,11 +33,12 @@ var (
 )
 
 var (
-	upKeys     = key.NewBinding(key.WithKeys("up"))
-	downKeys   = key.NewBinding(key.WithKeys("down"))
-	selectKeys = key.NewBinding(key.WithKeys("right", "enter"))
-	backKeys   = key.NewBinding(key.WithKeys("left", "esc"))
-	startKeys  = key.NewBinding(key.WithKeys("s"))
+	upKeys      = key.NewBinding(key.WithKeys("up"))
+	downKeys    = key.NewBinding(key.WithKeys("down"))
+	selectKeys  = key.NewBinding(key.WithKeys("right", "enter"))
+	backKeys    = key.NewBinding(key.WithKeys("left", "esc"))
+	startKeys   = key.NewBinding(key.WithKeys("s"))
+	newPlanKeys = key.NewBinding(key.WithKeys("n"))
 )
 
 type screen int
@@ -133,6 +134,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = sizeMsg.Width
 		m.height = sizeMsg.Height
 		m.input.SetWidth(promptWidth(m.width))
+
+		_, bottomH := paneHeights(m.contentHeight())
+		if h := bottomH - 5; h > 3 {
+			m.input.SetHeight(h)
+		} else {
+			m.input.SetHeight(3)
+		}
+
 		return m, nil
 	}
 
@@ -157,7 +166,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		// Quitting works from the top level; below it esc means back.
 		quitting := key.Matches(keyMsg, cancelKeys)
-		if (m.screen == screenPlanDetail || m.screen == screenIssue) && key.Matches(keyMsg, backKeys) {
+		if (m.screen == screenNewPlan || m.screen == screenPlanDetail || m.screen == screenIssue) && key.Matches(keyMsg, backKeys) {
 			quitting = false
 		}
 		if quitting {
@@ -252,8 +261,8 @@ func (m Model) statusLineView() string {
 
 func (m Model) breadcrumbView() string {
 	parts := []string{"Plans"}
-	if m.planCursor < len(m.plans) {
-		parts = append(parts, m.plans[m.planCursor].Slug)
+	if m.planCursor > 0 && m.planCursor <= len(m.plans) {
+		parts = append(parts, m.plans[m.planCursor-1].Slug)
 	}
 	if m.screen == screenIssue && m.issueCursor < len(m.planIssues) {
 		parts = append(parts, fmt.Sprintf("#%d %s", m.planIssues[m.issueCursor].Number, m.planIssues[m.issueCursor].Title))

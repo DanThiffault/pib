@@ -9,11 +9,11 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"pib/internal/agent"
 	"pib/internal/runner"
 	"pib/internal/tmux"
-	"pib/internal/ui/theme"
 )
 
 var (
@@ -87,6 +87,14 @@ var launchPlanner = func(cfg launchConfig) tea.Cmd {
 
 func (m Model) updateScreenNewPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case plansLoadedMsg:
+		m.plansLoading = false
+		if msg.err != nil {
+			m.plansErr = msg.err
+			return m, nil
+		}
+		m.plans = msg.plans
+		return m, nil
 	case sessionOpenedMsg:
 		if msg.err != nil {
 			m.notice = "could not open tmux window: " + msg.err.Error()
@@ -122,6 +130,39 @@ func (m Model) updateScreenNewPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch {
+		case key.Matches(msg, backKeys):
+			m.screen = screenPlans
+			if len(m.plans) > 0 {
+				m.planCursor = 1
+				m.input.Blur()
+				if slug := m.currentPlanSlug(); slug != "" && m.planIssuesLoadedFor != slug {
+					m.planIssuesLoading = true
+					return m, loadPlanIssues(m.store, slug, m.cfg)
+				}
+			} else {
+				m.planCursor = 0
+				m.input.Blur()
+			}
+			return m, nil
+		case key.Matches(msg, downKeys):
+			m.screen = screenPlans
+			if len(m.plans) > 0 {
+				m.planCursor = 1
+				m.input.Blur()
+				if slug := m.currentPlanSlug(); slug != "" && m.planIssuesLoadedFor != slug {
+					m.planIssuesLoading = true
+					return m, loadPlanIssues(m.store, slug, m.cfg)
+				}
+			} else {
+				m.planCursor = 0
+				m.input.Blur()
+			}
+			return m, nil
+		case key.Matches(msg, newPlanKeys):
+			if !m.input.Focused() {
+				return m, m.input.Focus()
+			}
+			return m, nil
 		case key.Matches(msg, submitKeys):
 			description := strings.TrimSpace(m.input.Value())
 			if description == "" {
@@ -144,49 +185,45 @@ func (m Model) updateScreenNewPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// piArt is the Plan tab's boss: a flat bar over two legs, the way the letter
-// is drawn.
-const piArt = `
- ██████████████████
-███████████████████
-    ███       ███
-    ███       ███
-    ███       ███
-   ███        ███
-  ████        ████
-`
-
-// piMinHeight is the terminal height the art needs. It is eight lines, and
-// the prompt block beneath it wants roughly twenty more; below that the art
-// wins space the prompt needs.
-const piMinHeight = 30
-
 func (m Model) newPlanView() string {
-	var b strings.Builder
-
-	// Wide enough for two panes elsewhere, and tall enough that the art does
-	// not crowd out the prompt.
-	if m.width >= 80 && m.height >= piMinHeight {
-		b.WriteString(theme.Default.Primary.Render(piArt) + "\n\n")
+	if m.plansLoading {
+		return m.renderCentered(loadingStyle.Render("◐ Loading plans…"))
+	}
+	if m.plansErr != nil {
+		return m.renderCentered(errorStyle.Render("Error loading plans: " + m.plansErr.Error()))
 	}
 
-	b.WriteString(titleStyle.Render("pib") + "\n\n")
+	h := m.contentHeight()
+	if m.isShort() {
+		return m.planListPane(m.width, h)
+	}
+
+	topH, bottomH := paneHeights(h)
+	topPane := m.planListPane(m.width, topH)
+	rule := titledRule(m.width, "New plan")
+	bottomPane := m.promptPane(m.width, bottomH)
+
+	return lipgloss.JoinVertical(lipgloss.Left, topPane, rule, bottomPane)
+}
+
+func (m Model) promptPane(w, h int) string {
+	var b strings.Builder
+
 	b.WriteString(itemStyle.Render(fmt.Sprintf("%s · %s", m.planner.Name, m.workspace.GitRoot)) + "\n")
 	if m.planner.Model != "" {
 		b.WriteString(itemStyle.Render(m.planner.Model) + "\n")
 	}
-	b.WriteString(helpStyle.Render(destination()) + "\n")
-	b.WriteString("\n")
-	b.WriteString(promptStyle.Render("What do you want to plan?") + "\n\n")
+	b.WriteString(helpStyle.Render(destination()) + "\n\n")
+	b.WriteString(promptStyle.Render("What do you want to plan?") + "\n")
 	b.WriteString(m.input.View() + "\n")
 
 	if m.notice != "" {
-		b.WriteString("\n" + noticeStyle.Render(m.notice) + "\n")
+		b.WriteString(noticeStyle.Render(m.notice) + "\n")
 	}
 
-	b.WriteString("\n" + helpStyle.Render("enter plan • alt+enter newline • esc/ctrl+c quit"))
+	b.WriteString(helpStyle.Render("enter plan • alt+enter newline • esc back"))
 
-	return b.String()
+	return pad(w, h, b.String())
 }
 
 // destination describes where a launched session will run, so the fallback to
@@ -206,13 +243,9 @@ func promptWidth(total int) int {
 	const (
 		margin = 6
 		min    = 20
-		max    = 100
 	)
 
 	width := total - margin
-	if width > max {
-		width = max
-	}
 	if width < min {
 		width = min
 	}
