@@ -18,6 +18,7 @@ import (
 	"pib/internal/issues"
 	"pib/internal/pr"
 	"pib/internal/protocol"
+	"pib/internal/session"
 )
 
 // AgentName is the definition the collector launches per unsettled
@@ -226,11 +227,20 @@ func (c *Collector) scan(p issues.OpenPR) {
 		}
 		go func(t pr.Thread, oos *pr.OutOfScope) {
 			defer c.release(t.ID)
-			if _, err := c.Spawn.Run(context.Background(), c.request(p, t, oos)); err != nil {
-				// Nothing was learned, so forget that it was judged: the
-				// next pass may try again rather than leave the finding
-				// triaged by a run that never happened.
+			resp, err := c.Spawn.Run(context.Background(), c.request(p, t, oos))
+			// A run that reached no conclusion teaches the agent nothing,
+			// so the thread is not left marked as judged: the next pass may
+			// try again rather than leave the finding triaged by a run that
+			// did no work. The spawner reports that two ways — a transport
+			// error, and a response saying the run itself failed — and both
+			// have to be caught, because the second is the common one.
+			switch {
+			case err != nil,
+				session.Status(resp.Status) == session.StatusError,
+				session.Status(resp.Status) == session.StatusUnknown:
 				c.forget(t.ID)
+			}
+			if err != nil {
 				c.report(fmt.Errorf("triage of %s: %w", p.URL, err))
 			}
 		}(t, oos)
