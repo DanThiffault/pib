@@ -112,7 +112,7 @@ func (m Model) screenActions() []Action {
 		return []Action{
 			{Key: "enter", Label: "Plan"},
 			{Key: "alt+enter", Label: "Newline"},
-			{Key: "b", Label: "Back"},
+			{Key: "esc", Label: "Back"},
 		}
 	case screenPlanDetail, screenIssue:
 		var actions []Action
