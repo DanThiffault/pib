@@ -67,7 +67,7 @@ type Marked struct {
 	// GitHub did not say.
 	Path string
 	Line int
-	// Summary is the finding's first line, kept short for a narrow pane.
+	// Summary is the finding in one line: what the reviewer said is wrong.
 	Summary string
 	// Filed reports a pib:filed marker somewhere in the thread, which is
 	// the only record of a filing that survives anywhere.
@@ -128,15 +128,59 @@ func (c *Collector) record(number int64, threads []pr.Thread) {
 	c.marked[number] = found
 }
 
-// firstLine is a finding in one line: the first non-empty line of what the
-// reviewer wrote, which is a row a narrow pane can hold.
+// firstLine is a finding in one line: what the reviewer said is wrong, which
+// is a row a narrow pane can hold.
+//
+// The code-reviewer writes a marked finding in a fixed shape — a File line, an
+// Issue line, a Suggested Fix — so the Issue line is the one that says
+// something, and a body without one falls back to its first line of prose.
+// Taking the first line of the body as it stands would render the file path,
+// which the row already has in a column of its own.
 func firstLine(body string) string {
+	first, firstField := "", ""
 	for _, line := range strings.Split(body, "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
-			return trimmed
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if value, ok := fieldValue(trimmed, "Issue"); ok {
+			return value
+		}
+		if firstField == "" && isFieldLine(trimmed) {
+			firstField = trimmed
+			continue
+		}
+		if first == "" {
+			first = trimmed
 		}
 	}
-	return ""
+	if first != "" {
+		return first
+	}
+	return firstField
+}
+
+// isFieldLine reports whether a line is one of the marked finding's own
+// fields, written as "**File:** path/to/file.go:45".
+func isFieldLine(line string) bool {
+	name, _, ok := strings.Cut(strings.TrimPrefix(line, "**"), ":**")
+	return ok && name != "" && !strings.ContainsAny(name, " *")
+}
+
+// fieldValue reads the value of a bold markdown field line, written as
+// "**Issue:** the finding". It reports false for anything else, so a body
+// that is plain prose falls through to the first line that is not a field.
+func fieldValue(line, name string) (string, bool) {
+	prefix := "**" + name + ":**"
+	if !strings.HasPrefix(line, prefix) {
+		return "", false
+	}
+	value := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	value = strings.Trim(value, "`")
+	if value == "" {
+		return "", false
+	}
+	return value, true
 }
 
 // Collect scans each pull request for unsettled out-of-scope threads. It

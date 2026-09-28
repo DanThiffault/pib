@@ -14,6 +14,7 @@ import (
 
 	"pib/internal/config"
 	"pib/internal/issues"
+	"pib/internal/pr"
 	"pib/internal/protocol"
 	"pib/internal/runner"
 	"pib/internal/triage"
@@ -61,6 +62,50 @@ func loadPlanIssues(store *issues.Store, planSlug string, cfg config.Config) tea
 			return planIssuesLoadedMsg{planSlug: planSlug, err: err}
 		}
 		return planIssuesLoadedMsg{planSlug: planSlug, issues: list, reviews: reviews}
+	}
+}
+
+// outOfScopeInterval is how often the interface asks the collector to read
+// the workspace's open pull requests again. Each pass is one GraphQL call per
+// open pull request, so this is deliberately far slower than the tick that
+// keeps the lists current, and is the same window reconciliation trusts a
+// pull request's own state for.
+const outOfScopeInterval = issues.DefaultPRWindow
+
+// outOfScopeTickMsg drives the periodic scan for out-of-scope findings. It is
+// separate from the listing tick because it is the one refresh path that
+// talks to GitHub.
+type outOfScopeTickMsg time.Time
+
+func outOfScopeTick() tea.Cmd {
+	return tea.Tick(outOfScopeInterval, func(t time.Time) tea.Msg { return outOfScopeTickMsg(t) })
+}
+
+// outOfScopeCollectedMsg reports a scan of the open pull requests, or that
+// there was nothing to scan.
+type outOfScopeCollectedMsg struct{ count int }
+
+// collectOutOfScope hands the workspace's open pull requests to the shared
+// triage collector, which reads their threads and keeps what it finds for the
+// interface to render.
+//
+// The interface may not read GitHub itself, so this is where the threads come
+// from. It names the pull requests the store already believes are open rather
+// than reconciling them: settling a pull request — and closing the issue with
+// it, and firing every hook that follows — is not something a screen refresh
+// should do behind the user's back. Collect returns immediately; the reads
+// and any agent they start run off the tick's path.
+func collectOutOfScope(store *issues.Store, collector *triage.Collector, plan string) tea.Cmd {
+	return func() tea.Msg {
+		if store == nil || collector == nil {
+			return outOfScopeCollectedMsg{}
+		}
+		prs, err := store.OpenPullRequests(plan)
+		if err != nil {
+			return outOfScopeCollectedMsg{}
+		}
+		collector.Collect(prs)
+		return outOfScopeCollectedMsg{count: len(prs)}
 	}
 }
 
@@ -118,6 +163,8 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Batch(m.refreshIssues(), refreshTick())
+	case outOfScopeCollectedMsg:
+		return m, nil
 	case viewIssueMsg:
 		m.notice = fmt.Sprintf("View issue #%d", msg.issue.Number)
 		return m, nil
@@ -803,7 +850,7 @@ func formatDAGIssue(issue issues.Status, maxWidth, cycles int) string {
 // its review it is. Both halves are on the issue already — the url and the
 // newest cycle — so a row costs no more than a row without a pull request.
 func pullRequestLabel(issue issues.Status, cycles int) string {
-	label := "PR #" + prNumber(issue.PRURL)
+	label := pullRequestName(issue.PRURL)
 	if issue.ReviewCycle < 1 {
 		return label
 	}
@@ -814,15 +861,12 @@ func pullRequestLabel(issue issues.Status, cycles int) string {
 	return label
 }
 
-// prNumber is the number out of a pull request url, or the url itself when
-// it is not one pib can read a number out of — a row naming the request is
-// better than one that says nothing.
-func prNumber(url string) string {
-	trimmed := strings.TrimRight(url, "/")
-	if i := strings.LastIndex(trimmed, "/"); i >= 0 {
-		if n := trimmed[i+1:]; n != "" {
-			return n
-		}
+// pullRequestName is "PR #44", or the url itself when pib cannot read a
+// number out of it: a row naming the request beats a row that says nothing,
+// and a bad number would be worse than either.
+func pullRequestName(url string) string {
+	if n := pr.Number(url); n != "" {
+		return "PR #" + n
 	}
 	return url
 }
@@ -1089,7 +1133,7 @@ func reviewRow(r issues.Review, prURL string) string {
 	// cycles of the same number mean two pull requests and the row has to
 	// say which.
 	if prURL != "" && r.PRURL != prURL {
-		label += " (PR #" + prNumber(r.PRURL) + ")"
+		label += " (" + pullRequestName(r.PRURL) + ")"
 	}
 
 	state := r.Verdict

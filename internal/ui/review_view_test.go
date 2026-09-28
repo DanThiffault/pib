@@ -211,24 +211,156 @@ func TestReviewRowsStayWithinThePaneAtEverySizeCovered(t *testing.T) {
 	}
 }
 
-// A review history the store can answer for a whole plan in one query: a
-// listing that reaches the store per row would be a lookup behind every row
-// of the DAG, which the DAG's own load is what the pane renders from.
-func TestPlanIssuesLoadedCarriesTheReviewsWithTheIssues(t *testing.T) {
-	m := reviewModel(t)
-	m.planIssuesLoadedFor = ""
-	m.planIssues = nil
-	m.planReviews = nil
-
-	m, _ = step(t, m, planIssuesLoadedMsg{
-		planSlug: "orders",
-		issues:   m.planIssues,
-		reviews:  map[int64][]issues.Review{13: {settledReview(1, issues.VerdictChanges, 2)}},
-	})
-
-	if len(m.planReviews[13]) != 1 {
-		t.Fatalf("review cycles were not kept: %+v", m.planReviews)
+// storeWithReviewedIssue opens a store holding one plan whose task has a
+// linked pull request and one settled review cycle — the state a plan is in
+// by the second review pass.
+func storeWithReviewedIssue(t *testing.T, store *issues.Store) issues.Issue {
+	t.Helper()
+	if _, err := store.CreatePlan(issues.NewPlan{Slug: "orders", Title: "Orders"}); err != nil {
+		t.Fatalf("CreatePlan: %v", err)
 	}
+	issue, err := store.Create(issues.NewIssue{Plan: "orders", Type: "task", Title: "Implement Order Aggregate"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	linked, err := store.LinkPR(issue.Number, "https://github.com/dan/orders/pull/44")
+	if err != nil {
+		t.Fatalf("LinkPR: %v", err)
+	}
+	issue = linked
+	review, err := store.OpenReview(issue.Number, "https://github.com/dan/orders/pull/44", "")
+	if err != nil {
+		t.Fatalf("OpenReview: %v", err)
+	}
+	if _, err := store.CloseReview(review.ID, issues.VerdictChanges, 2); err != nil {
+		t.Fatalf("CloseReview: %v", err)
+	}
+	return issue
+}
+
+func testStore(t *testing.T) *issues.Store {
+	t.Helper()
+	store, err := issues.Open(issues.DataDir(t.TempDir()))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	return store
+}
+
+// The loading command is the only thing that fills the review history in, so
+// its cycles are what the Review section renders from. Testing the message
+// the update handler copies would prove nothing about whether the command
+// asks for them.
+func TestLoadPlanIssuesCarriesTheReviewsWithTheIssues(t *testing.T) {
+	store := testStore(t)
+	issue := storeWithReviewedIssue(t, store)
+
+	msg := loadPlanIssues(store, "orders", config.Config{})()
+
+	loaded, ok := msg.(planIssuesLoadedMsg)
+	if !ok {
+		t.Fatalf("loadPlanIssues returned %T", msg)
+	}
+	if loaded.err != nil {
+		t.Fatalf("loadPlanIssues: %v", loaded.err)
+	}
+	if len(loaded.issues) != 1 || loaded.issues[0].Number != issue.Number {
+		t.Fatalf("issues = %+v, want #%d", loaded.issues, issue.Number)
+	}
+	cycles := loaded.reviews[issue.Number]
+	if len(cycles) != 1 {
+		t.Fatalf("reviews = %+v, want one cycle", loaded.reviews)
+	}
+	if cycles[0].Verdict != issues.VerdictChanges || cycles[0].Findings != 2 {
+		t.Errorf("cycle = %+v, want changes with 2 findings", cycles[0])
+	}
+}
+
+// The interface may not read GitHub, so the threads have to come from a scan
+// the TUI runs itself. Without this the out-of-scope section is a section
+// nothing ever fills.
+func TestTheInterfaceScansOpenPullRequestsForMarkedThreads(t *testing.T) {
+	store := testStore(t)
+	issue := storeWithReviewedIssue(t, store)
+	collector := &triage.Collector{
+		Threads: staticThreads{url: issue.PRURL, threads: []marked{{
+			body: "<!-- pib:out-of-scope plan=orders id=money-type-is-float -->\n" +
+				"**File:** `internal/types/money.go:31`\n" +
+				"**Issue:** The Money type uses float64, which loses precision on division.",
+		}}},
+		Spawn: nopSpawner{},
+	}
+
+	collected, ok := collectOutOfScope(store, collector, "orders")().(outOfScopeCollectedMsg)
+	if !ok {
+		t.Fatal("collectOutOfScope did not report a scan")
+	}
+	if collected.count != 1 {
+		t.Errorf("scanned %d pull requests, want 1", collected.count)
+	}
+
+	found := waitForMarked(t, collector, issue.Number, 1)
+	if found[0].ID != "money-type-is-float" {
+		t.Errorf("finding = %+v", found[0])
+	}
+}
+
+// The whole journey, on a real store: a plan load brings the cycles, a scan
+// brings the threads, and the pane renders both without touching either
+// again.
+func TestTheDetailPaneFillsFromWhatTheInterfaceItselfCollected(t *testing.T) {
+	store := testStore(t)
+	issue := storeWithReviewedIssue(t, store)
+
+	m := reviewModel(t)
+	m.store = store
+	collector := &triage.Collector{
+		Threads: staticThreads{url: issue.PRURL, threads: []marked{{
+			body: "<!-- pib:out-of-scope plan=orders id=money-type-is-float -->\n" +
+				"**File:** `internal/types/money.go:31`\n" +
+				"**Issue:** The money type is a float and will lose cents.",
+		}}},
+		Spawn: nopSpawner{},
+	}
+	m.triage = collector
+
+	collectOutOfScope(store, collector, "orders")()
+	msg := loadPlanIssues(store, "orders", m.cfg)()
+	loaded, ok := msg.(planIssuesLoadedMsg)
+	if !ok {
+		t.Fatalf("loadPlanIssues returned %T", msg)
+	}
+	if loaded.err != nil {
+		t.Fatalf("loadPlanIssues: %v", loaded.err)
+	}
+	// Whatever the load brought is what the pane shows: no hand-built
+	// statuses, no hand-set review history.
+	m.planIssues = loaded.issues
+	m.planReviews = loaded.reviews
+	waitForMarked(t, collector, m.planIssues[0].Number, 1)
+
+	view := m.issueFullScreenView()
+	for _, want := range []string{
+		"cycle 1", "changes", "2 findings",
+		"money-type-is-float", "internal/types/money.go:31", "The money type is a float",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("detail view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func waitForMarked(t *testing.T, c *triage.Collector, issue int64, want int) []triage.Marked {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if got := c.Marked(issue); len(got) >= want {
+			return got
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("no scan left %d marked findings for issue %d", want, issue)
+	return nil
 }
 
 // marked is one review thread a fake pull request carries: the finding the
@@ -272,7 +404,10 @@ type staticThreads struct {
 	threads []marked
 }
 
-func (s staticThreads) Threads(context.Context, string) ([]pr.Thread, error) {
+func (s staticThreads) Threads(_ context.Context, url string) ([]pr.Thread, error) {
+	if url != s.url {
+		return nil, fmt.Errorf("no such pull request: %s", url)
+	}
 	out := make([]pr.Thread, 0, len(s.threads))
 	for i, m := range s.threads {
 		comments := []pr.Comment{{Author: "code-reviewer", Body: m.body, ID: int64(100 + i)}}

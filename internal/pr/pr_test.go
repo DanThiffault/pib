@@ -316,3 +316,23 @@ func TestOutOfScopeUsesFirstMarkerInThread(t *testing.T) {
 		t.Errorf("got %+v, want first marker", oos)
 	}
 }
+
+// There is one answer to "which pull request is this", so a caller that
+// renders a pull request cannot read a number out of a url pib would reject.
+func TestNumberRejectsAUrlThatIsNotAPullRequest(t *testing.T) {
+	for _, url := range []string{
+		"",
+		"https://github.com/o/r/pull/44",
+		"https://github.com/o/r/pull/44/files",
+		"https://github.com/o/r",
+		"not a url",
+	} {
+		want := ""
+		if url == "https://github.com/o/r/pull/44" {
+			want = "44"
+		}
+		if got := Number(url); got != want {
+			t.Errorf("Number(%q) = %q, want %q", url, got, want)
+		}
+	}
+}

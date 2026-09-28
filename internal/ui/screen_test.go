@@ -1909,12 +1909,21 @@ func TestStartAllStartsEveryLaunchableIssue(t *testing.T) {
 	if len(reqs) != 2 {
 		t.Fatalf("sent %d requests, want 2", len(reqs))
 	}
-	for i, want := range []int64{1, 2} {
-		if reqs[i].Issue != want {
-			t.Errorf("req[%d].Issue = %d, want %d", i, reqs[i].Issue, want)
+	// Start-all spawns each issue in its own goroutine, so the order the
+	// requests arrive in is not the order they were started in. Assert on
+	// which issues were started, not on the sequence.
+	byIssue := map[int64]protocol.Request{}
+	for _, req := range reqs {
+		byIssue[req.Issue] = req
+	}
+	for _, want := range []int64{1, 2} {
+		req, ok := byIssue[want]
+		if !ok {
+			t.Errorf("no request for issue #%d", want)
+			continue
 		}
-		if reqs[i].Task != runner.Briefing(want, "Issue") {
-			t.Errorf("req[%d].Task = %q, want the shared briefing", i, reqs[i].Task)
+		if req.Task != runner.Briefing(want, "Issue") {
+			t.Errorf("request for #%d has task %q, want the shared briefing", want, req.Task)
 		}
 	}
 }
