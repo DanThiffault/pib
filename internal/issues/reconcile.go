@@ -126,6 +126,43 @@ func (s *Store) Reconcile(ctx context.Context, f Filter, opts ReconcileOptions) 
 	return result, nil
 }
 
+// OpenPullRequests lists the issues whose linked pull request is still
+// open, lowest number first.
+//
+// It is the question reconciliation asks before it starts, exposed so
+// anything else that wants to read a pull request's threads — the triage
+// collector, driven by the interface — can find the pull requests worth
+// asking about without settling them. Nothing here talks to GitHub: it says
+// which requests pib has been told about, not which are open now.
+func (s *Store) OpenPullRequests(plan string) ([]OpenPR, error) {
+	query := `
+		SELECT i.number, i.pr_url
+		FROM issues i JOIN plans p ON p.id = i.plan_id
+		WHERE i.state = 'open' AND i.pr_url IS NOT NULL AND i.pr_state = 'open'`
+	var args []any
+	if plan != "" {
+		query += ` AND p.slug = ?`
+		args = append(args, plan)
+	}
+	query += ` ORDER BY i.number`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []OpenPR
+	for rows.Next() {
+		var pr OpenPR
+		if err := rows.Scan(&pr.Number, &pr.URL); err != nil {
+			return nil, err
+		}
+		list = append(list, pr)
+	}
+	return list, rows.Err()
+}
+
 // pendingPRs lists the open issues with an unsettled pull request that has
 // not been checked inside the window.
 func (s *Store) pendingPRs(f Filter, opts ReconcileOptions) ([]pending, error) {

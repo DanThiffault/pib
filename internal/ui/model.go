@@ -169,11 +169,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if _, ok := msg.(backgroundTickMsg); ok {
 		var cmds []tea.Cmd
-		cmds = append(cmds, backgroundTick())
+		cmds = append(cmds, backgroundTick(), outOfScopeTick())
 		if (m.screen == screenPlans || m.screen == screenPlanDetail || m.screen == screenIssue) && m.currentPlanSlug() != "" {
 			cmds = append(cmds, m.refreshIssues())
 		}
 		return m, tea.Batch(cmds...)
+	}
+
+	if _, ok := msg.(outOfScopeTickMsg); ok {
+		return m, tea.Batch(outOfScopeTick(), collectOutOfScope(m.store, m.triage, m.currentPlanSlug()))
 	}
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {

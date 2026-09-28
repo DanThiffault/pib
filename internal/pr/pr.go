@@ -279,6 +279,17 @@ func (c CLI) Threads(ctx context.Context, url string) ([]Thread, error) {
 	return threads, nil
 }
 
+// Number reports the pull request number in a GitHub pull request URL, or an
+// empty string when it is not one. It is the only answer pib has to "which
+// pull request is this", so there is one place that gives it.
+func Number(raw string) string {
+	_, _, number, err := parsePRURL(raw)
+	if err != nil {
+		return ""
+	}
+	return strconv.Itoa(number)
+}
+
 // parsePRURL extracts owner, repo and PR number from a GitHub pull request
 // URL such as https://github.com/owner/repo/pull/123.
 func parsePRURL(raw string) (owner, repo string, number int, err error) {

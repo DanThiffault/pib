@@ -263,3 +263,21 @@ func TestMarkedSummaryIsTheFindingsFirstLineOnly(t *testing.T) {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
 }
+
+// A marked finding arrives in the shape the code-reviewer is told to write,
+// and its first line is the file. Rendering that would put the file path in
+// the row's summary column, next to the path the row already has.
+func TestMarkedSummaryIsTheIssueLineOfAMarkedFinding(t *testing.T) {
+	thread := marked("**File:** `internal/types/money.go:31`\n" +
+		"**Issue:** The Money type uses float64, which loses precision on division.\n" +
+		"**Suggested Fix:** Switch to a decimal type or integer cents.")
+
+	c := &Collector{Threads: reader{threads: []pr.Thread{thread}}, Spawn: &spy{}}
+	c.Collect(open)
+
+	found := waitForMarked(t, c, 44, 1)
+	want := "The Money type uses float64, which loses precision on division."
+	if found[0].Summary != want {
+		t.Errorf("summary = %q, want %q", found[0].Summary, want)
+	}
+}

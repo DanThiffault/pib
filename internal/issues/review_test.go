@@ -255,3 +255,28 @@ func TestPlanReviewsIsEmptyForAPlanThatReviewedNothing(t *testing.T) {
 		t.Errorf("PlanReviews = %+v, want nothing", byIssue)
 	}
 }
+
+// PlanReviews with no plan named is every plan's history: the filter follows
+// Statuses, and a caller that means "everything" says so by naming nothing.
+func TestPlanReviewsWithNoPlanCoversEveryPlan(t *testing.T) {
+	store := planned(t)
+	first := task(t, store, "Alpha")
+	second := task(t, store, "Beta")
+	if _, err := store.CreatePlan(NewPlan{Slug: "billing", Title: "Billing"}); err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	billing := task(t, store, "Gamma")
+
+	const prURL = "https://github.com/o/r/pull/1"
+	reviewed(t, store, first.Number, prURL, "")
+	reviewed(t, store, second.Number, prURL, "")
+	reviewed(t, store, billing.Number, prURL, "")
+
+	byIssue, err := store.PlanReviews("")
+	if err != nil {
+		t.Fatalf("PlanReviews: %v", err)
+	}
+	if len(byIssue) != 3 {
+		t.Errorf("PlanReviews(\"\") returned %d issues, want 3", len(byIssue))
+	}
+}
