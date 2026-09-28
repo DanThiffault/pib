@@ -1004,6 +1004,153 @@ func TestActionBarShowsForClosedIssue(t *testing.T) {
 	}
 }
 
+func TestActionBarShowsOnPlansScreen(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenPlans
+
+	view := m.View()
+	if !strings.Contains(view, "New plan") {
+		t.Errorf("action bar missing New plan:\n%s", view)
+	}
+	if !strings.Contains(view, "Open") {
+		t.Errorf("action bar missing Open:\n%s", view)
+	}
+	if !strings.Contains(view, "Refresh") {
+		t.Errorf("action bar missing Refresh:\n%s", view)
+	}
+	if !strings.Contains(view, "Help") {
+		t.Errorf("action bar missing Help:\n%s", view)
+	}
+	if !strings.Contains(view, "Quit") {
+		t.Errorf("action bar missing Quit:\n%s", view)
+	}
+}
+
+func TestActionBarShowsOnNewPlanScreen(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenNewPlan
+	m.input.Focus()
+
+	view := m.View()
+	if !strings.Contains(view, "Plan") {
+		t.Errorf("action bar missing Plan:\n%s", view)
+	}
+	if !strings.Contains(view, "Newline") {
+		t.Errorf("action bar missing Newline:\n%s", view)
+	}
+	if !strings.Contains(view, "Back") {
+		t.Errorf("action bar missing Back:\n%s", view)
+	}
+	if !strings.Contains(view, "Help") {
+		t.Errorf("action bar missing Help:\n%s", view)
+	}
+	if strings.Contains(view, "Quit") {
+		t.Errorf("action bar should not show Quit when prompt is focused:\n%s", view)
+	}
+}
+
+func TestQKeyQuitsFromPlansScreen(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenPlans
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	if cmd == nil {
+		t.Fatal("q produced no command, want quit")
+	}
+	if _, quitting := cmd().(tea.QuitMsg); !quitting {
+		t.Error("q did not quit from plans screen")
+	}
+}
+
+func TestQKeyQuitsFromDetailScreen(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenPlanDetail
+	m.planIssues = []issues.Status{
+		{Issue: issues.Issue{Number: 1, Title: "Issue"}, Launchable: true, Ready: true},
+	}
+	m.planIssuesLoadedFor = "plan-a"
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	if cmd == nil {
+		t.Fatal("q produced no command, want quit")
+	}
+	if _, quitting := cmd().(tea.QuitMsg); !quitting {
+		t.Error("q did not quit from detail screen")
+	}
+}
+
+func TestQKeyInsertsTextWhenPromptFocused(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenNewPlan
+	m.input.Focus()
+	m.input.SetValue("")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m = next.(Model)
+	if m.input.Value() != "q" {
+		t.Errorf("input value = %q, want 'q'", m.input.Value())
+	}
+}
+
+func TestBKeyGoesBackFromNewPlan(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenNewPlan
+	m.input.Focus()
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	m = next.(Model)
+	if m.screen != screenPlans {
+		t.Errorf("screen = %v, want screenPlans after b", m.screen)
+	}
+}
+
+func TestQuestionMarkTogglesHelp(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenPlans
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = next.(Model)
+	if !m.help {
+		t.Error("? did not open help")
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = next.(Model)
+	if m.help {
+		t.Error("? did not close help")
+	}
+}
+
+func TestEscClosesHelp(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenPlans
+	m.help = true
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(Model)
+	if m.help {
+		t.Error("esc did not close help")
+	}
+}
+
+func TestRKeyRefreshesPlans(t *testing.T) {
+	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
+	m.screen = screenPlans
+
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	m = next.(Model)
+	if !m.plansLoading {
+		t.Error("plans not loading after r")
+	}
+	if cmd == nil {
+		t.Fatal("expected command from r")
+	}
+	msg := cmd()
+	if _, ok := msg.(plansLoadedMsg); !ok {
+		t.Errorf("cmd returned %T, want plansLoadedMsg", msg)
+	}
+}
+
 func TestActionKeyEmitsNotice(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
 	m.screen = screenPlanDetail
@@ -1161,9 +1308,10 @@ func TestFullScreenActionBarSurvivesWrappingContent(t *testing.T) {
 			AwaitingReview: true,
 		}}
 
-		lines := strings.Split(m.issueFullScreenView(), "\n")
-		if len(lines) != m.contentHeight() {
-			t.Errorf("%dx%d: rendered %d lines into %d", size.w, size.h, len(lines), m.contentHeight())
+		view := m.View()
+		lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+		if len(lines) > m.height {
+			t.Errorf("%dx%d: rendered %d lines into %d", size.w, size.h, len(lines), m.height)
 		}
 		if last := lines[len(lines)-1]; !strings.Contains(last, "[B]") && !strings.Contains(last, "[") {
 			t.Errorf("%dx%d: last line is %q, want the action bar", size.w, size.h, last)

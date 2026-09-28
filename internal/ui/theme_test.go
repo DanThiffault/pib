@@ -12,7 +12,7 @@ func planView(t *testing.T, width, height int) string {
 	t.Helper()
 	m := ready(t)
 	m.width, m.height = width, height
-	return m.newPlanView()
+	return m.View()
 }
 
 // The art renders on the startup screen when there is room, and nowhere
@@ -57,7 +57,7 @@ func TestPlanTabKeepsItsPromptAtEverySize(t *testing.T) {
 		{40, 20},  // neither
 	} {
 		view := planView(t, size.w, size.h)
-		for _, want := range []string{"What do you want to plan?", "enter plan"} {
+		for _, want := range []string{"What do you want to plan?", "[ENTER]"} {
 			if !strings.Contains(view, want) {
 				t.Errorf("%dx%d is missing %q:\n%s", size.w, size.h, want, view)
 			}

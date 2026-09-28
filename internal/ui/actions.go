@@ -47,48 +47,98 @@ func issueActions(status issues.Status) []Action {
 			{Key: "l", Label: "Log"},
 			{Key: "c", Label: "Comment"},
 			{Key: "e", Label: "Edit"},
-			{Key: "b", Label: "Back"},
 		}
 	case status.InProgress:
 		return []Action{
 			{Key: "v", Label: "View run"},
 			{Key: "k", Label: "Kill run"},
-			{Key: "b", Label: "Back"},
 		}
 	case status.AwaitingReview:
 		return []Action{
 			{Key: "f", Label: "Feedback"},
 			{Key: "r", Label: "Respond"},
 			{Key: "v", Label: "View PR"},
-			{Key: "b", Label: "Back"},
 		}
 	case status.Blocked:
 		return []Action{
 			{Key: "v", Label: "View blockers"},
-			{Key: "b", Label: "Back"},
 		}
 	case status.Launchable:
 		return []Action{
 			{Key: "s", Label: "Start"},
 			{Key: "v", Label: "View"},
-			{Key: "b", Label: "Back"},
 		}
 	case status.Ready:
 		return []Action{
 			{Key: "e", Label: "Edit"},
 			{Key: "c", Label: "Comment"},
-			{Key: "b", Label: "Back"},
 		}
 	default:
 		return []Action{
 			{Key: "e", Label: "Edit"},
 			{Key: "c", Label: "Comment"},
-			{Key: "b", Label: "Back"},
 		}
 	}
 }
 
-// actionBarView renders the contextual action bar for the selected issue.
+// screenActions returns the contextual actions for the current screen.
+func (m Model) screenActions() []Action {
+	if m.phase != phasePrompt {
+		switch m.phase {
+		case phaseConfirmAgents:
+			return []Action{{Key: "y", Label: "Install"}, {Key: "n", Label: "Exit"}}
+		case phaseConfirmUpdate:
+			return []Action{{Key: "y", Label: "Update"}, {Key: "n", Label: "Keep"}}
+		case phaseConfirmCreate:
+			return []Action{{Key: "y", Label: "Create"}, {Key: "n", Label: "Exit"}}
+		case phaseFailed:
+			return nil
+		default:
+			return nil
+		}
+	}
+
+	switch m.screen {
+	case screenPlans:
+		actions := []Action{
+			{Key: "n", Label: "New plan"},
+			{Key: "enter", Label: "Open"},
+		}
+		if !m.plansLoading && m.plansErr == nil {
+			actions = append(actions, Action{Key: "r", Label: "Refresh"})
+		}
+		return actions
+	case screenNewPlan:
+		return []Action{
+			{Key: "enter", Label: "Plan"},
+			{Key: "alt+enter", Label: "Newline"},
+			{Key: "b", Label: "Back"},
+		}
+	case screenPlanDetail, screenIssue:
+		var actions []Action
+		if m.issueCursor >= len(m.planIssues) {
+			actions = []Action{{Key: "b", Label: "Back"}}
+		} else {
+			actions = issueActions(m.planIssues[m.issueCursor])
+			if m.screen == screenPlanDetail && m.hasLaunchableIssues() {
+				startAllAction := Action{Key: "s", Label: "Start all"}
+				rest := make([]Action, 0, len(actions))
+				for _, action := range actions {
+					if action.Key != startAllAction.Key {
+						rest = append(rest, action)
+					}
+				}
+				actions = append([]Action{startAllAction}, rest...)
+			}
+			actions = append(actions, Action{Key: "b", Label: "Back"})
+		}
+		return actions
+	default:
+		return nil
+	}
+}
+
+// actionBarView renders the contextual action bar as the last row of the view.
 func (m Model) actionBarView(width int) string {
 	if width < 1 {
 		width = 1
@@ -101,24 +151,31 @@ func (m Model) actionBarView(width int) string {
 		}
 		return lipgloss.NewStyle().Foreground(theme.DefaultPalette.Tertiary).Render(notice)
 	}
-	if m.issueCursor >= len(m.planIssues) {
-		return renderActionBar([]Action{{Key: "b", Label: "Back"}}, width)
+
+	actions := m.screenActions()
+	if m.phase == phasePrompt && (m.screen != screenNewPlan || !m.input.Focused()) {
+		actions = append(actions, Action{Key: "q", Label: "Quit"})
 	}
-	actions := issueActions(m.planIssues[m.issueCursor])
-	// On the plan itself [s] starts every ready issue, so it reads "Start all"
-	// there and replaces the selected issue's own start action. Inside the
-	// issue view [s] keeps its per-issue meaning.
-	if m.screen == screenPlanDetail && m.hasLaunchableIssues() {
-		startAllAction := Action{Key: "s", Label: "Start all"}
-		rest := make([]Action, 0, len(actions))
-		for _, action := range actions {
-			if action.Key != startAllAction.Key {
-				rest = append(rest, action)
-			}
-		}
-		actions = append([]Action{startAllAction}, rest...)
-	}
+	actions = append(actions, Action{Key: "?", Label: "Help"})
+
 	return renderActionBar(actions, width)
+}
+
+// helpView renders a modal listing the current screen's key bindings.
+func (m Model) helpView() string {
+	h := m.contentHeight()
+	var b strings.Builder
+	b.WriteString(theme.Default.PaneHeader.Width(m.width).Render("Help") + "\n\n")
+
+	for _, a := range m.screenActions() {
+		b.WriteString(itemStyle.Render(fmt.Sprintf("[%s] %s", strings.ToUpper(a.Key), a.Label)) + "\n")
+	}
+	if m.phase == phasePrompt && (m.screen != screenNewPlan || !m.input.Focused()) {
+		b.WriteString(itemStyle.Render("[Q] Quit") + "\n")
+	}
+	b.WriteString(itemStyle.Render("[?] Help") + "\n")
+
+	return pad(m.width, h, b.String())
 }
 
 // hasLaunchableIssues reports whether the current plan has at least one

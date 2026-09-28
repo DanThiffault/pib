@@ -438,7 +438,6 @@ func (m Model) startupView() string {
 		for _, name := range agent.DefaultNames() {
 			b.WriteString(itemStyle.Render("• "+name) + "\n")
 		}
-		b.WriteString("\n" + helpStyle.Render("y/enter install • n/q exit"))
 		return b.String()
 
 	case phaseConfirmUpdate:
@@ -459,7 +458,6 @@ func (m Model) startupView() string {
 		b.WriteString("\n" + itemStyle.Render("That is either a newer pib or your own edits — pib cannot tell.") + "\n")
 		b.WriteString(itemStyle.Render("Updating saves your copies under ~/.pib/"+agent.BackupDir+" first.") + "\n\n")
 		b.WriteString(promptStyle.Render("Update them?") + "\n\n")
-		b.WriteString(helpStyle.Render("y/enter update • n keep mine • q exit"))
 		return b.String()
 
 	case phaseLoadingPlanner:
@@ -470,15 +468,13 @@ func (m Model) startupView() string {
 
 	case phaseFailed:
 		return art + titleStyle.Render("pib") + "\n\n" +
-			errorStyle.Render(m.err.Error()) + "\n\n" +
-			helpStyle.Render(anyKeyHint)
+			errorStyle.Render(m.err.Error()) + "\n\n"
 
 	case phaseConfirmCreate:
 		return art + titleStyle.Render("pib") + "\n\n" +
 			itemStyle.Render(fmt.Sprintf("No %s directory found in %s", workspace.DirName, m.workspace.GitRoot)) + "\n" +
 			itemStyle.Render("pib keeps its workspace there.") + "\n\n" +
-			promptStyle.Render(fmt.Sprintf("Create %s?", m.workspace.Dir)) + "\n\n" +
-			helpStyle.Render("y/enter create • n/q exit")
+			promptStyle.Render(fmt.Sprintf("Create %s?", m.workspace.Dir)) + "\n\n"
 	}
 
 	return art
