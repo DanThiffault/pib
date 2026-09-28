@@ -169,13 +169,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if _, ok := msg.(backgroundTickMsg); ok {
 		var cmds []tea.Cmd
-		cmds = append(cmds, backgroundTick(), outOfScopeTick())
+		cmds = append(cmds, backgroundTick())
 		if (m.screen == screenPlans || m.screen == screenPlanDetail || m.screen == screenIssue) && m.currentPlanSlug() != "" {
 			cmds = append(cmds, m.refreshIssues())
 		}
 		return m, tea.Batch(cmds...)
 	}
 
+	// The out-of-scope scan is armed once, at startup, and re-armed only
+	// from its own message. Arming a slow tick from the fast one would
+	// create a fresh timer on every one of its three-second deliveries, and
+	// nothing ever cancels the abandoned ones: the number of scans would
+	// grow with the square of how long pib has been open.
 	if _, ok := msg.(outOfScopeTickMsg); ok {
 		return m, tea.Batch(outOfScopeTick(), collectOutOfScope(m.store, m.triage, m.currentPlanSlug()))
 	}

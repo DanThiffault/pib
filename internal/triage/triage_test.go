@@ -2,6 +2,7 @@ package triage
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -280,4 +281,80 @@ func TestMarkedSummaryIsTheIssueLineOfAMarkedFinding(t *testing.T) {
 	if found[0].Summary != want {
 		t.Errorf("summary = %q, want %q", found[0].Summary, want)
 	}
+}
+
+// A scan is on a timer as well as on a listing, and a code-reviewer run is
+// not cheap. A finding the agent looked at and declined is worth another look
+// only when someone has said something new under it.
+func TestADeclinedThreadIsJudgedOnceUntilSomeoneReplies(t *testing.T) {
+	thread := marked("The money type is a float.")
+
+	s := &spy{}
+	c := &Collector{Threads: reader{threads: []pr.Thread{thread}}, Spawn: s}
+
+	for i := 0; i < 3; i++ {
+		c.Collect(open)
+	}
+	if !waitFor(t, 1, s) {
+		t.Fatal("no triage launched")
+	}
+	for i := 0; i < 100 && s.count() > 1; i++ {
+		time.Sleep(time.Millisecond)
+	}
+	if got := s.count(); got != 1 {
+		t.Errorf("launched %d agents across 3 passes over an unchanging thread, want 1", got)
+	}
+
+	// A reply is what the agent is there to read, so a new one is a new
+	// question and gets a new run.
+	replied := thread
+	replied.Comments = append(append([]pr.Comment(nil), thread.Comments...),
+		pr.Comment{Author: "dan", ID: 103, Body: "actually, yes — file that one"})
+	c.Threads = reader{threads: []pr.Thread{replied}}
+	c.Collect(open)
+
+	if !waitFor(t, 2, s) {
+		t.Errorf("a reply under the finding did not get a second agent: %d run(s)", s.count())
+	}
+}
+
+// A run that never happened taught the agent nothing, so the next pass may
+// try again rather than leave the finding triaged by a run that did no work.
+func TestAFailedRunIsForgottenRatherThanRememberedAsJudged(t *testing.T) {
+	s := &failingSpawner{}
+	c := &Collector{Threads: reader{threads: []pr.Thread{marked("The money type is a float.")}}, Spawn: s}
+
+	c.Collect(open)
+	waitForFails(t, s, 1)
+	c.Collect(open)
+	waitForFails(t, s, 2)
+}
+
+type failingSpawner struct {
+	mu       sync.Mutex
+	attempts int
+}
+
+func (f *failingSpawner) Run(context.Context, protocol.Request) (protocol.Response, error) {
+	f.mu.Lock()
+	f.attempts++
+	f.mu.Unlock()
+	return protocol.Response{}, errors.New("no model time left")
+}
+
+func (f *failingSpawner) attempts_() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.attempts
+}
+
+func waitForFails(t *testing.T, f *failingSpawner, want int) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if f.attempts_() >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("attempts = %d, want %d", f.attempts_(), want)
 }

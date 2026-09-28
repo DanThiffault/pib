@@ -48,6 +48,16 @@ type Collector struct {
 
 	mu      sync.Mutex
 	running map[string]bool
+	// judged is the last comment each thread carried when an agent was
+	// launched for it, keyed by thread id.
+	//
+	// An agent is paid for to read the replies under a finding, so a thread
+	// nobody has replied to is not worth a second one: a scan runs on a
+	// timer as well as on a listing, and a finding the agent declined would
+	// otherwise cost a full run on every pass. Keying on the last comment
+	// rather than the thread is what keeps a new reply from being missed —
+	// that reply is the whole reason to look again.
+	judged map[string]int64
 	// marked is what the last scan of each pull request found on it, keyed
 	// by issue. Reconciliation is the only thing that may read GitHub, and
 	// the interface is not allowed to look, so a scan leaves what it read
@@ -209,14 +219,18 @@ func (c *Collector) scan(p issues.OpenPR) {
 		if oos == nil || t.Settled() {
 			continue
 		}
-		if !c.claim(t.ID) {
-			// One agent per thread; a second pass while it runs would
-			// file the same finding twice.
+		if !c.claim(t) {
+			// One agent per thread at a time, and none at all for a thread
+			// already judged as it stands.
 			continue
 		}
 		go func(t pr.Thread, oos *pr.OutOfScope) {
 			defer c.release(t.ID)
 			if _, err := c.Spawn.Run(context.Background(), c.request(p, t, oos)); err != nil {
+				// Nothing was learned, so forget that it was judged: the
+				// next pass may try again rather than leave the finding
+				// triaged by a run that never happened.
+				c.forget(t.ID)
 				c.report(fmt.Errorf("triage of %s: %w", p.URL, err))
 			}
 		}(t, oos)
@@ -252,17 +266,48 @@ func Briefing(p issues.OpenPR, t pr.Thread, oos *pr.OutOfScope) string {
 	return b.String()
 }
 
-func (c *Collector) claim(thread string) bool {
+// claim takes a thread for an agent, and reports whether it is this pass's
+// to run. A thread is worth an agent when no run has read it as it stands:
+// a first look, or a look again because someone has since replied. A claim
+// is recorded before the agent starts, so two passes a moment apart cannot
+// both start one.
+func (c *Collector) claim(t pr.Thread) bool {
+	last := lastCommentID(t)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.running[thread] {
+	if c.running[t.ID] {
+		return false
+	}
+	if judged, ok := c.judged[t.ID]; ok && judged == last {
 		return false
 	}
 	if c.running == nil {
 		c.running = map[string]bool{}
 	}
-	c.running[thread] = true
+	if c.judged == nil {
+		c.judged = map[string]int64{}
+	}
+	c.running[t.ID] = true
+	c.judged[t.ID] = last
 	return true
+}
+
+// lastCommentID is the newest comment in a thread, which is what a new reply
+// changes. A thread with no comments at all is its own id's zero.
+func lastCommentID(t pr.Thread) int64 {
+	if len(t.Comments) == 0 {
+		return 0
+	}
+	return t.Comments[len(t.Comments)-1].ID
+}
+
+// forget un-claims a thread whose agent never ran, so the next pass may
+// try again.
+func (c *Collector) forget(thread string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.judged, thread)
 }
 
 func (c *Collector) release(thread string) {

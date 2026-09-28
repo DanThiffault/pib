@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"pib/internal/config"
 	"pib/internal/issues"
@@ -248,6 +251,17 @@ func testStore(t *testing.T) *issues.Store {
 	return store
 }
 
+// shortScanInterval makes the scan's own tick quick enough for a test to
+// watch a whole arming-and-firing cycle without waiting half an hour. The
+// listing tick is shortened with it, because a test that executes a tick
+// waits for it to fire.
+func shortScanInterval(t *testing.T) {
+	t.Helper()
+	previousScan, previousBackground := outOfScopeInterval, backgroundInterval
+	outOfScopeInterval, backgroundInterval = 10*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() { outOfScopeInterval, backgroundInterval = previousScan, previousBackground })
+}
+
 // The loading command is the only thing that fills the review history in, so
 // its cycles are what the Review section renders from. Testing the message
 // the update handler copies would prove nothing about whether the command
@@ -292,18 +306,89 @@ func TestTheInterfaceScansOpenPullRequestsForMarkedThreads(t *testing.T) {
 		Spawn: nopSpawner{},
 	}
 
-	collected, ok := collectOutOfScope(store, collector, "orders")().(outOfScopeCollectedMsg)
-	if !ok {
-		t.Fatal("collectOutOfScope did not report a scan")
-	}
-	if collected.count != 1 {
-		t.Errorf("scanned %d pull requests, want 1", collected.count)
-	}
+	collectOutOfScope(store, collector, "orders")()
 
 	found := waitForMarked(t, collector, issue.Number, 1)
 	if found[0].ID != "money-type-is-float" {
 		t.Errorf("finding = %+v", found[0])
 	}
+}
+
+// A scan is a GraphQL call per open pull request, and every marked thread it
+// finds can cost a code-reviewer run. Arming the slow tick from the
+// three-second one would create a new chain on every one of those ticks, and
+// nothing ever cancels the abandoned ones — so the scans would grow with the
+// square of how long pib has been open, on the most expensive path in the
+// process.
+func TestTheListingTickDoesNotArmAScanOfItsOwn(t *testing.T) {
+	shortScanInterval(t)
+	store := testStore(t)
+	issue := storeWithReviewedIssue(t, store)
+	reader := &countingThreads{inner: staticThreads{url: issue.PRURL}}
+	collector := &triage.Collector{Threads: reader, Spawn: nopSpawner{}}
+
+	m := ready(t)
+	m.store, m.triage = store, collector
+
+	// Twenty deliveries of the fast tick, at any pace, must arm nothing:
+	// the scan is not its business.
+	for i := 0; i < 20; i++ {
+		var next tea.Model
+		next, cmd := m.Update(backgroundTickMsg(time.Now()))
+		m = next.(Model)
+		drain(cmd)
+	}
+	if got := reader.reads(); got != 0 {
+		t.Errorf("the listing tick triggered %d scans, want none", got)
+	}
+
+	// One delivery of the scan's own message arms exactly one chain, and
+	// further listing ticks leave that one alone.
+	next, cmd := m.Update(outOfScopeTickMsg(time.Now()))
+	m = next.(Model)
+	drain(cmd)
+	waitForReads(t, reader, 1)
+	for i := 0; i < 20; i++ {
+		next, cmd := m.Update(backgroundTickMsg(time.Now()))
+		m = next.(Model)
+		drain(cmd)
+	}
+	time.Sleep(20 * outOfScopeInterval)
+	if got := reader.reads(); got != 1 {
+		t.Errorf("%d scans ran, want exactly 1", got)
+	}
+}
+
+// countingThreads counts the pulls a scan makes.
+type countingThreads struct {
+	inner staticThreads
+
+	mu sync.Mutex
+	n  int
+}
+
+func (c *countingThreads) Threads(ctx context.Context, url string) ([]pr.Thread, error) {
+	c.mu.Lock()
+	c.n++
+	c.mu.Unlock()
+	return c.inner.Threads(ctx, url)
+}
+
+func (c *countingThreads) reads() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+func waitForReads(t *testing.T, c *countingThreads, want int) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if c.reads() >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("no scan ran: %d reads, want %d", c.reads(), want)
 }
 
 // The whole journey, on a real store: a plan load brings the cycles, a scan

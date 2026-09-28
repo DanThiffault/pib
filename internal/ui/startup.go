@@ -365,7 +365,9 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		m.cfg = msg.config
 		m.screen = screenNewPlan
 		m.phase = phasePrompt
-		return m, tea.Batch(m.input.Focus(), backgroundTick()), true
+		// The out-of-scope scan is armed here, once, alongside the listing
+		// tick that also re-arms itself and only itself.
+		return m, tea.Batch(m.input.Focus(), backgroundTick(), outOfScopeTick()), true
 
 	case tea.KeyMsg:
 		switch m.phase {
