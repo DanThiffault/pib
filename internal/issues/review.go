@@ -161,6 +161,41 @@ func (s *Store) Reviews(issue int64) ([]Review, error) {
 	return list, rows.Err()
 }
 
+// PlanReviews lists every review cycle in a plan, keyed by issue, in the same
+// order Reviews gives them.
+//
+// It exists so an interface can render a plan's review history without asking
+// the store one question per issue: a listing that knows nothing about review
+// must not pay for a screen that does.
+func (s *Store) PlanReviews(plan string) (map[int64][]Review, error) {
+	query := `
+		SELECT v.id, v.issue, v.pr_url, v.cycle, v.run, v.verdict, v.findings, v.started_at, v.ended_at
+		FROM reviews v JOIN issues i ON i.number = v.issue
+		JOIN plans p ON p.id = i.plan_id`
+	var args []any
+	if plan != "" {
+		query += ` WHERE p.slug = ?`
+		args = append(args, plan)
+	}
+	query += ` ORDER BY v.rowid`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byIssue := map[int64][]Review{}
+	for rows.Next() {
+		review, err := scanReview(rows)
+		if err != nil {
+			return nil, err
+		}
+		byIssue[review.Issue] = append(byIssue[review.Issue], review)
+	}
+	return byIssue, rows.Err()
+}
+
 // review reads one cycle back, so callers see the row as it landed.
 func (s *Store) review(id string) (Review, error) {
 	row := s.db.QueryRow(`
