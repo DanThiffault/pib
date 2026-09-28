@@ -165,9 +165,10 @@ already visits every open linked pull request on a window; it now also collects 
 comments and looks for a reply beneath them.
 
 Deciding whether "yeah, good catch, though maybe later" is a request to file an issue is a
-judgment, so it is made by an agent and not by a pattern match. A new `pr-triage` agent —
-small, `read` and `bash`, one thread at a time — reads the marked comment and the replies
-under it and either files the issue or does nothing.
+judgment, so it is made by an agent and not by a pattern match. The agent is the
+`code-reviewer` that wrote the marker, spawned again against the one thread — a filing pass,
+not a review. It reads the marked comment and the replies under it and either files the
+issue or does nothing.
 
 Idempotency is on the pull request, where the state already lives. Having filed, the agent
 replies to the thread:
@@ -223,8 +224,8 @@ Negative:
 - pib now spawns agents from a hook the user did not press a key for. The status line in
   [ADR-003](003-horizontal-tui-layout.md) exists partly because of this.
 - A wrong verdict from the reviewer burns a coder run on a finding that was not real.
-- `pr-triage` reads comments from a pull request anyone can comment on, and files issues
-  from them. It files only under a marker pib's own reviewer wrote, but the reply it acts
+- The filing pass reads comments from a pull request anyone can comment on, and files issues
+  from them. It files only under a marker the code-reviewer wrote, but the reply it acts
   on is arbitrary text from GitHub.
 - The rename touches `config.toml`, both agent definitions, `planner.md`, and any plan
   already carrying a `reviewer` issue.

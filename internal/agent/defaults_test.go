@@ -20,7 +20,7 @@ func TestDefaultNamesLeadWithPlanner(t *testing.T) {
 	}
 	for _, want := range []string{
 		"planner", "scout", "researcher", "code-reviewer", "coder", "prototype",
-		"plan-reviewer", "plan-recheck", "pr-triage",
+		"plan-reviewer", "plan-recheck",
 	} {
 		if !slices.Contains(names, want) {
 			t.Errorf("default set is missing %q: %v", want, names)
@@ -100,10 +100,9 @@ func TestAgentsCanRunThePibCommandsTheyNeed(t *testing.T) {
 	needs := map[string][]string{
 		"planner":       {"pib plan apply", "pib issue ready", "blockedBy"},
 		"coder":         {"pib issue view", "pib issue link-pr"},
-		"code-reviewer": {"pib issue view", "pib review record"},
+		"code-reviewer": {"pib issue view", "pib review record", "pib issue create --plan", "pib:filed"},
 		"plan-reviewer": {"pib plan view", "pib issue list --plan", "pib issue comment", "pib issue create"},
 		"plan-recheck":  {"pib issue view", "pib issue list --plan", "pib issue comment"},
-		"pr-triage":     {"pib issue create --plan", "--type task", "pib:filed"},
 	}
 
 	for name, commands := range needs {

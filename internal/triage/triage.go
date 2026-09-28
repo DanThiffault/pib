@@ -20,8 +20,9 @@ import (
 	"pib/internal/protocol"
 )
 
-// AgentName is the definition the collector launches per unsettled thread.
-const AgentName = "pr-triage"
+// AgentName is the definition the collector launches per unsettled
+// thread: the code-reviewer again, which files its own marked finding.
+const AgentName = "code-reviewer"
 
 // ThreadReader reads the review threads on a pull request. pr.CLI
 // satisfies it.
@@ -35,7 +36,8 @@ type Spawner interface {
 }
 
 // Collector scans open linked pull requests for out-of-scope threads that
-// have not been settled and spawns pr-triage for each.
+// have not been settled and spawns the code-reviewer for each, on a filing
+// pass rather than a review.
 type Collector struct {
 	// Threads reads a pull request's review threads. Required.
 	Threads ThreadReader
@@ -102,7 +104,7 @@ func (c *Collector) request(p issues.OpenPR, t pr.Thread, oos *pr.OutOfScope) pr
 // it may file one.
 func Briefing(p issues.OpenPR, t pr.Thread, oos *pr.OutOfScope) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Pull request %s (issue #%d) carries an out-of-scope finding from pib's code-reviewer.\n\n", p.URL, p.Number)
+	fmt.Fprintf(&b, "Pull request %s (issue #%d) carries an out-of-scope finding you marked earlier.\n\n", p.URL, p.Number)
 	fmt.Fprintf(&b, "The marker says it would be filed as: pib issue create --plan %s --type task (id %s).\n\n", oos.Plan, oos.ID)
 	fmt.Fprintf(&b, "The finding, in the reviewer's own words:\n\n%s\n\n", oos.Body)
 	if len(t.Comments) > 0 {
