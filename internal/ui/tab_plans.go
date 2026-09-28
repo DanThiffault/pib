@@ -70,7 +70,11 @@ func loadPlanIssues(store *issues.Store, planSlug string, cfg config.Config) tea
 // open pull request, so this is deliberately far slower than the tick that
 // keeps the lists current, and is the same window reconciliation trusts a
 // pull request's own state for.
-const outOfScopeInterval = issues.DefaultPRWindow
+//
+// It is a variable so a test can run the arming pattern in milliseconds
+// rather than in the half hour it takes to notice a chain that was armed
+// twice.
+var outOfScopeInterval = issues.DefaultPRWindow
 
 // outOfScopeTickMsg drives the periodic scan for out-of-scope findings. It is
 // separate from the listing tick because it is the one refresh path that
@@ -81,9 +85,10 @@ func outOfScopeTick() tea.Cmd {
 	return tea.Tick(outOfScopeInterval, func(t time.Time) tea.Msg { return outOfScopeTickMsg(t) })
 }
 
-// outOfScopeCollectedMsg reports a scan of the open pull requests, or that
-// there was nothing to scan.
-type outOfScopeCollectedMsg struct{ count int }
+// outOfScopeCollectedMsg reports that a scan of the open pull requests has
+// run, or that there was nothing to scan. It says nothing: the collector is
+// what a render reads, and its contents are the whole result.
+type outOfScopeCollectedMsg struct{}
 
 // collectOutOfScope hands the workspace's open pull requests to the shared
 // triage collector, which reads their threads and keeps what it finds for the
@@ -105,7 +110,7 @@ func collectOutOfScope(store *issues.Store, collector *triage.Collector, plan st
 			return outOfScopeCollectedMsg{}
 		}
 		collector.Collect(prs)
-		return outOfScopeCollectedMsg{count: len(prs)}
+		return outOfScopeCollectedMsg{}
 	}
 }
 
@@ -433,12 +438,17 @@ func refreshTick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return refreshTickMsg(t) })
 }
 
+// backgroundInterval is how often the plan views are re-read from the store.
+// It is a variable for the same reason outOfScopeInterval is: a test that
+// runs a tick's arming pattern should not take minutes to do it.
+var backgroundInterval = 3 * time.Second
+
 // backgroundTickMsg drives the periodic silent refresh that keeps the plan
 // view up to date even when no agent is running.
 type backgroundTickMsg time.Time
 
 func backgroundTick() tea.Cmd {
-	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg { return backgroundTickMsg(t) })
+	return tea.Tick(backgroundInterval, func(t time.Time) tea.Msg { return backgroundTickMsg(t) })
 }
 
 // spawner starts an agent. The UI names the one method it needs rather than
