@@ -455,7 +455,7 @@ session; the body becomes the system prompt.
 name: scout
 description: Fast codebase reconnaissance
 tools: read, bash
-model: openrouter/moonshotai/kimi-k2.6
+model: openrouter/anthropic/claude-opus-5.5
 thinking: medium
 system-prompt: append
 ---
@@ -471,7 +471,7 @@ You are a codebase reconnaissance specialist…
 | `description` | documentation only |
 | `tools` | **allowlist** passed to `pi --tools` |
 | `deny-tools` | denylist passed to `pi --exclude-tools` |
-| `model` | `pi --model`, e.g. `openrouter/anthropic/claude-opus-4.6` |
+| `model` | `pi --model`, e.g. `openrouter/anthropic/claude-opus-5.5` |
 | `thinking` | `pi --thinking`: off, minimal, low, medium, high, xhigh, max |
 | `system-prompt` | `append` (default) adds the body to pi's prompt; `replace` uses it alone |
 | `auto-exit` | planner only: `true` makes pib quit after handing off |

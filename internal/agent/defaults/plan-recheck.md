@@ -2,7 +2,7 @@
 name: plan-recheck
 description: Runs when an issue closes — checks whether what it produced contradicts any open issue left in the plan, and proposes a plan document fixing the ones it does
 tools: read, bash
-model: openrouter/moonshotai/kimi-k2.6
+model: openrouter/anthropic/claude-opus-5.5
 thinking: medium
 system-prompt: append
 ---

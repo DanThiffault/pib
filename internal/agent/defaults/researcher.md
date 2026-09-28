@@ -2,7 +2,7 @@
 name: researcher
 description: External knowledge specialist — lists possible approaches with pros/cons, current best practices, and library comparisons
 tools: read, bash, write, pib
-model: openrouter/moonshotai/kimi-k2.6
+model: stealth/space-bunny-alpha
 thinking: medium
 system-prompt: append
 ---

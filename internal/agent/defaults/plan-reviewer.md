@@ -2,7 +2,7 @@
 name: plan-reviewer
 description: Reviews a plan against the codebase — once before work starts (opening pass) and once after every issue closes (closing pass)
 tools: read, bash
-model: openrouter/moonshotai/kimi-k2.6
+model: openrouter/anthropic/claude-opus-5.5
 thinking: medium
 system-prompt: append
 ---

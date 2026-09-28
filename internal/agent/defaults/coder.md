@@ -2,7 +2,7 @@
 name: coder
 description: Implements a single pib issue — writes code, pushes to a dedicated branch, opens a PR and links it to the issue
 tools: read, bash, write, edit
-model: openrouter/moonshotai/kimi-k2.6
+model: stealth/space-bunny-alpha
 thinking: minimal
 system-prompt: append
 ---
