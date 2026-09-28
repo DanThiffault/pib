@@ -213,15 +213,12 @@ func (m Model) promptPane(w, h int) string {
 	if m.planner.Model != "" {
 		b.WriteString(itemStyle.Render(m.planner.Model) + "\n")
 	}
-	b.WriteString(helpStyle.Render(destination()) + "\n\n")
 	b.WriteString(promptStyle.Render("What do you want to plan?") + "\n")
 	b.WriteString(m.input.View() + "\n")
 
 	if m.notice != "" {
 		b.WriteString(noticeStyle.Render(m.notice) + "\n")
 	}
-
-	b.WriteString(helpStyle.Render("enter plan • alt+enter newline • esc back"))
 
 	return pad(w, h, b.String())
 }

@@ -36,9 +36,10 @@ var (
 	upKeys      = key.NewBinding(key.WithKeys("up"))
 	downKeys    = key.NewBinding(key.WithKeys("down"))
 	selectKeys  = key.NewBinding(key.WithKeys("right", "enter"))
-	backKeys    = key.NewBinding(key.WithKeys("left", "esc"))
+	backKeys    = key.NewBinding(key.WithKeys("left", "esc", "b"))
 	startKeys   = key.NewBinding(key.WithKeys("s"))
 	newPlanKeys = key.NewBinding(key.WithKeys("n"))
+	refreshKeys = key.NewBinding(key.WithKeys("r"))
 )
 
 type screen int
@@ -81,6 +82,8 @@ type Model struct {
 	planIssuesErr       error
 	planIssuesLoadedFor string
 	cfg                 config.Config
+
+	help bool
 
 	// inFlight holds the issues pib has an outstanding spawn for. A run is
 	// only recorded once the agent's window exists, so until then the store
@@ -164,9 +167,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		// Quitting works from the top level; below it esc means back.
+		if m.help {
+			m.help = false
+			if keyMsg.String() == "?" || keyMsg.Type == tea.KeyEsc {
+				return m, nil
+			}
+			// Fall through to normal handling for any other key.
+		}
+
+		if keyMsg.String() == "?" && !m.input.Focused() {
+			m.help = !m.help
+			return m, nil
+		}
+
+		if keyMsg.String() == "q" && !m.input.Focused() {
+			return m, tea.Quit
+		}
+
+		// esc is back on every screen but the top level, where it quits;
+		// ctrl+c quits from anywhere.
 		quitting := key.Matches(keyMsg, cancelKeys)
-		if (m.screen == screenNewPlan || m.screen == screenPlanDetail || m.screen == screenIssue) && key.Matches(keyMsg, backKeys) {
+		if m.screen != screenPlans && key.Matches(keyMsg, backKeys) {
 			quitting = false
 		}
 		if quitting {
@@ -190,7 +211,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	if m.phase != phasePrompt {
-		return m.ground(m.startupView())
+		view := m.startupView()
+		if m.height > 0 {
+			lines := strings.Count(view, "\n") + 1
+			if pad := m.height - 1 - lines; pad > 0 {
+				view += strings.Repeat("\n", pad)
+			}
+		}
+		return m.ground(view + "\n" + m.actionBarView(m.width))
 	}
 
 	var b strings.Builder
@@ -198,16 +226,21 @@ func (m Model) View() string {
 	if m.screen == screenPlanDetail || m.screen == screenIssue {
 		b.WriteString(m.breadcrumbView() + "\n")
 	}
-	switch m.screen {
-	case screenNewPlan:
-		b.WriteString(m.newPlanView())
-	case screenPlans:
-		b.WriteString(m.plansView())
-	case screenPlanDetail:
-		b.WriteString(m.plansView())
-	case screenIssue:
-		b.WriteString(m.plansView())
+	if m.help {
+		b.WriteString(m.helpView())
+	} else {
+		switch m.screen {
+		case screenNewPlan:
+			b.WriteString(m.newPlanView())
+		case screenPlans:
+			b.WriteString(m.plansView())
+		case screenPlanDetail:
+			b.WriteString(m.plansView())
+		case screenIssue:
+			b.WriteString(m.plansView())
+		}
 	}
+	b.WriteString("\n" + m.actionBarView(m.width))
 	return m.ground(b.String())
 }
 
@@ -267,7 +300,7 @@ func (m Model) breadcrumbView() string {
 	if m.screen == screenIssue && m.issueCursor < len(m.planIssues) {
 		parts = append(parts, fmt.Sprintf("#%d %s", m.planIssues[m.issueCursor].Number, m.planIssues[m.issueCursor].Title))
 	}
-	return strings.Join(parts, " › ")
+	return truncate(strings.Join(parts, " › "), m.width)
 }
 
 const (
@@ -296,6 +329,7 @@ func (m Model) contentHeight() int {
 	if m.screen == screenPlanDetail || m.screen == screenIssue {
 		h-- // breadcrumb
 	}
+	h-- // action bar
 	if h < 1 {
 		h = 1
 	}

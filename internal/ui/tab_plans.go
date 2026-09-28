@@ -150,7 +150,7 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.notice = ""
 				return m, nil
 			}
-			m, cmd := m.issueActionKey(keyMsg, screenPlanDetail)
+			m, cmd := m.issueActionKey(keyMsg)
 			return m, cmd
 		case screenPlanDetail:
 			switch {
@@ -181,7 +181,7 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.handleStartAllReady()
 			}
 
-			m, cmd := m.issueActionKey(keyMsg, screenPlans)
+			m, cmd := m.issueActionKey(keyMsg)
 			return m, cmd
 		}
 
@@ -229,6 +229,9 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = screenNewPlan
 			m.planCursor = 0
 			return m, m.input.Focus()
+		case key.Matches(keyMsg, refreshKeys):
+			m.plansLoading = true
+			return m, loadPlans(m.store)
 		}
 	}
 
@@ -440,9 +443,7 @@ func (m Model) isShort() bool {
 }
 
 // issueActionKey dispatches a contextual action key for the selected issue.
-// The plan detail and full-screen views offer the same actions; they differ
-// only in where [B]ack goes, so back is passed in rather than assumed.
-func (m Model) issueActionKey(keyMsg tea.KeyMsg, back screen) (Model, tea.Cmd) {
+func (m Model) issueActionKey(keyMsg tea.KeyMsg) (Model, tea.Cmd) {
 	if m.issueCursor >= len(m.planIssues) {
 		return m, nil
 	}
@@ -450,11 +451,6 @@ func (m Model) issueActionKey(keyMsg tea.KeyMsg, back screen) (Model, tea.Cmd) {
 	for _, a := range issueActions(issue) {
 		if keyMsg.String() != a.Key {
 			continue
-		}
-		if a.Key == "b" {
-			m.screen = back
-			m.notice = ""
-			return m, nil
 		}
 		m.notice = actionNotice(a, issue)
 		return m, actionCmd(a, issue)
@@ -813,16 +809,11 @@ func (m Model) planDetailTwoPaneView() string {
 	}
 
 	h := m.contentHeight()
-	paneH := h - 1 // action bar
-	if paneH < 1 {
-		paneH = 1
-	}
 	if m.isShort() {
-		actionBar := m.actionBarView(m.width)
-		return lipgloss.JoinVertical(lipgloss.Left, m.issueListPane(m.width, paneH), actionBar)
+		return lipgloss.JoinVertical(lipgloss.Left, m.issueListPane(m.width, h))
 	}
 
-	topH, bottomH := paneHeights(paneH)
+	topH, bottomH := paneHeights(h)
 	topPane := m.issueListPane(m.width, topH)
 
 	title := "issue"
@@ -831,13 +822,11 @@ func (m Model) planDetailTwoPaneView() string {
 	}
 	rule := titledRule(m.width, title)
 	bottomPane := m.issuePreviewPane(m.width, bottomH)
-	actionBar := m.actionBarView(m.width)
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		topPane,
 		rule,
 		bottomPane,
-		actionBar,
 	)
 }
 
@@ -860,21 +849,16 @@ func (m Model) issueFullScreenView() string {
 		return m.renderCentered(helpStyle.Render("No issues in this plan."))
 	}
 
-	paneH := m.contentHeight() - 1
-	if paneH < 1 {
-		paneH = 1
-	}
+	h := m.contentHeight()
 
 	var pane string
 	if m.issueCursor >= len(m.planIssues) {
-		pane = pad(m.width, paneH, "")
+		pane = pad(m.width, h, "")
 	} else {
-		pane = issueDetail(m.planIssues[m.issueCursor], m.width, paneH, detailFull)
+		pane = issueDetail(m.planIssues[m.issueCursor], m.width, h, detailFull)
 	}
 
-	// The action bar is pinned to the bottom, so the pane above it must be
-	// exactly paneH lines however long the issue is.
-	return lipgloss.JoinVertical(lipgloss.Left, pane, m.actionBarView(m.width))
+	return lipgloss.JoinVertical(lipgloss.Left, pane)
 }
 
 func (m Model) issuePreviewPane(w, h int) string {
