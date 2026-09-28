@@ -27,6 +27,15 @@ func reviewedAt(hour, minute int) time.Time {
 	return time.Date(2026, 9, 4, hour, minute, 0, 0, time.UTC)
 }
 
+// longBody is a body long enough that no pane these tests use can hold it.
+func longBody(lines int) string {
+	var b strings.Builder
+	for i := 0; i < lines; i++ {
+		fmt.Fprintf(&b, "line %02d of a body that runs well past the bottom of the pane\n", i)
+	}
+	return b.String()
+}
+
 // proseModel is a model parked on one issue whose markdown file is already
 // held, which is the only place the interface gets prose from. There is no
 // store attached: a render must never reach one.
@@ -423,6 +432,124 @@ func navigate(t *testing.T, m Model, msg tea.Msg) Model {
 	return next.(Model)
 }
 
+// Holding the down arrow to the end and then keeping holding is what puts the
+// offset past the last row. If only the drawn window is clamped, the model keeps
+// the overshoot and every press of the up arrow is spent climbing back out of it
+// rather than moving the pane, so the scroll looks broken at exactly the moment
+// the user is trying to read something.
+func TestScrollingBackFromPastTheEndMovesThePane(t *testing.T) {
+	m := proseModel(t)
+	m.width, m.height = 70, 20
+	m.issueProse[7] = issueProse{file: issues.File{Body: longBody(60)}}
+
+	// Key-repeat: far more presses than there are rows below.
+	for i := 0; i < 200; i++ {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = next.(Model)
+	}
+	bottom, want := m.issueFullScreenView(), m.maxIssueScroll()
+	if m.issueScroll != want {
+		t.Errorf("issueScroll = %d after key-repeat, want the last row (%d)", m.issueScroll, want)
+	}
+	if bottom != m.issueFullScreenView() {
+		t.Error("the pane is not stable at the end of the content")
+	}
+
+	// One press up has to move the pane by a row, not by however far the
+	// down arrow overshot.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = next.(Model)
+	if m.issueScroll != want-1 {
+		t.Errorf("issueScroll = %d after one press up, want %d", m.issueScroll, want-1)
+	}
+	if after := m.issueFullScreenView(); after == bottom {
+		t.Error("the pane did not move on the press up after an overshoot")
+	}
+}
+
+// The same overshoot reached by paging rather than by key-repeat, because a
+// page is the key most likely to overshoot: it moves a whole screen at once.
+func TestPagingPastTheEndLeavesAnOffsetThatPagesBack(t *testing.T) {
+	m := proseModel(t)
+	m.width, m.height = 70, 20
+	m.issueProse[7] = issueProse{file: issues.File{Body: longBody(60)}}
+
+	for i := 0; i < 20; i++ {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+		m = next.(Model)
+	}
+	bottom, want := m.issueFullScreenView(), m.maxIssueScroll()
+	if m.issueScroll != want {
+		t.Errorf("issueScroll = %d after paging to the end, want %d", m.issueScroll, want)
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	m = next.(Model)
+	if m.issueScroll >= want {
+		t.Errorf("issueScroll = %d after paging back up, want less than %d", m.issueScroll, want)
+	}
+	if after := m.issueFullScreenView(); after == bottom {
+		t.Error("the pane did not move on the page up after an overshoot")
+	}
+}
+
+// Content that fits the pane has nothing to scroll, and the offset stays at the
+// top rather than drifting into a range the pane will silently ignore.
+func TestContentThatFitsThePaneDoesNotScroll(t *testing.T) {
+	m := proseModel(t)
+	m.width, m.height = 100, 40
+
+	if m.maxIssueScroll() != 0 {
+		t.Errorf("maxIssueScroll = %d for content that fits, want 0", m.maxIssueScroll())
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if m.issueScroll != 0 {
+		t.Errorf("issueScroll = %d on content that fits, want 0", m.issueScroll)
+	}
+}
+
+// The cursor is on the first issue from the moment the list appears, so the
+// preview pane — the pane on screen as the issues load — has to be the one
+// holding that issue's comment count, not a pane that fills in after the user
+// moves off the issue and back.
+func TestTheIssueUnderTheCursorIsReadWhenThePlanLoads(t *testing.T) {
+	store := testStore(t)
+	if _, err := store.CreatePlan(issues.NewPlan{Slug: "orders", Title: "Orders"}); err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	issue, err := store.Create(issues.NewIssue{Plan: "orders", Type: "coder", Title: "Show the body"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.Comment(issue.Number, "plan-reviewer", reviewComment); err != nil {
+		t.Fatalf("Comment: %v", err)
+	}
+
+	m := plansModel(t, []issues.Plan{{Slug: "orders", Title: "Orders"}})
+	m.store, m.screen = store, screenPlanDetail
+
+	msg := loadPlanIssues(store, "orders", m.cfg)()
+	next, cmd := m.Update(msg)
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("loading a plan's issues did not read the issue the cursor is on")
+	}
+	next, _ = m.Update(cmd())
+	m = next.(Model)
+	if _, held := m.issueProse[issue.Number]; !held {
+		t.Fatalf("the issue under the cursor was not read: %+v", m.issueProse)
+	}
+
+	preview := m.issuePreviewPane(45, 20)
+	if !strings.Contains(preview, "Comments: 1") {
+		t.Errorf("the preview pane does not say there is a comment to read:\n%s", preview)
+	}
+	if strings.Contains(preview, "Fourteen issues checked") {
+		t.Errorf("the preview pane spent its rows on the comment itself:\n%s", preview)
+	}
+}
+
 // The preview pane shares its rows with the issue list, and half a width cannot
 // hold a fenced diff. It says how much there is to read and leaves the reading
 // to the full-screen view.
@@ -461,6 +588,8 @@ func TestThePreviewPaneStillFitsTheSizesItsTestsCover(t *testing.T) {
 // that swallowed them would make the view read-only.
 func TestScrollingTakesTheCursorKeysOnlyInTheFullScreenView(t *testing.T) {
 	m := proseModel(t)
+	m.width, m.height = 70, 20
+	m.issueProse[7] = issueProse{file: issues.File{Body: longBody(80)}}
 	m.planIssues = append(m.planIssues, issues.Status{
 		Issue: issues.Issue{Number: 8, Title: "Another issue", State: issues.StateOpen, Type: "coder"},
 	})

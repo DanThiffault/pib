@@ -197,7 +197,12 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.planIssues = m.markInFlight(msg.issues)
 		m.planReviews = msg.reviews
 		m.planIssuesErr = nil
-		return m, nil
+		// The cursor is on the first issue from the moment the list appears, so
+		// this is where that issue's prose is read. Leaving it to the cursor
+		// keys means the preview pane — the pane on screen as the list arrives
+		// — is the one place with no comment count until the user moves off the
+		// issue and back.
+		return m, m.selectIssueContent()
 	// Semantic action messages — the contract for future backend handlers.
 	case startIssueMsg:
 		return m.handleStartIssue(msg.issue)
@@ -380,9 +385,11 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 // issue on screen, and reports whether the key was one of its own so the
 // caller does not offer it to the action bar as well.
 //
-// The offset is only clamped at the top here. The bottom is clamped when the
-// pane renders, because the number of rows below the cursor is a property of
-// the terminal and the content, and the model knows neither.
+// Both ends of the offset are clamped here rather than left to the renderer.
+// Clamping the drawn window alone is not enough: View works on a copy, so an
+// offset that key-repeat carried past the last row would sit in the model while
+// the pane showed the final page, and the up arrow would then spend its presses
+// climbing back out of the gap instead of moving anything.
 func (m *Model) scrollIssue(keyMsg tea.KeyMsg) bool {
 	delta := 0
 	switch {
@@ -401,8 +408,26 @@ func (m *Model) scrollIssue(keyMsg tea.KeyMsg) bool {
 	if m.issueScroll < 0 {
 		m.issueScroll = 0
 	}
+	if last := m.maxIssueScroll(); m.issueScroll > last {
+		m.issueScroll = last
+	}
 	m.notice = ""
 	return true
+}
+
+// maxIssueScroll is how far down the full-screen view can go: the row that
+// leaves the last line of the content on screen.
+//
+// It works out the row count by rendering what the pane renders, from data the
+// model already holds, so asking costs no read of the store or GitHub — the
+// same rule every other render in this file is under. scrollPane clamps to
+// this too: a terminal that shrank between one keypress and the next can put
+// an offset past rows that are no longer there.
+func (m Model) maxIssueScroll() int {
+	if last := len(wrapToWidth(m.width, m.issueFullScreenContent())) - m.contentHeight(); last > 0 {
+		return last
+	}
+	return 0
 }
 
 // currentPlanSlug is the plan the cursor is on, empty when there is none.
@@ -1049,12 +1074,20 @@ func (m Model) issueFullScreenView() string {
 	}
 
 	h := m.contentHeight()
+	return scrollPane(m.issueFullScreenContent(), m.width, h, m.issueScroll)
+}
 
+// issueFullScreenContent is the full-screen view's content, at whatever length
+// it comes to. It is a lookup in what the model already holds — the issue's
+// fields, the reviews and comments gathered for it — so a render never reaches
+// the store, and neither does the scroll clamp that has to know how tall the
+// result is.
+func (m Model) issueFullScreenContent() string {
 	if m.issueCursor >= len(m.planIssues) {
-		return scrollPane("", m.width, h, m.issueScroll)
+		return ""
 	}
 	issue := m.planIssues[m.issueCursor]
-	return scrollPane(issueDetailContent(issue, m.detailFor(issue), m.width, detailFull), m.width, h, m.issueScroll)
+	return issueDetailContent(issue, m.detailFor(issue), m.width, detailFull)
 }
 
 // issuePreviewPane renders the issue half of the plan detail view. It gets
@@ -1413,14 +1446,24 @@ func pad(w, h int, content string) string {
 	return lipgloss.NewStyle().Width(w).Height(h).MaxHeight(h).Render(content)
 }
 
+// wrapToWidth renders content wrapped to the pane and returns the rows it
+// came to as. Wrapping happens here, once, because a line that wraps is two
+// rows: anything that counts the content's height — the scroll window, the
+// scroll clamp — would otherwise be counting source newlines and be wrong by
+// however much the pane wrapped.
+func wrapToWidth(w int, content string) []string {
+	if w < 1 {
+		w = 1
+	}
+	return strings.Split(lipgloss.NewStyle().Width(w).Render(content), "\n")
+}
+
 // scrollPane fits the window at offset into exactly w by h, for content longer
 // than the pane. It is the counterpart to pad: pad cuts at h, and a cut is the
 // wrong answer for an issue whose comments run past the bottom of the screen.
 //
-// Wrapping happens before the window is taken, because a line that wraps is two
-// rows and the source's newline count would size the window on a lie. The
-// offset is clamped to the content rather than trusted, so a stale offset — the
-// terminal shrank, or the pane is shorter than the last one — cannot open a
+// The offset is clamped to the content rather than trusted, so a stale offset —
+// the terminal shrank, or the pane is shorter than the last one — cannot open a
 // window on rows that are not there.
 func scrollPane(content string, w, h, offset int) string {
 	if w < 1 {
@@ -1429,7 +1472,7 @@ func scrollPane(content string, w, h, offset int) string {
 	if h < 1 {
 		h = 1
 	}
-	rows := strings.Split(lipgloss.NewStyle().Width(w).Render(content), "\n")
+	rows := wrapToWidth(w, content)
 	total := len(rows)
 
 	// Scrolling stops where the last row is on screen: any further and the
