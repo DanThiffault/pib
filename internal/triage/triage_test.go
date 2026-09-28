@@ -11,6 +11,7 @@ import (
 	"pib/internal/issues"
 	"pib/internal/pr"
 	"pib/internal/protocol"
+	"pib/internal/session"
 )
 
 type spy struct {
@@ -44,13 +45,27 @@ func waitFor(t *testing.T, want int, s *spy) bool {
 	return false
 }
 
+// reader is a pull request's threads, in a form a test can change while
+// scans are still in flight. A scan reads it from its own goroutine, so the
+// swap has to be as careful as the scan: assigning Collector.Threads
+// directly races every one of them.
 type reader struct {
+	mu      sync.Mutex
 	threads []pr.Thread
 	err     error
 }
 
-func (r reader) Threads(context.Context, string) ([]pr.Thread, error) {
+func (r *reader) Threads(context.Context, string) ([]pr.Thread, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.threads, r.err
+}
+
+// set replaces what the next scan will read.
+func (r *reader) set(threads []pr.Thread, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.threads, r.err = threads, err
 }
 
 var open = []issues.OpenPR{{Number: 44, URL: "https://github.com/o/r/pull/7"}}
@@ -67,7 +82,7 @@ func marked(body string) pr.Thread {
 
 func TestSpawnsForAnUnsettledMarkedThread(t *testing.T) {
 	s := &spy{}
-	c := &Collector{Threads: reader{threads: []pr.Thread{marked("The money type is a float.")}}, Spawn: s}
+	c := &Collector{Threads: &reader{threads: []pr.Thread{marked("The money type is a float.")}}, Spawn: s}
 
 	c.Collect(open)
 	if !waitFor(t, 1, s) {
@@ -93,7 +108,7 @@ func TestSkipsASettledThread(t *testing.T) {
 	settled.Comments = append(settled.Comments, pr.Comment{Author: "pib", ID: 102, Body: "<!-- pib:filed #42 -->\nFiled as #42."})
 
 	s := &spy{}
-	c := &Collector{Threads: reader{threads: []pr.Thread{settled}}, Spawn: s}
+	c := &Collector{Threads: &reader{threads: []pr.Thread{settled}}, Spawn: s}
 
 	c.Collect(open)
 	// Nothing should ever launch; give the scan goroutine its chance.
@@ -107,7 +122,7 @@ func TestSkipsAnUnmarkedThread(t *testing.T) {
 	plain := pr.Thread{ID: "thread-2", Comments: []pr.Comment{{Author: "dan", ID: 100, Body: "nice work"}}}
 
 	s := &spy{}
-	c := &Collector{Threads: reader{threads: []pr.Thread{plain}}, Spawn: s}
+	c := &Collector{Threads: &reader{threads: []pr.Thread{plain}}, Spawn: s}
 
 	c.Collect(open)
 	time.Sleep(50 * time.Millisecond)
@@ -120,7 +135,7 @@ func TestOneAgentPerThreadAtATime(t *testing.T) {
 	release := make(chan struct{})
 	blocking := &spy{}
 	c := &Collector{
-		Threads: reader{threads: []pr.Thread{marked("The money type is a float.")}},
+		Threads: &reader{threads: []pr.Thread{marked("The money type is a float.")}},
 		Spawn:   &blockingSpawner{spy: blocking, release: release},
 	}
 
@@ -154,7 +169,7 @@ func (b *blockingSpawner) Run(ctx context.Context, req protocol.Request) (protoc
 func TestAReadFailureIsReportedNotSpawned(t *testing.T) {
 	reported := make(chan error, 1)
 	c := &Collector{
-		Threads: reader{err: context.DeadlineExceeded},
+		Threads: &reader{err: context.DeadlineExceeded},
 		Spawn:   &spy{},
 		Report:  func(err error) { reported <- err },
 	}
@@ -184,7 +199,7 @@ func TestScanLeavesMarkedThreadsForTheInterface(t *testing.T) {
 		pr.Comment{Author: "pib", ID: 102, Body: "<!-- pib:filed #42 -->\nFiled as #42."})
 
 	s := &spy{}
-	c := &Collector{Threads: reader{threads: []pr.Thread{unfiled, filed}}, Spawn: s}
+	c := &Collector{Threads: &reader{threads: []pr.Thread{unfiled, filed}}, Spawn: s}
 	c.Collect(open)
 
 	found := waitForMarked(t, c, 44, 2)
@@ -210,14 +225,15 @@ func TestScanLeavesMarkedThreadsForTheInterface(t *testing.T) {
 // say the opposite of what the pull request says.
 func TestALaterPassUpdatesWhatTheInterfaceSees(t *testing.T) {
 	s := &spy{}
-	c := &Collector{Threads: reader{threads: []pr.Thread{marked("The money type is a float.")}}, Spawn: s}
+	threads := &reader{threads: []pr.Thread{marked("The money type is a float.")}}
+	c := &Collector{Threads: threads, Spawn: s}
 	c.Collect(open)
 	waitForMarked(t, c, 44, 1)
 
 	settled := marked("The money type is a float.")
 	settled.Comments = append(settled.Comments,
 		pr.Comment{Author: "pib", ID: 102, Body: "<!-- pib:filed #42 -->"})
-	c.Threads = reader{threads: []pr.Thread{settled}}
+	threads.set([]pr.Thread{settled}, nil)
 	c.Collect(open)
 
 	for i := 0; i < 200; i++ {
@@ -232,7 +248,7 @@ func TestALaterPassUpdatesWhatTheInterfaceSees(t *testing.T) {
 // Nothing has scanned a pull request, so there is nothing to render — which
 // is what the interface shows, rather than a section waiting on a pass.
 func TestMarkedIsEmptyForAnIssueNoScanHasRead(t *testing.T) {
-	c := &Collector{Threads: reader{}, Spawn: &spy{}}
+	c := &Collector{Threads: &reader{}, Spawn: &spy{}}
 	if got := c.Marked(44); len(got) != 0 {
 		t.Errorf("Marked(44) = %+v, want nothing", got)
 	}
@@ -256,7 +272,7 @@ func waitForMarked(t *testing.T, c *Collector, issue int64, want int) []Marked {
 func TestMarkedSummaryIsTheFindingsFirstLineOnly(t *testing.T) {
 	thread := marked("The money type is a float.\nIt will lose cents under rounding.")
 
-	c := &Collector{Threads: reader{threads: []pr.Thread{thread}}, Spawn: &spy{}}
+	c := &Collector{Threads: &reader{threads: []pr.Thread{thread}}, Spawn: &spy{}}
 	c.Collect(open)
 
 	found := waitForMarked(t, c, 44, 1)
@@ -273,7 +289,7 @@ func TestMarkedSummaryIsTheIssueLineOfAMarkedFinding(t *testing.T) {
 		"**Issue:** The Money type uses float64, which loses precision on division.\n" +
 		"**Suggested Fix:** Switch to a decimal type or integer cents.")
 
-	c := &Collector{Threads: reader{threads: []pr.Thread{thread}}, Spawn: &spy{}}
+	c := &Collector{Threads: &reader{threads: []pr.Thread{thread}}, Spawn: &spy{}}
 	c.Collect(open)
 
 	found := waitForMarked(t, c, 44, 1)
@@ -290,7 +306,8 @@ func TestADeclinedThreadIsJudgedOnceUntilSomeoneReplies(t *testing.T) {
 	thread := marked("The money type is a float.")
 
 	s := &spy{}
-	c := &Collector{Threads: reader{threads: []pr.Thread{thread}}, Spawn: s}
+	threads := &reader{threads: []pr.Thread{thread}}
+	c := &Collector{Threads: threads, Spawn: s}
 
 	for i := 0; i < 3; i++ {
 		c.Collect(open)
@@ -310,7 +327,7 @@ func TestADeclinedThreadIsJudgedOnceUntilSomeoneReplies(t *testing.T) {
 	replied := thread
 	replied.Comments = append(append([]pr.Comment(nil), thread.Comments...),
 		pr.Comment{Author: "dan", ID: 103, Body: "actually, yes — file that one"})
-	c.Threads = reader{threads: []pr.Thread{replied}}
+	threads.set([]pr.Thread{replied}, nil)
 	c.Collect(open)
 
 	if !waitFor(t, 2, s) {
@@ -322,7 +339,7 @@ func TestADeclinedThreadIsJudgedOnceUntilSomeoneReplies(t *testing.T) {
 // try again rather than leave the finding triaged by a run that did no work.
 func TestAFailedRunIsForgottenRatherThanRememberedAsJudged(t *testing.T) {
 	s := &failingSpawner{}
-	c := &Collector{Threads: reader{threads: []pr.Thread{marked("The money type is a float.")}}, Spawn: s}
+	c := &Collector{Threads: &reader{threads: []pr.Thread{marked("The money type is a float.")}}, Spawn: s}
 
 	c.Collect(open)
 	waitForFails(t, s, 1)
@@ -357,4 +374,64 @@ func waitForFails(t *testing.T, f *failingSpawner, want int) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("attempts = %d, want %d", f.attempts_(), want)
+}
+
+// A run that reached no conclusion is not a judgement, and the spawner says
+// so in the response rather than as an error: an agent whose window died
+// comes back as StatusError, one that exited without writing anything as
+// StatusUnknown. A finding the agent never got to look at must be tried
+// again, not written off for the rest of the session.
+func TestARunThatFailedIsNotRememberedAsJudged(t *testing.T) {
+	for _, status := range []string{string(session.StatusError), string(session.StatusUnknown)} {
+		s := &statusSpawner{status: status}
+		c := &Collector{Threads: &reader{threads: []pr.Thread{marked("The money type is a float.")}}, Spawn: s}
+
+		c.Collect(open)
+		waitForStatus(t, s, 1)
+		c.Collect(open)
+		if !waitForStatus(t, s, 2) {
+			t.Errorf("status %q: a run that failed was remembered as judged", status)
+		}
+	}
+
+	// And the settled case is still remembered, or the fix would be
+	// "never judge anything twice".
+	s := &statusSpawner{status: string(session.StatusDone)}
+	c := &Collector{Threads: &reader{threads: []pr.Thread{marked("The money type is a float.")}}, Spawn: s}
+	c.Collect(open)
+	waitForStatus(t, s, 1)
+	c.Collect(open)
+	for i := 0; i < 100 && s.count() > 1; i++ {
+		time.Sleep(time.Millisecond)
+	}
+	if got := s.count(); got != 1 {
+		t.Errorf("a run that succeeded launched %d agents, want 1", got)
+	}
+}
+
+// statusSpawner always answers with the same status and no error, which is
+// how the runner reports an agent that did not finish its work.
+type statusSpawner struct {
+	spy
+	status string
+}
+
+func (s *statusSpawner) Run(context.Context, protocol.Request) (protocol.Response, error) {
+	s.mu.Lock()
+	s.requests = append(s.requests, protocol.Request{})
+	s.mu.Unlock()
+	return protocol.Response{Status: s.status}, nil
+}
+
+// waitForStatus gives the agent a moment to be launched and reports whether
+// it ever was.
+func waitForStatus(t *testing.T, s *statusSpawner, want int) bool {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if s.count() >= want {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return false
 }

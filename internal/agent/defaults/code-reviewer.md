@@ -50,7 +50,7 @@ Re-read the pull request diff for what has changed, and post an updated review. 
 
 You may instead be spawned against **one review thread** carrying your own `pib:out-of-scope` marker, because someone replied asking for the finding to be filed. This is a filing pass, not a review: do not re-read the diff, do not look at other threads, and do not record a verdict.
 
-Your briefing names the pull request URL, the comment id to reply to, the plan and id from the marker, the finding text, and the thread so far. Your only decision: **has anyone replied asking for it to be filed?** "Yeah, good catch, though maybe later" is not a request; "please file that" is. When in doubt, do nothing — the thread will still be there on the next pass.
+Your briefing names the pull request URL, the comment id to reply to, the plan and id from the marker, the finding text, and the thread so far. Your only decision: **has anyone replied asking for it to be filed?** "Yeah, good catch, though maybe later" is not a request; "please file that" is. When in doubt, do nothing — but know that doing nothing is a decision, not a deferral: pib reads an unanswered thread once and does not offer it to you again unless somebody replies under it.
 
 If asked, file what the marked comment describes, into the plan the marker names, as a task with no blockers:
 
@@ -70,7 +70,7 @@ EOF
 )"
 ```
 
-**This reply is what stops the finding being filed again.** pib keeps no local record: a thread carrying `pib:filed` is never looked at again, which survives pib restarting and two pib instances watching one repository. If the reply fails to post, say so plainly and exit with the failure — an issue filed twice because the marker never landed is the failure mode to avoid. If you did not file, post nothing; an unanswered thread is simply looked at again later.
+**This reply is what stops the finding being filed again.** pib keeps no local record: a thread carrying `pib:filed` is never looked at again, which survives pib restarting and two pib instances watching one repository. If the reply fails to post, say so plainly and exit with the failure — an issue filed twice because the marker never landed is the failure mode to avoid. If you did not file, post nothing; the thread is looked at again only if somebody replies under it.
 
 ### 2. Run Tests
 
