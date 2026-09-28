@@ -16,6 +16,7 @@ import (
 	"pib/internal/issues"
 	"pib/internal/protocol"
 	"pib/internal/runner"
+	"pib/internal/triage"
 	"pib/internal/ui/theme"
 )
 
@@ -40,6 +41,7 @@ func loadPlans(store *issues.Store) tea.Cmd {
 type planIssuesLoadedMsg struct {
 	planSlug string
 	issues   []issues.Status
+	reviews  map[int64][]issues.Review
 	err      error
 }
 
@@ -49,7 +51,16 @@ func loadPlanIssues(store *issues.Store, planSlug string, cfg config.Config) tea
 			return planIssuesLoadedMsg{planSlug: planSlug, err: errors.New("no store")}
 		}
 		list, err := store.Statuses(issues.Filter{Plan: planSlug}, issues.StatusOptions{AgentFor: cfg.AgentFor})
-		return planIssuesLoadedMsg{planSlug: planSlug, issues: list, err: err}
+		if err != nil {
+			return planIssuesLoadedMsg{planSlug: planSlug, err: err}
+		}
+		// One query for the whole plan's review history. Asking per issue
+		// would be a lookup behind every row of the DAG.
+		reviews, err := store.PlanReviews(planSlug)
+		if err != nil {
+			return planIssuesLoadedMsg{planSlug: planSlug, err: err}
+		}
+		return planIssuesLoadedMsg{planSlug: planSlug, issues: list, reviews: reviews}
 	}
 }
 
@@ -85,6 +96,7 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.planIssues = m.markInFlight(msg.issues)
+		m.planReviews = msg.reviews
 		m.planIssuesErr = nil
 		return m, nil
 	// Semantic action messages — the contract for future backend handlers.
@@ -218,6 +230,7 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.screen = screenPlanDetail
 				m.issueCursor = 0
 				m.planIssues = nil
+				m.planReviews = nil
 				m.planIssuesErr = nil
 				m.planIssuesLoading = true
 				m.planIssuesLoadedFor = ""
@@ -654,6 +667,9 @@ func (m Model) planDAGPane(w, h int) string {
 // buildPlanDAG renders the plan's issues as a topologically-sorted ASCII tree.
 // It returns one line and one style per row.
 func (m Model) buildPlanDAG(w int) ([]string, []lipgloss.Style) {
+	// How many review passes a pull request gets, so a row can say which
+	// one this is out of. It is the same number the review loop runs to.
+	cycles := m.cfg.ReviewCycles()
 	byNumber := make(map[int64]issues.Status, len(m.planIssues))
 	blocks := make(map[int64][]int64)
 	for _, issue := range m.planIssues {
@@ -699,7 +715,7 @@ func (m Model) buildPlanDAG(w int) ([]string, []lipgloss.Style) {
 			if avail < 1 {
 				avail = 1
 			}
-			lines = append(lines, prefix+"↻ "+formatDAGIssue(issue, avail))
+			lines = append(lines, prefix+"↻ "+formatDAGIssue(issue, avail, cycles))
 			styles = append(styles, dagStyleForIssue(issue))
 			return
 		}
@@ -714,7 +730,7 @@ func (m Model) buildPlanDAG(w int) ([]string, []lipgloss.Style) {
 			if avail < 1 {
 				avail = 1
 			}
-			lines = append(lines, prefix+connector+formatDAGIssue(issue, avail))
+			lines = append(lines, prefix+connector+formatDAGIssue(issue, avail, cycles))
 			styles = append(styles, theme.Default.Dim)
 			return
 		}
@@ -736,7 +752,7 @@ func (m Model) buildPlanDAG(w int) ([]string, []lipgloss.Style) {
 		if avail < 1 {
 			avail = 1
 		}
-		lines = append(lines, prefix+connector+formatDAGIssue(issue, avail))
+		lines = append(lines, prefix+connector+formatDAGIssue(issue, avail, cycles))
 		styles = append(styles, dagStyleForIssue(issue))
 
 		children := blocks[number]
@@ -768,15 +784,47 @@ func dagPrefix(ancestors []bool) string {
 	return b.String()
 }
 
-func formatDAGIssue(issue issues.Status, maxWidth int) string {
-	var parts []string
-	parts = append(parts, fmt.Sprintf("#%d %s", issue.Number, issue.Title))
-	parts = append(parts, "["+string(issue.State)+"]")
+// formatDAGIssue renders one DAG row, truncated to the width it is given.
+// cycles is the review cap for the workspace, and is only used by rows with a
+// pull request on them.
+func formatDAGIssue(issue issues.Status, maxWidth, cycles int) string {
+	parts := []string{fmt.Sprintf("#%d %s", issue.Number, issue.Title), "[" + string(issue.State) + "]"}
 	if issue.Agent != "" {
 		parts = append(parts, issue.Agent)
 	}
+	if issue.PRURL != "" {
+		parts = append(parts, pullRequestLabel(issue, cycles))
+	}
 	s := strings.Join(parts, " ")
 	return truncate(s, maxWidth)
+}
+
+// pullRequestLabel says which pull request an issue is on and how far through
+// its review it is. Both halves are on the issue already — the url and the
+// newest cycle — so a row costs no more than a row without a pull request.
+func pullRequestLabel(issue issues.Status, cycles int) string {
+	label := "PR #" + prNumber(issue.PRURL)
+	if issue.ReviewCycle < 1 {
+		return label
+	}
+	label += fmt.Sprintf(" · review %d", issue.ReviewCycle)
+	if cycles > 0 {
+		label += fmt.Sprintf(" of %d", cycles)
+	}
+	return label
+}
+
+// prNumber is the number out of a pull request url, or the url itself when
+// it is not one pib can read a number out of — a row naming the request is
+// better than one that says nothing.
+func prNumber(url string) string {
+	trimmed := strings.TrimRight(url, "/")
+	if i := strings.LastIndex(trimmed, "/"); i >= 0 {
+		if n := trimmed[i+1:]; n != "" {
+			return n
+		}
+	}
+	return url
 }
 
 func dagStyleForIssue(issue issues.Status) lipgloss.Style {
@@ -855,17 +903,44 @@ func (m Model) issueFullScreenView() string {
 	if m.issueCursor >= len(m.planIssues) {
 		pane = pad(m.width, h, "")
 	} else {
-		pane = issueDetail(m.planIssues[m.issueCursor], m.width, h, detailFull)
+		issue := m.planIssues[m.issueCursor]
+		pane = issueDetail(issue, m.detailFor(issue), m.width, h, detailFull)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, pane)
 }
 
+// issuePreviewPane renders the issue half of the plan detail view. It gets
+// roughly half the height of the screen alongside the list, so it shows only
+// what identifies the issue; the review history is one keystroke away.
 func (m Model) issuePreviewPane(w, h int) string {
 	if m.issueCursor >= len(m.planIssues) {
 		return pad(w, h, "")
 	}
-	return issueDetail(m.planIssues[m.issueCursor], w, h, detailPreview)
+	issue := m.planIssues[m.issueCursor]
+	return issueDetail(issue, m.detailFor(issue), w, h, detailPreview)
+}
+
+// detailView is everything the detail pane renders that is not on the issue
+// itself. It is passed in rather than looked up: a render must never reach
+// the store or GitHub, and there is one of these per pane per frame.
+type detailView struct {
+	// Reviews are the issue's review cycles, oldest first.
+	Reviews []issues.Review
+	// OutOfScope are the marked findings the last scan of the issue's pull
+	// request found, and is empty when no scan has read it.
+	OutOfScope []triage.Marked
+}
+
+// detailFor gathers what has already been collected about an issue. Both
+// halves are held — one in the store, loaded with the plan, and one in the
+// triage collector, filled by reconciliation — so this is a lookup in memory.
+func (m Model) detailFor(issue issues.Status) detailView {
+	d := detailView{Reviews: m.planReviews[issue.Number]}
+	if m.triage != nil {
+		d.OutOfScope = m.triage.Marked(issue.Number)
+	}
+	return d
 }
 
 // detailDepth selects how much of an issue is worth rendering. The preview
@@ -880,7 +955,7 @@ const (
 )
 
 // issueDetail renders an issue's fields into a pane of exactly w by h.
-func issueDetail(issue issues.Status, w, h int, depth detailDepth) string {
+func issueDetail(issue issues.Status, view detailView, w, h int, depth detailDepth) string {
 	if w < 1 {
 		w = 1
 	}
@@ -968,6 +1043,33 @@ func issueDetail(issue issues.Status, w, h int, depth detailDepth) string {
 		b.WriteString(itemStyle.Render(issue.PRURL) + "\n\n")
 	}
 
+	// The review history is the story of how the pull request got to the
+	// state it is in, and it only exists on an issue that has one. The
+	// preview pane is a list index that happens to show a preview: it has no
+	// room for a history, and a cycle costs two rows the issue's own fields
+	// would rather have.
+	if depth == detailFull && len(view.Reviews) > 0 {
+		section("Review")
+		avail := w - itemStyle.GetPaddingLeft()
+		for _, r := range view.Reviews {
+			b.WriteString(itemStyle.Render(truncate(reviewRow(r, issue.PRURL), avail)) + "\n")
+		}
+		b.WriteString("\n")
+	}
+
+	// A finding the reviewer marked but could not fix here, and whether
+	// anyone has asked for it to be filed. Nothing renders until a
+	// reconciliation pass has read the pull request: there is no "loading"
+	// to promise, because the interface is not the thing asking.
+	if depth == detailFull && len(view.OutOfScope) > 0 {
+		section("Out-of-scope comments on the PR")
+		avail := w - itemStyle.GetPaddingLeft()
+		for _, mk := range view.OutOfScope {
+			b.WriteString(itemStyle.Render(truncate(outOfScopeRow(mk), avail)) + "\n")
+		}
+		b.WriteString("\n")
+	}
+
 	if !issue.CreatedAt.IsZero() {
 		b.WriteString(itemStyle.Render("Created: "+issue.CreatedAt.Format("2006-01-02 15:04")) + "\n")
 	}
@@ -976,6 +1078,92 @@ func issueDetail(issue issues.Status, w, h int, depth detailDepth) string {
 	}
 
 	return pad(w, h, b.String())
+}
+
+// reviewRow is one line of review history: which cycle, how it ended, and
+// what it found. A cycle still running says who is on it and for how long,
+// which is the only thing about it pib knows.
+func reviewRow(r issues.Review, prURL string) string {
+	label := fmt.Sprintf("cycle %d", r.Cycle)
+	// A replacement pull request numbers its cycles from one again, so two
+	// cycles of the same number mean two pull requests and the row has to
+	// say which.
+	if prURL != "" && r.PRURL != prURL {
+		label += " (PR #" + prNumber(r.PRURL) + ")"
+	}
+
+	state := r.Verdict
+	switch {
+	case r.Running():
+		state = "running"
+	case r.Verdict == issues.VerdictApproved:
+		state = "approved"
+	case r.Verdict == issues.VerdictError:
+		state = "errored"
+	}
+
+	when := ""
+	if r.Running() {
+		if r.Run != "" {
+			when = r.Run + " · "
+		}
+		when += "started " + ago(r.StartedAt)
+	} else {
+		if n := r.Findings; n == 0 {
+			when = "no findings"
+		} else if n == 1 {
+			when = "1 finding"
+		} else {
+			when = fmt.Sprintf("%d findings", n)
+		}
+		if !r.EndedAt.IsZero() {
+			when += " · " + ago(r.EndedAt)
+		}
+	}
+
+	row := fmt.Sprintf("  %s  %s", label, state)
+	if when != "" {
+		row += "  " + when
+	}
+	return row
+}
+
+// outOfScopeRow is one marked finding, and whether it has been filed. The
+// marker carries no issue number — a filing replies with a pib:filed marker
+// rather than a local record — so "filed" is as much as pib can say.
+func outOfScopeRow(mk triage.Marked) string {
+	row := "  " + mk.ID
+	if place := mk.Place(); place != "" {
+		row += "  " + place
+	}
+	row += "  "
+	if mk.Filed {
+		row += "filed"
+	} else {
+		row += "not filed"
+	}
+	if mk.Summary != "" {
+		row += "  " + mk.Summary
+	}
+	return row
+}
+
+// ago says how long ago a moment was, in the coarsest unit worth reading.
+func ago(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 // pad fits content to exactly w by h. Height alone only pads, so a long line

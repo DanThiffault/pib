@@ -48,6 +48,95 @@ type Collector struct {
 
 	mu      sync.Mutex
 	running map[string]bool
+	// marked is what the last scan of each pull request found on it, keyed
+	// by issue. Reconciliation is the only thing that may read GitHub, and
+	// the interface is not allowed to look, so a scan leaves what it read
+	// here and the detail pane reads it back. Nothing is stored: a restart
+	// loses the threads until the next pass reads them again, which is the
+	// same bargain pull request state makes.
+	marked map[int64][]Marked
+}
+
+// Marked is one out-of-scope finding a scan found on an issue's pull
+// request.
+type Marked struct {
+	// Plan and ID are what the marker said the finding would be filed as.
+	Plan string
+	ID   string
+	// Path and Line are where on the pull request it was raised, empty when
+	// GitHub did not say.
+	Path string
+	Line int
+	// Summary is the finding's first line, kept short for a narrow pane.
+	Summary string
+	// Filed reports a pib:filed marker somewhere in the thread, which is
+	// the only record of a filing that survives anywhere.
+	Filed bool
+}
+
+// Place says where the finding was raised, or an empty string when GitHub
+// did not say.
+func (m Marked) Place() string {
+	if m.Path == "" {
+		return ""
+	}
+	if m.Line > 0 {
+		return fmt.Sprintf("%s:%d", m.Path, m.Line)
+	}
+	return m.Path
+}
+
+// Marked reports the out-of-scope findings the last scan of an issue's pull
+// request found, oldest first. It returns nothing when no scan has read that
+// pull request, which is what the interface renders as no section at all —
+// there is no state to show and nothing to wait for on this screen.
+func (c *Collector) Marked(issue int64) []Marked {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.marked[issue]
+}
+
+// record leaves what a scan read behind for the interface.
+func (c *Collector) record(number int64, threads []pr.Thread) {
+	var found []Marked
+	for _, t := range threads {
+		oos := t.OutOfScope()
+		if oos == nil {
+			continue
+		}
+		found = append(found, Marked{
+			Plan:    oos.Plan,
+			ID:      oos.ID,
+			Path:    t.Path,
+			Line:    t.Line,
+			Summary: firstLine(oos.Body),
+			Filed:   t.Settled(),
+		})
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.marked == nil {
+		c.marked = map[int64][]Marked{}
+	}
+	if len(found) == 0 {
+		// A pull request whose findings have all been filed reads as none
+		// outstanding. Leaving a stale list would say the opposite.
+		delete(c.marked, number)
+		return
+	}
+	c.marked[number] = found
+}
+
+// firstLine is a finding in one line: the first non-empty line of what the
+// reviewer wrote, which is a row a narrow pane can hold.
+func firstLine(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // Collect scans each pull request for unsettled out-of-scope threads. It
@@ -70,6 +159,7 @@ func (c *Collector) scan(p issues.OpenPR) {
 		c.report(fmt.Errorf("triage scan of %s: %w", p.URL, err))
 		return
 	}
+	c.record(p.Number, threads)
 	for _, t := range threads {
 		oos := t.OutOfScope()
 		if oos == nil || t.Settled() {

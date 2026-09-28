@@ -214,3 +214,44 @@ func TestOpenReviewRecordsItsRun(t *testing.T) {
 		t.Error("a review naming an unknown run was accepted")
 	}
 }
+
+func TestPlanReviewsKeysCyclesByIssue(t *testing.T) {
+	store := planned(t)
+	first := task(t, store, "Alpha")
+	second := task(t, store, "Beta")
+
+	const prURL = "https://github.com/o/r/pull/1"
+	one := reviewed(t, store, first.Number, prURL, "")
+	if _, err := store.CloseReview(one.ID, VerdictChanges, 2); err != nil {
+		t.Fatalf("CloseReview: %v", err)
+	}
+	reviewed(t, store, second.Number, prURL, "")
+	reviewed(t, store, first.Number, prURL, "")
+
+	byIssue, err := store.PlanReviews("orders")
+	if err != nil {
+		t.Fatalf("PlanReviews: %v", err)
+	}
+	if len(byIssue) != 2 {
+		t.Fatalf("PlanReviews returned %d issues, want 2", len(byIssue))
+	}
+	if got := byIssue[first.Number]; len(got) != 2 || got[0].Findings != 2 {
+		t.Errorf("issue %d cycles = %+v, want two, the first with 2 findings", first.Number, got)
+	}
+	if got := byIssue[second.Number]; len(got) != 1 {
+		t.Errorf("issue %d cycles = %+v, want one", second.Number, got)
+	}
+}
+
+func TestPlanReviewsIsEmptyForAPlanThatReviewedNothing(t *testing.T) {
+	store := planned(t)
+	task(t, store, "Alpha")
+
+	byIssue, err := store.PlanReviews("orders")
+	if err != nil {
+		t.Fatalf("PlanReviews: %v", err)
+	}
+	if len(byIssue) != 0 {
+		t.Errorf("PlanReviews = %+v, want nothing", byIssue)
+	}
+}

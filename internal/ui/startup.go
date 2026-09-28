@@ -83,6 +83,7 @@ type serverStartedMsg struct {
 	server    *server.Server
 	store     *issues.Store
 	agents    *runner.Runner
+	triage    *triage.Collector
 	extension string
 	socket    string
 	config    config.Config
@@ -215,6 +216,11 @@ func startServer(ws workspace.Status) tea.Cmd {
 			Cycles:  cfg.ReviewCycles(),
 		}
 
+		// The collector is shared: the server hands it the pull requests
+		// reconciliation found open, and the interface reads back what those
+		// scans found.
+		triageCollector := &triage.Collector{Threads: pr.CLI{}, Spawn: agents}
+
 		srv, err := server.Listen(ws.Dir, server.Router{
 			Agents: agents,
 			Issues: issueops.Handler{
@@ -225,7 +231,7 @@ func startServer(ws workspace.Status) tea.Cmd {
 				// it for out-of-scope findings the user has asked to have
 				// filed. Collect returns immediately; the agent runs off the
 				// listing's path.
-				Triage: &triage.Collector{Threads: pr.CLI{}, Spawn: agents},
+				Triage: triageCollector,
 			},
 		})
 		if err != nil {
@@ -233,7 +239,7 @@ func startServer(ws workspace.Status) tea.Cmd {
 			return serverStartedMsg{err: err}
 		}
 
-		return serverStartedMsg{server: srv, store: store, agents: &agents, extension: extensionPath, socket: srv.Addr(), config: cfg}
+		return serverStartedMsg{server: srv, store: store, agents: &agents, triage: triageCollector, extension: extensionPath, socket: srv.Addr(), config: cfg}
 	}
 }
 
@@ -353,6 +359,7 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		if msg.agents != nil {
 			m.agents = msg.agents
 		}
+		m.triage = msg.triage
 		m.extension = msg.extension
 		m.socket = msg.socket
 		m.cfg = msg.config

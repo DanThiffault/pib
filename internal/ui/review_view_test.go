@@ -1,0 +1,293 @@
+package ui
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"pib/internal/config"
+	"pib/internal/issues"
+	"pib/internal/pr"
+	"pib/internal/protocol"
+	"pib/internal/triage"
+)
+
+// reviewModel is a model whose plan has one issue carrying a pull request
+// and a review history, with the workspace's default review cap loaded so a
+// DAG row can say which cycle of how many it is on.
+func reviewModel(t *testing.T) Model {
+	t.Helper()
+	m := plansModel(t, []issues.Plan{{Slug: "orders", Title: "Orders"}})
+	cfg, err := config.LoadPaths(filepath.Join(t.TempDir(), "missing.toml"), "")
+	if err != nil {
+		t.Fatalf("LoadPaths: %v", err)
+	}
+	m.cfg = cfg
+	m.screen = screenIssue
+	m.planIssues = []issues.Status{{
+		Issue: issues.Issue{
+			Number: 13, Title: "Implement Order Aggregate", State: issues.StateOpen, Type: "task",
+			PRURL: "https://github.com/dan/orders/pull/44", PRState: "open",
+		},
+		AwaitingReview: true,
+		ReviewCycle:    2,
+		Run:            "review-7",
+	}}
+	m.planIssuesLoadedFor = "orders"
+	return m
+}
+
+func settledReview(cycle int, verdict string, findings int) issues.Review {
+	return issues.Review{
+		Cycle:     cycle,
+		PRURL:     "https://github.com/dan/orders/pull/44",
+		Verdict:   verdict,
+		Findings:  findings,
+		StartedAt: time.Now().Add(-2 * time.Hour),
+		EndedAt:   time.Now().Add(-time.Hour),
+	}
+}
+
+// A row that says nothing about the review hides three passes of agent time
+// and a diff the user has not looked at yet.
+func TestDAGRowNamesThePullRequestAndItsReviewCycle(t *testing.T) {
+	m := reviewModel(t)
+	m.screen = screenPlans
+
+	output := m.planDAGPane(100, 10)
+	if !strings.Contains(output, "PR #44 · review 2 of 3") {
+		t.Errorf("DAG row does not read \"PR #44 · review 2 of 3\":\n%s", output)
+	}
+}
+
+// A pull request nobody has reviewed yet is still a pull request, and must
+// not claim to be on a cycle it is not.
+func TestDAGRowNamesThePullRequestBeforeAnyReview(t *testing.T) {
+	m := reviewModel(t)
+	m.screen = screenPlans
+	m.planIssues[0].ReviewCycle = 0
+
+	output := m.planDAGPane(100, 10)
+	if !strings.Contains(output, "PR #44") {
+		t.Errorf("DAG row does not name the pull request:\n%s", output)
+	}
+	if strings.Contains(output, "review 0") || strings.Contains(output, "review 1") {
+		t.Errorf("DAG row claims a review cycle for a pull request with none:\n%s", output)
+	}
+}
+
+// The review history is the story of how the pull request got to the state it
+// is in, so every cycle is listed with what it settled on and what it found.
+func TestIssueDetailListsEveryCycle(t *testing.T) {
+	m := reviewModel(t)
+	m.planReviews = map[int64][]issues.Review{
+		13: {
+			settledReview(1, issues.VerdictChanges, 2),
+			{Cycle: 2, PRURL: "https://github.com/dan/orders/pull/44", Run: "review-7", StartedAt: time.Now()},
+		},
+	}
+
+	view := m.issueFullScreenView()
+	for _, want := range []string{"Review", "cycle 1", "changes", "2 findings", "cycle 2", "running", "review-7", "just now"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("detail view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// A pull request that was closed and replaced numbers its cycles from one
+// again, so two cycles of the same number have to say which request each is
+// on or the history reads as a cycle counted twice.
+func TestIssueDetailNamesThePullRequestOfARefiledCycle(t *testing.T) {
+	m := reviewModel(t)
+	replaced := settledReview(1, issues.VerdictChanges, 1)
+	replaced.PRURL = "https://github.com/dan/orders/pull/39"
+	m.planReviews = map[int64][]issues.Review{13: {replaced}}
+
+	view := m.issueFullScreenView()
+	if !strings.Contains(view, "cycle 1 (PR #39)") {
+		t.Errorf("detail view does not say which pull request a cycle is on:\n%s", view)
+	}
+}
+
+// A finding the reviewer could not fix here, and whether it has been filed,
+// is on the pull request and nowhere else — so it is the section that has to
+// say.
+func TestIssueDetailShowsOutOfScopeThreadsAndWhetherTheyAreFiled(t *testing.T) {
+	m := reviewModel(t)
+	m.triage = scanCollector(t, 13, "https://github.com/dan/orders/pull/44",
+		marked{body: "<!-- pib:out-of-scope plan=orders id=money-type-is-float -->\nThe money type is a float."},
+		marked{body: "<!-- pib:out-of-scope plan=orders id=unwanted-api -->\nThe API is wider than the PR needs.", filed: true},
+	)
+
+	view := m.issueFullScreenView()
+	for _, want := range []string{
+		"Out-of-scope comments on the PR",
+		"money-type-is-float", "The money type is a float.",
+		"unwanted-api", "filed",
+		"not filed",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("detail view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// Nothing collected is nothing rendered. There is no promise to make, and a
+// pane per issue waiting on a pull request is exactly the spinner the
+// interface is not to have.
+func TestIssueDetailRendersNoReviewSectionsBeforeAnythingIsCollected(t *testing.T) {
+	m := reviewModel(t)
+
+	view := m.issueFullScreenView()
+	if strings.Contains(view, "Review") || strings.Contains(view, "Out-of-scope") {
+		t.Errorf("detail view shows a section for data nothing has collected:\n%s", view)
+	}
+}
+
+// Rendering happens on every frame and for every row, so it must never reach
+// the store or GitHub: the model here has neither, and still renders both
+// sections from what was held.
+func TestReviewSectionsRenderWithNoStoreAndNoTriageReads(t *testing.T) {
+	m := reviewModel(t)
+	m.store = nil
+	m.planReviews = map[int64][]issues.Review{13: {settledReview(1, issues.VerdictChanges, 2)}}
+	m.triage = scanCollector(t, 13, "https://github.com/dan/orders/pull/44",
+		marked{body: "<!-- pib:out-of-scope plan=orders id=money-type-is-float -->\nThe money type is a float."})
+
+	view := m.issueFullScreenView()
+	for _, want := range []string{"cycle 1", "money-type-is-float"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("detail view missing %q without a store:\n%s", want, view)
+		}
+	}
+}
+
+// The preview shares its rows with the issue list, so anything it spends on
+// review history is a row the list does not get. It shows none of it.
+func TestPreviewPaneLeavesReviewHistoryToTheFullScreenView(t *testing.T) {
+	m := reviewModel(t)
+	m.planReviews = map[int64][]issues.Review{13: {settledReview(1, issues.VerdictChanges, 2)}}
+	m.triage = scanCollector(t, 13, "https://github.com/dan/orders/pull/44",
+		marked{body: "<!-- pib:out-of-scope plan=orders id=money-type-is-float -->\nThe money type is a float."})
+
+	preview := m.issuePreviewPane(45, 20)
+	for _, unwanted := range []string{"cycle 1", "money-type-is-float", "Out-of-scope"} {
+		if strings.Contains(preview, unwanted) {
+			t.Errorf("preview pane spent its rows on %q", unwanted)
+		}
+	}
+	if got := len(strings.Split(preview, "\n")); got != 20 {
+		t.Errorf("preview rendered %d lines into 20", got)
+	}
+}
+
+// A finding's summary is a paragraph written for a pull request, and the pane
+// is a full screen at best. The pane's row count is the thing that has to
+// stay honest, so long content is cut rather than wrapped into it.
+func TestReviewRowsStayWithinThePaneAtEverySizeCovered(t *testing.T) {
+	long := "This finding is deliberately far longer than any terminal is wide, and it must not be allowed to wrap itself over the rows the pane was given"
+
+	for _, size := range []struct{ w, h int }{{120, 40}, {100, 30}, {40, 30}, {30, 20}, {20, 12}} {
+		m := reviewModel(t)
+		m.width, m.height = size.w, size.h
+		m.planIssues[0].Title = "An issue with a title long enough to wrap on its own"
+		m.planIssues[0].Acceptance = []string{long, long, long, long, long, long}
+		m.planReviews = map[int64][]issues.Review{13: {settledReview(1, issues.VerdictChanges, 2)}}
+		m.triage = scanCollector(t, 13, "https://github.com/dan/orders/pull/44",
+			marked{body: "<!-- pib:out-of-scope plan=orders id=money-type-is-float -->\n" + long})
+
+		view := m.View()
+		lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+		if len(lines) > m.height {
+			t.Errorf("%dx%d: rendered %d lines into %d", size.w, size.h, len(lines), m.height)
+		}
+		if last := lines[len(lines)-1]; !strings.Contains(last, "[") {
+			t.Errorf("%dx%d: last line is %q, want the action bar", size.w, size.h, last)
+		}
+	}
+}
+
+// A review history the store can answer for a whole plan in one query: a
+// listing that reaches the store per row would be a lookup behind every row
+// of the DAG, which the DAG's own load is what the pane renders from.
+func TestPlanIssuesLoadedCarriesTheReviewsWithTheIssues(t *testing.T) {
+	m := reviewModel(t)
+	m.planIssuesLoadedFor = ""
+	m.planIssues = nil
+	m.planReviews = nil
+
+	m, _ = step(t, m, planIssuesLoadedMsg{
+		planSlug: "orders",
+		issues:   m.planIssues,
+		reviews:  map[int64][]issues.Review{13: {settledReview(1, issues.VerdictChanges, 2)}},
+	})
+
+	if len(m.planReviews[13]) != 1 {
+		t.Fatalf("review cycles were not kept: %+v", m.planReviews)
+	}
+}
+
+// marked is one review thread a fake pull request carries: the finding the
+// reviewer marked, and whether a reply has already filed it.
+type marked struct {
+	body  string
+	filed bool
+}
+
+// scanCollector runs the triage collector's own scan path over a fixed set of
+// review threads, so what a pass leaves behind is what a real pass leaves
+// behind. It returns once every thread has been read.
+func scanCollector(t *testing.T, issue int64, url string, threads ...marked) *triage.Collector {
+	t.Helper()
+	c := &triage.Collector{Threads: staticThreads{url: url, threads: threads}, Spawn: nopSpawner{}}
+	c.Collect([]issues.OpenPR{{Number: issue, URL: url}})
+
+	// Collect returns immediately and the scan is a goroutine, so wait for
+	// the findings to land rather than racing the assertion.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(c.Marked(issue)) == len(threads) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return c
+}
+
+// nopSpawner stands in for the agent runner. The scan is what these tests are
+// about, and a collector without a spawner never scans at all.
+type nopSpawner struct{}
+
+func (nopSpawner) Run(context.Context, protocol.Request) (protocol.Response, error) {
+	return protocol.Response{Status: protocol.StatusOK}, nil
+}
+
+// staticThreads serves one fixed pull request, one thread per marked finding.
+type staticThreads struct {
+	url     string
+	threads []marked
+}
+
+func (s staticThreads) Threads(context.Context, string) ([]pr.Thread, error) {
+	out := make([]pr.Thread, 0, len(s.threads))
+	for i, m := range s.threads {
+		comments := []pr.Comment{{Author: "code-reviewer", Body: m.body, ID: int64(100 + i)}}
+		if m.filed {
+			comments = append(comments, pr.Comment{
+				Author: "dan", Body: "yes, file it\n\n<!-- pib:filed #42 -->", ID: int64(200 + i),
+			})
+		}
+		out = append(out, pr.Thread{
+			ID:         fmt.Sprintf("thread-%d", i),
+			Path:       "internal/types/money.go",
+			Line:       31,
+			Comments:   comments,
+			IsResolved: false,
+		})
+	}
+	return out, nil
+}

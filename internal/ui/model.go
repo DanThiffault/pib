@@ -13,6 +13,7 @@ import (
 	"pib/internal/config"
 	"pib/internal/issues"
 	"pib/internal/server"
+	"pib/internal/triage"
 	"pib/internal/ui/theme"
 	"pib/internal/workspace"
 )
@@ -82,7 +83,15 @@ type Model struct {
 	planIssuesLoading   bool
 	planIssuesErr       error
 	planIssuesLoadedFor string
-	cfg                 config.Config
+	// planReviews is every review cycle in the plan on screen, keyed by
+	// issue. It is loaded with the issues rather than asked for when one is
+	// selected, so rendering a detail pane never reaches the store.
+	planReviews map[int64][]issues.Review
+	// triage holds what reconciliation has read off GitHub about
+	// out-of-scope findings, and is the only place the interface may learn
+	// it: a render cannot ask.
+	triage *triage.Collector
+	cfg    config.Config
 
 	help bool
 

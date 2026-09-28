@@ -170,3 +170,96 @@ func TestNilPartsAreAQuietNoOp(t *testing.T) {
 	c := &Collector{}
 	c.Collect(open)
 }
+
+// The interface is not allowed to ask GitHub, so what a scan read is left
+// where a render can find it — the same bargain pull request state makes.
+func TestScanLeavesMarkedThreadsForTheInterface(t *testing.T) {
+	unfiled := marked("The money type is a float.")
+	unfiled.Path, unfiled.Line = "internal/types/money.go", 31
+	filed := marked("The API is wider than the PR needs.")
+	filed.ID = "thread-2"
+	filed.Path, filed.Line = "internal/api/routes.go", 12
+	filed.Comments = append(filed.Comments,
+		pr.Comment{Author: "pib", ID: 102, Body: "<!-- pib:filed #42 -->\nFiled as #42."})
+
+	s := &spy{}
+	c := &Collector{Threads: reader{threads: []pr.Thread{unfiled, filed}}, Spawn: s}
+	c.Collect(open)
+
+	found := waitForMarked(t, c, 44, 2)
+	if found[0].ID != "money-type-is-float" || found[0].Plan != "orders" {
+		t.Errorf("first finding = %+v", found[0])
+	}
+	if found[0].Filed {
+		t.Error("an unfiled finding reads as filed")
+	}
+	if got, want := found[0].Place(), "internal/types/money.go:31"; got != want {
+		t.Errorf("place = %q, want %q", got, want)
+	}
+	if found[0].Summary != "The money type is a float." {
+		t.Errorf("summary = %q", found[0].Summary)
+	}
+	if !found[1].Filed {
+		t.Error("a thread carrying a pib:filed marker reads as unfiled")
+	}
+}
+
+// A pass that finds the finding filed updates what the interface sees: the
+// interface reads what was last collected, so a stale unfiled listing would
+// say the opposite of what the pull request says.
+func TestALaterPassUpdatesWhatTheInterfaceSees(t *testing.T) {
+	s := &spy{}
+	c := &Collector{Threads: reader{threads: []pr.Thread{marked("The money type is a float.")}}, Spawn: s}
+	c.Collect(open)
+	waitForMarked(t, c, 44, 1)
+
+	settled := marked("The money type is a float.")
+	settled.Comments = append(settled.Comments,
+		pr.Comment{Author: "pib", ID: 102, Body: "<!-- pib:filed #42 -->"})
+	c.Threads = reader{threads: []pr.Thread{settled}}
+	c.Collect(open)
+
+	for i := 0; i < 200; i++ {
+		if got := c.Marked(44); len(got) == 1 && got[0].Filed {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Errorf("Marked(44) = %+v, want the one finding, filed", c.Marked(44))
+}
+
+// Nothing has scanned a pull request, so there is nothing to render — which
+// is what the interface shows, rather than a section waiting on a pass.
+func TestMarkedIsEmptyForAnIssueNoScanHasRead(t *testing.T) {
+	c := &Collector{Threads: reader{}, Spawn: &spy{}}
+	if got := c.Marked(44); len(got) != 0 {
+		t.Errorf("Marked(44) = %+v, want nothing", got)
+	}
+}
+
+func waitForMarked(t *testing.T, c *Collector, issue int64, want int) []Marked {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if got := c.Marked(issue); len(got) >= want {
+			return got
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("no scan left %d marked findings for issue %d", want, issue)
+	return nil
+}
+
+// A finding is a paragraph; a pane is a row. The summary is its first line,
+// and nothing else: a wrapped paragraph would push the pane past the rows it
+// was given.
+func TestMarkedSummaryIsTheFindingsFirstLineOnly(t *testing.T) {
+	thread := marked("The money type is a float.\nIt will lose cents under rounding.")
+
+	c := &Collector{Threads: reader{threads: []pr.Thread{thread}}, Spawn: &spy{}}
+	c.Collect(open)
+
+	found := waitForMarked(t, c, 44, 1)
+	if got, want := found[0].Summary, "The money type is a float."; got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+}
