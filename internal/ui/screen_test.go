@@ -1092,15 +1092,16 @@ func TestQKeyInsertsTextWhenPromptFocused(t *testing.T) {
 	}
 }
 
-func TestBKeyGoesBackFromNewPlan(t *testing.T) {
+func TestBKeyInsertsTextWhenPromptFocused(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "plan-a", Title: "Plan A"}})
 	m.screen = screenNewPlan
 	m.input.Focus()
+	m.input.SetValue("")
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
 	m = next.(Model)
-	if m.screen != screenPlans {
-		t.Errorf("screen = %v, want screenPlans after b", m.screen)
+	if m.input.Value() != "b" {
+		t.Errorf("input value = %q, want 'b'", m.input.Value())
 	}
 }
 

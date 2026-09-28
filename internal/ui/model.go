@@ -33,13 +33,14 @@ var (
 )
 
 var (
-	upKeys      = key.NewBinding(key.WithKeys("up"))
-	downKeys    = key.NewBinding(key.WithKeys("down"))
-	selectKeys  = key.NewBinding(key.WithKeys("right", "enter"))
-	backKeys    = key.NewBinding(key.WithKeys("left", "esc", "b"))
-	startKeys   = key.NewBinding(key.WithKeys("s"))
-	newPlanKeys = key.NewBinding(key.WithKeys("n"))
-	refreshKeys = key.NewBinding(key.WithKeys("r"))
+	upKeys         = key.NewBinding(key.WithKeys("up"))
+	downKeys       = key.NewBinding(key.WithKeys("down"))
+	selectKeys     = key.NewBinding(key.WithKeys("right", "enter"))
+	backKeys       = key.NewBinding(key.WithKeys("left", "esc", "b"))
+	promptBackKeys = key.NewBinding(key.WithKeys("left", "esc"))
+	startKeys      = key.NewBinding(key.WithKeys("s"))
+	newPlanKeys    = key.NewBinding(key.WithKeys("n"))
+	refreshKeys    = key.NewBinding(key.WithKeys("r"))
 )
 
 type screen int

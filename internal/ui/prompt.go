@@ -130,7 +130,7 @@ func (m Model) updateScreenNewPlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch {
-		case key.Matches(msg, backKeys):
+		case key.Matches(msg, promptBackKeys):
 			m.screen = screenPlans
 			if len(m.plans) > 0 {
 				m.planCursor = 1
