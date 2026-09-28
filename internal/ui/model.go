@@ -42,6 +42,11 @@ var (
 	startKeys      = key.NewBinding(key.WithKeys("s"))
 	newPlanKeys    = key.NewBinding(key.WithKeys("n"))
 	refreshKeys    = key.NewBinding(key.WithKeys("r"))
+	// The full-screen issue view is taller than the terminal often enough to
+	// need its own paging: a comment is a paragraph, and a plan review is
+	// several of them.
+	pageUpKeys   = key.NewBinding(key.WithKeys("pgup", "ctrl+u"))
+	pageDownKeys = key.NewBinding(key.WithKeys("pgdown", "ctrl+d"))
 )
 
 type screen int
@@ -87,6 +92,21 @@ type Model struct {
 	// issue. It is loaded with the issues rather than asked for when one is
 	// selected, so rendering a detail pane never reaches the store.
 	planReviews map[int64][]issues.Review
+	// issueProse is each issue's markdown file — the prose body and the
+	// comments under `<!-- pib:comments -->` — read when the cursor landed on
+	// that issue and held here. Nothing on issues.Status carries it, and a
+	// render may not reach the store, so this is the only place the
+	// full-screen view can find it. Keyed by issue number, which is unique
+	// across the workspace, so an entry cannot belong to the wrong issue.
+	//
+	// A comment added while pib is open is not seen until it is reopened: the
+	// cache is filled on selection and a tick-driven re-read would be a read
+	// behind no selection, which is the thing this exists to avoid.
+	issueProse map[int64]issueProse
+	// issueScroll is how many rows the full-screen issue view has scrolled
+	// down its content. It belongs to the issue on screen, so it resets when
+	// the selected issue changes rather than carrying onto the next one.
+	issueScroll int
 	// triage holds what reconciliation has read off GitHub about
 	// out-of-scope findings, and is the only place the interface may learn
 	// it: a render cannot ask.

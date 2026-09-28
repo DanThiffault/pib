@@ -114,6 +114,55 @@ func collectOutOfScope(store *issues.Store, collector *triage.Collector, plan st
 	}
 }
 
+// issueProse is one issue's markdown file as the interface holds it: the body
+// and the comments, plus the failure to read them if there was one. A read
+// that failed is kept rather than dropped so a second visit does not re-read a
+// file that is not there, and so the pane can say the prose is missing rather
+// than showing an issue with none.
+type issueProse struct {
+	file issues.File
+	err  error
+}
+
+// issueContentLoadedMsg carries one issue's markdown file. The number is on the
+// message so a response for an issue the cursor has since left still lands in
+// the cache, and so nothing downstream has to guess whose prose this is.
+type issueContentLoadedMsg struct {
+	number int64
+	file   issues.File
+	err    error
+}
+
+// loadIssueContent reads one issue's markdown file. It runs on selection and
+// not on render: a render cannot reach the store, and the plans list and the
+// DAG have no prose to show, so a read behind every row of either would buy
+// nothing and cost a file open per frame.
+func loadIssueContent(store *issues.Store, number int64) tea.Cmd {
+	return func() tea.Msg {
+		if store == nil {
+			return issueContentLoadedMsg{number: number, err: errors.New("no store")}
+		}
+		file, err := store.Content(number)
+		return issueContentLoadedMsg{number: number, file: file, err: err}
+	}
+}
+
+// selectIssueContent returns the command that reads the markdown file of the
+// issue the cursor has landed on, or nil when that file is already held. The
+// cache is what makes this one read per issue rather than one per keystroke:
+// without it, holding down the down arrow would re-read every issue on the way
+// past, and the full-screen view would re-read one on every frame.
+func (m Model) selectIssueContent() tea.Cmd {
+	if m.store == nil || m.issueCursor < 0 || m.issueCursor >= len(m.planIssues) {
+		return nil
+	}
+	number := m.planIssues[m.issueCursor].Number
+	if _, held := m.issueProse[number]; held {
+		return nil
+	}
+	return loadIssueContent(m.store, number)
+}
+
 func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case plansLoadedMsg:
@@ -170,6 +219,15 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.refreshIssues(), refreshTick())
 	case outOfScopeCollectedMsg:
 		return m, nil
+	case issueContentLoadedMsg:
+		// The cache is keyed by issue number rather than by the selection, so a
+		// response that arrives after the cursor has moved still fills the
+		// entry the next visit to that issue will look for.
+		if m.issueProse == nil {
+			m.issueProse = map[int64]issueProse{}
+		}
+		m.issueProse[msg.number] = issueProse{file: msg.file, err: msg.err}
+		return m, nil
 	case viewIssueMsg:
 		m.notice = fmt.Sprintf("View issue #%d", msg.issue.Number)
 		return m, nil
@@ -214,6 +272,12 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.notice = ""
 				return m, nil
 			}
+			// In the full-screen view the cursor keys move the content rather
+			// than the selection: the issue on screen is the one the plan
+			// detail view is parked on, and what that view is short of is rows.
+			if m.scrollIssue(keyMsg) {
+				return m, nil
+			}
 			m, cmd := m.issueActionKey(keyMsg)
 			return m, cmd
 		case screenPlanDetail:
@@ -226,19 +290,22 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.issueCursor > 0 {
 					m.issueCursor--
 					m.notice = ""
+					m.issueScroll = 0
 				}
-				return m, nil
+				return m, m.selectIssueContent()
 			case key.Matches(keyMsg, downKeys):
 				if m.issueCursor < len(m.planIssues)-1 {
 					m.issueCursor++
 					m.notice = ""
+					m.issueScroll = 0
 				}
-				return m, nil
+				return m, m.selectIssueContent()
 			case key.Matches(keyMsg, selectKeys):
 				if len(m.planIssues) > 0 {
 					m.screen = screenIssue
 					m.notice = ""
-					return m, nil
+					m.issueScroll = 0
+					return m, m.selectIssueContent()
 				}
 				return m, nil
 			case key.Matches(keyMsg, startKeys):
@@ -281,6 +348,7 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.planCursor <= len(m.plans) {
 				m.screen = screenPlanDetail
 				m.issueCursor = 0
+				m.issueScroll = 0
 				m.planIssues = nil
 				m.planReviews = nil
 				m.planIssuesErr = nil
@@ -306,6 +374,35 @@ func (m Model) updateScreenPlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// scrollIssue moves the full-screen issue view through the content of the
+// issue on screen, and reports whether the key was one of its own so the
+// caller does not offer it to the action bar as well.
+//
+// The offset is only clamped at the top here. The bottom is clamped when the
+// pane renders, because the number of rows below the cursor is a property of
+// the terminal and the content, and the model knows neither.
+func (m *Model) scrollIssue(keyMsg tea.KeyMsg) bool {
+	delta := 0
+	switch {
+	case key.Matches(keyMsg, upKeys):
+		delta = -1
+	case key.Matches(keyMsg, downKeys):
+		delta = 1
+	case key.Matches(keyMsg, pageUpKeys):
+		delta = -m.contentHeight()
+	case key.Matches(keyMsg, pageDownKeys):
+		delta = m.contentHeight()
+	default:
+		return false
+	}
+	m.issueScroll += delta
+	if m.issueScroll < 0 {
+		m.issueScroll = 0
+	}
+	m.notice = ""
+	return true
 }
 
 // currentPlanSlug is the plan the cursor is on, empty when there is none.
@@ -953,15 +1050,11 @@ func (m Model) issueFullScreenView() string {
 
 	h := m.contentHeight()
 
-	var pane string
 	if m.issueCursor >= len(m.planIssues) {
-		pane = pad(m.width, h, "")
-	} else {
-		issue := m.planIssues[m.issueCursor]
-		pane = issueDetail(issue, m.detailFor(issue), m.width, h, detailFull)
+		return scrollPane("", m.width, h, m.issueScroll)
 	}
-
-	return lipgloss.JoinVertical(lipgloss.Left, pane)
+	issue := m.planIssues[m.issueCursor]
+	return scrollPane(issueDetailContent(issue, m.detailFor(issue), m.width, detailFull), m.width, h, m.issueScroll)
 }
 
 // issuePreviewPane renders the issue half of the plan detail view. It gets
@@ -984,15 +1077,27 @@ type detailView struct {
 	// OutOfScope are the marked findings the last scan of the issue's pull
 	// request found, and is empty when no scan has read it.
 	OutOfScope []triage.Marked
+	// Body is the issue's prose and Comments its activity, in the order the
+	// markdown file stores them. Both come from the file, which was read when
+	// the cursor landed on the issue; neither is on issues.Status.
+	Body     string
+	Comments []issues.Comment
+	// ContentErr is a failure to read that file, which means the prose below
+	// is missing rather than absent.
+	ContentErr error
 }
 
-// detailFor gathers what has already been collected about an issue. Both
-// halves are held — one in the store, loaded with the plan, and one in the
-// triage collector, filled by reconciliation — so this is a lookup in memory.
+// detailFor gathers what has already been collected about an issue. Every
+// half is held — two in the store, loaded when the cursor landed on the issue,
+// and one in the triage collector, filled by reconciliation — so this is a
+// lookup in memory.
 func (m Model) detailFor(issue issues.Status) detailView {
 	d := detailView{Reviews: m.planReviews[issue.Number]}
 	if m.triage != nil {
 		d.OutOfScope = m.triage.Marked(issue.Number)
+	}
+	if prose, ok := m.issueProse[issue.Number]; ok {
+		d.Body, d.Comments, d.ContentErr = prose.file.Body, prose.file.Comments, prose.err
 	}
 	return d
 }
@@ -1008,13 +1113,19 @@ const (
 	detailFull
 )
 
-// issueDetail renders an issue's fields into a pane of exactly w by h.
+// issueDetail renders an issue's fields into a pane of exactly w by h. It is
+// the preview pane's renderer: half a height shared with the issue list is
+// rows to spend, not rows to scroll, so what does not fit is cut.
 func issueDetail(issue issues.Status, view detailView, w, h int, depth detailDepth) string {
+	return pad(w, h, issueDetailContent(issue, view, w, depth))
+}
+
+// issueDetailContent renders an issue into the lines the pane shows, at whatever
+// length it comes to. The full-screen view scrolls the result; the preview
+// pane truncates it, which is why the two are separate.
+func issueDetailContent(issue issues.Status, view detailView, w int, depth detailDepth) string {
 	if w < 1 {
 		w = 1
-	}
-	if h < 1 {
-		h = 1
 	}
 
 	var b strings.Builder
@@ -1029,6 +1140,13 @@ func issueDetail(issue issues.Status, view detailView, w, h int, depth detailDep
 	}
 	if depth == detailFull && issue.LocalID != "" {
 		b.WriteString(itemStyle.Render("ID:    "+issue.LocalID) + "\n")
+	}
+	// The count is on the metadata so the preview pane can say there is
+	// something to read here without spending a row of a half-width pane on the
+	// reading itself. It appears at both depths: the field is the issue's, and
+	// the full-screen view has already spent a section on the comments.
+	if n := len(view.Comments); n > 0 {
+		b.WriteString(itemStyle.Render(fmt.Sprintf("Comments: %d", n)) + "\n")
 	}
 	b.WriteString("\n")
 
@@ -1131,7 +1249,74 @@ func issueDetail(issue issues.Status, view detailView, w, h int, depth detailDep
 		b.WriteString(itemStyle.Render("Updated: "+issue.UpdatedAt.Format("2006-01-02 15:04")) + "\n")
 	}
 
-	return pad(w, h, b.String())
+	// The prose and the comments are the issue itself: what it was written to
+	// say, and what the agents found on it. The preview pane shows neither —
+	// half a width cannot hold a fenced diff, and the count above is what it
+	// has to say about them — so both are the full-screen view's work, which is
+	// the pane the layout exists to fill.
+	if depth == detailFull {
+		if view.ContentErr != nil {
+			section("Description")
+			b.WriteString(helpStyle.Render("Could not read the issue file: "+view.ContentErr.Error()) + "\n\n")
+		}
+		if body := strings.Trim(view.Body, "\n"); strings.TrimSpace(body) != "" {
+			section("Description")
+			writeProse(&b, itemStyle, body, w-itemStyle.GetPaddingLeft())
+			b.WriteString("\n")
+		}
+		if len(view.Comments) > 0 {
+			section(fmt.Sprintf("Comments (%d)", len(view.Comments)))
+			// The file's own order, oldest first: a comment thread is a
+			// conversation, and a reordering would put an answer above the
+			// finding it answers.
+			for _, c := range view.Comments {
+				b.WriteString(itemStyle.Render(commentHead(c)) + "\n")
+				writeProse(&b, commentStyle, strings.Trim(c.Body, "\n"), w-commentStyle.GetPaddingLeft())
+				b.WriteString("\n")
+			}
+		}
+	}
+
+	return b.String()
+}
+
+// commentStyle is a comment's own body, one step past the fields above it, so
+// a thread reads as nested under its byline rather than as more metadata.
+var commentStyle = lipgloss.NewStyle().
+	PaddingLeft(6).
+	Foreground(theme.DefaultPalette.Fg)
+
+// commentHead is one comment's byline: who wrote it and when. The timestamp is
+// the same form as the other times in the pane rather than the RFC 3339 the
+// file stores, which is precise and unreadable at a glance.
+func commentHead(c issues.Comment) string {
+	if c.At.IsZero() {
+		return c.Author
+	}
+	return c.Author + " · " + c.At.Format("2006-01-02 15:04")
+}
+
+// writeProse writes markdown into the pane, wrapped to the width the pane has
+// left after the style's own padding.
+//
+// The wrapping is the same one the pane applies to everything else, done here
+// so that a line longer than the pane continues under the text it belongs to
+// instead of under the indent. It is deliberately not a markdown renderer: a
+// comment can be a fenced diff or a table, and reflowing either would change
+// what it says.
+func writeProse(b *strings.Builder, style lipgloss.Style, text string, width int) {
+	if width < 1 {
+		width = 1
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == "" {
+			b.WriteString("\n")
+			continue
+		}
+		for _, wrapped := range strings.Split(lipgloss.NewStyle().Width(width).Render(line), "\n") {
+			b.WriteString(style.Render(strings.TrimRight(wrapped, " ")) + "\n")
+		}
+	}
 }
 
 // reviewRow is one line of review history: which cycle, how it ended, and
@@ -1226,4 +1411,66 @@ func ago(t time.Time) string {
 // the only point at which the real line count is known.
 func pad(w, h int, content string) string {
 	return lipgloss.NewStyle().Width(w).Height(h).MaxHeight(h).Render(content)
+}
+
+// scrollPane fits the window at offset into exactly w by h, for content longer
+// than the pane. It is the counterpart to pad: pad cuts at h, and a cut is the
+// wrong answer for an issue whose comments run past the bottom of the screen.
+//
+// Wrapping happens before the window is taken, because a line that wraps is two
+// rows and the source's newline count would size the window on a lie. The
+// offset is clamped to the content rather than trusted, so a stale offset — the
+// terminal shrank, or the pane is shorter than the last one — cannot open a
+// window on rows that are not there.
+func scrollPane(content string, w, h, offset int) string {
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	rows := strings.Split(lipgloss.NewStyle().Width(w).Render(content), "\n")
+	total := len(rows)
+
+	// Scrolling stops where the last row is on screen: any further and the
+	// bottom of the content could never be read.
+	if last := total - h; offset > last {
+		offset = last
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	// The indicator is a row, but only while there is more below it to reach,
+	// so the last page of the content gets all h rows.
+	visible := h
+	if offset+h < total {
+		visible = h - 1
+	}
+	if visible < 1 {
+		visible = 1
+	}
+	end := offset + visible
+	if end > total {
+		end = total
+	}
+
+	lines := make([]string, 0, h)
+	lines = append(lines, rows[offset:end]...)
+	if end < total {
+		lines = append(lines, theme.Default.Dim.Width(w).Render("▼"))
+	}
+	for len(lines) < h {
+		lines = append(lines, strings.Repeat(" ", w))
+	}
+	// A pane too short for the indicator and a row of content keeps the
+	// content: Height pads but does not cut, so the indicator would push the
+	// pane past the rows it was given and the action bar off the screen.
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+
+	return lipgloss.NewStyle().Width(w).Height(h).Render(
+		lipgloss.JoinVertical(lipgloss.Left, lines...),
+	)
 }
