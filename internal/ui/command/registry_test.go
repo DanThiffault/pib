@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -67,8 +68,9 @@ func TestRegisterRefusesAnEmptyVerb(t *testing.T) {
 // built-in key is spelled the way a real key press spells it, so a command
 // key and a key press cannot drift apart by a capital or an abbreviation.
 func TestCommandKeysArePlainStrings(t *testing.T) {
-	var _ string = Command{}.Key // the key is not a key.Binding
-
+	if got := fmt.Sprintf("%T", Command{}.Key); got != "string" {
+		t.Errorf("the key field is a %s; a key.Binding would need Matches() and would hide here", got)
+	}
 	for _, c := range New().Commands() {
 		if c.Key == "" {
 			t.Fatalf("command %q has no key", c.Verb)
@@ -95,6 +97,14 @@ func keyPress(name string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyDown}
 	case "ctrl+k":
 		return tea.KeyMsg{Type: tea.KeyCtrlK}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	case "home":
+		return tea.KeyMsg{Type: tea.KeyHome}
+	case "f1":
+		return tea.KeyMsg{Type: tea.KeyF1}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
 }
@@ -302,6 +312,86 @@ func TestPressPicksTheSharedCommandThatApplies(t *testing.T) {
 // TestNilRowRunsOnlyTheCommandsThatNeedNoRow covers the empty table on first
 // run: a predicate cannot be asked about a row that is not there, so a nil row
 // gets the commands with no predicate and nothing else.
+// TestBuiltinsPassTheSameChecksAsAnythingElse keeps the built-in vocabulary
+// honest: New() registers through Register, and this is the belt to that
+// braces, so an edit that gave a built-in a motion key fails here.
+func TestBuiltinsPassTheSameChecksAsAnythingElse(t *testing.T) {
+	verbs := map[string]string{}
+	for _, c := range New().Commands() {
+		if IsMotion(c.Key) {
+			t.Errorf("built-in %q has the motion key %q", c.Verb, c.Key)
+		}
+		if first, ok := verbs[c.Verb]; ok {
+			t.Errorf("verb %q is registered twice, by %q and %q", c.Verb, first, c.Key)
+		}
+		verbs[c.Verb] = c.Key
+	}
+}
+
+func TestHandleAttachesAHandlerToABuiltin(t *testing.T) {
+	reg := New()
+	row := fixture{kind: KindIssue, state: StateOpen}
+	var gotArgs []string
+	closed := false
+	if err := reg.Handle("close", func(_ Row, args []string) tea.Cmd {
+		gotArgs, closed = args, true
+		return func() tea.Msg { return "closed" }
+	}); err != nil {
+		t.Fatalf("handling close: %v", err)
+	}
+
+	// The predicate is still the registry's: x applies to an open issue and
+	// to nothing else, without the handler knowing what an open issue is.
+	if _, ok := reg.Press(row, "x"); !ok {
+		t.Fatal("x did nothing on an open issue")
+	}
+	if gotArgs != nil {
+		t.Errorf("a key press passed args %v, want none", gotArgs)
+	}
+	if _, ok := reg.Press(fixture{kind: KindIssue, state: StateClosed}, "x"); ok {
+		t.Error("x ran on a closed issue, so the handler overrode the predicate")
+	}
+	if !closed {
+		t.Error("the handler did not run")
+	}
+	// The ":" line reaches the same handler, with the words after the verb.
+	l := NewLine(reg, row)
+	l.Open()
+	typing(t, l, "close the agent was stuck")
+	enter(t, l)
+	if strings.Join(gotArgs, " ") != "the agent was stuck" {
+		t.Errorf("handler args = %v", gotArgs)
+	}
+}
+
+func TestHandleOnAnUnknownVerb(t *testing.T) {
+	err := New().Handle("frobnicate", func(Row, []string) tea.Cmd { return nil })
+	if err == nil {
+		t.Fatal("a handler for a verb no command has was accepted")
+	}
+	if !strings.Contains(err.Error(), "frobnicate") {
+		t.Errorf("error = %v, want it to name the verb", err)
+	}
+}
+
+func TestHandleReplacesTheHandlerNotThePredicate(t *testing.T) {
+	reg := New()
+	first, second := 0, 0
+	if err := reg.Handle("new", func(Row, []string) tea.Cmd { first++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Handle("new", func(Row, []string) tea.Cmd { second++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	reg.Press(nil, "n")
+	if first != 0 || second != 1 {
+		t.Errorf("first = %d, second = %d; want only the latest handler", first, second)
+	}
+	if len(reg.WithKey("n")) != 1 {
+		t.Error("handling a verb registered a second command for it")
+	}
+}
+
 func TestNilRowRunsOnlyTheCommandsThatNeedNoRow(t *testing.T) {
 	var ran []string
 	reg := &Registry{}

@@ -7,10 +7,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// typing feeds a string to the line as key presses.
+// typing feeds a string to the line as key presses, the way a terminal sends
+// one character at a time.
 func typing(t *testing.T, l *Line, text string) {
 	t.Helper()
 	for _, r := range text {
+		if r == ' ' {
+			// Bubble Tea sends a lone space as KeySpace, not KeyRunes.
+			l.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{r}})
+			continue
+		}
 		msg, _ := l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		l = msg.(*Line)
 	}
@@ -72,6 +78,63 @@ func messages(msgs []tea.Msg) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+// TestPastedTextGoesInWhole covers the bracketed paste Bubble Tea delivers as
+// one KeyRunes message. A reason or an answer is what people paste, and the
+// arguments are the only free text in the TUI.
+func TestPastedTextGoesInWhole(t *testing.T) {
+	reg := New()
+	var gotArgs []string
+	if err := reg.Handle("close", func(_ Row, args []string) tea.Cmd {
+		gotArgs = args
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	l := NewLine(reg, fixture{kind: KindIssue, state: StateOpen})
+	l.Open()
+	typing(t, l, "close ")
+	l.Update(tea.KeyMsg{Type: tea.KeyRunes, Paste: true, Runes: []rune("the agent was stuck on the PR")})
+	if l.Input() != "close the agent was stuck on the PR" {
+		t.Fatalf("input = %q, want the paste in whole", l.Input())
+	}
+	enter(t, l)
+	if strings.Join(gotArgs, " ") != "the agent was stuck on the PR" {
+		t.Errorf("handler args = %v", gotArgs)
+	}
+}
+
+func TestTypedRunesAndSpacesGoIn(t *testing.T) {
+	l := NewLine(New(), fixture{kind: KindIssue, state: StateOpen})
+	l.Open()
+	typing(t, l, "close")
+	// A space arrives as its own key type in Bubble Tea v1.3, with the rune
+	// on the message.
+	l.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
+	typing(t, l, "stuck")
+	if l.Input() != "close stuck" {
+		t.Errorf("input = %q", l.Input())
+	}
+	// Several runes in one message — fast typing, or a paste without the
+	// bracketed-paste flag — all go in.
+	l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("er now")})
+	if l.Input() != "close stucker now" {
+		t.Errorf("input = %q", l.Input())
+	}
+}
+
+func TestNamedKeysAreNotTyped(t *testing.T) {
+	l := NewLine(New(), fixture{kind: KindIssue, state: StateOpen})
+	l.Open()
+	typing(t, l, "close")
+	for _, name := range []string{"up", "down", "left", "right", "home", "f1"} {
+		press(t, l, name)
+	}
+	if l.Input() != "close" {
+		t.Errorf("input = %q, want the named keys left out of it", l.Input())
+	}
 }
 
 func TestLineDispatchesByVerbWithArgs(t *testing.T) {

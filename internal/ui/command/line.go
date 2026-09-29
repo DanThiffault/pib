@@ -123,13 +123,13 @@ func (l *Line) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		l.Close()
 		return l, tea.Quit
-	case "space":
-		l.input = append(l.input, ' ')
-		l.completions = nil
-		return l, nil
 	}
-	if text := key.String(); len([]rune(text)) == 1 {
-		l.input = append(l.input, []rune(text)...)
+	// Runes, and only runes: a named key is a word, not a character. The
+	// message can carry several of them — a bracketed paste arrives as one
+	// KeyRunes holding the whole string, and a reason or an answer is
+	// exactly what someone pastes — so the runes go in as they are.
+	if key.Type == tea.KeyRunes || key.Type == tea.KeySpace {
+		l.input = append(l.input, key.Runes...)
 		l.completions = nil
 	}
 	return l, nil
