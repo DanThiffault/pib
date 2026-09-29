@@ -192,9 +192,17 @@ func TestPredicatesReadTheRowState(t *testing.T) {
 		{"window", fixture{kind: KindIssue, state: StateInProgress, hasRun: true}, true},
 		{"window", fixture{kind: KindIssue, state: StateOpen}, false},
 		{"comment", fixture{kind: KindIssue, state: StateOpen}, true},
-		{"comment", fixture{kind: KindIssue, state: StateClosed}, false},
+		{"comment", fixture{kind: KindIssue, state: StateBlocked}, true},
+		{"comment", fixture{kind: KindIssue, state: StateAwaitingReview}, true},
+		{"comment", fixture{kind: KindIssue, state: StateInProgress}, true},
+		{"comment", fixture{kind: KindIssue, state: StateClosed}, true},
+		{"comment", fixture{kind: KindPlan, state: StateComplete}, false},
 		{"edit", fixture{kind: KindIssue, state: StateOpen}, true},
+		{"edit", fixture{kind: KindIssue, state: StateBlocked}, true},
+		{"edit", fixture{kind: KindIssue, state: StateClosed}, false},
 		{"close", fixture{kind: KindIssue, state: StateOpen}, true},
+		{"close", fixture{kind: KindIssue, state: StateBlocked}, true},
+		{"close", fixture{kind: KindIssue, state: StateAwaitingReview}, true},
 		{"close", fixture{kind: KindIssue, state: StateClosed}, false},
 		{"reopen", fixture{kind: KindIssue, state: StateClosed}, true},
 		{"reopen", fixture{kind: KindIssue, state: StateOpen}, false},
@@ -204,6 +212,7 @@ func TestPredicatesReadTheRowState(t *testing.T) {
 		{"blockers", fixture{kind: KindIssue, state: StateOpen}, false},
 		{"archive", fixture{kind: KindPlan, state: StateComplete}, true},
 		{"archive", fixture{kind: KindPlan, state: StateArchived}, false},
+		{"archive", fixture{kind: KindPlan, state: StatePlanning}, false},
 		{"unarchive", fixture{kind: KindPlan, state: StateArchived}, true},
 		{"unarchive", fixture{kind: KindPlan, state: StateComplete}, false},
 		{"update", fixture{kind: KindSettings}, true},
@@ -258,7 +267,7 @@ func TestPressRunsTheCommandForAKey(t *testing.T) {
 func TestPressOnAKeyWithNoApplicableCommand(t *testing.T) {
 	reg := New()
 	row := fixture{kind: KindIssue, state: StateClosed}
-	for _, key := range []string{"x", "e", "c", "z", "v", "b"} {
+	for _, key := range []string{"x", "e", "z", "v", "b"} {
 		if _, ok := reg.Press(row, key); ok {
 			t.Errorf("%q on a closed issue ran something", key)
 		}

@@ -156,7 +156,7 @@ func Run(c Command, row Row, args []string) tea.Cmd {
 
 func isIssue(r Row) bool     { return r.Kind() == KindIssue }
 func isPlan(r Row) bool      { return r.Kind() == KindPlan }
-func isOpenIssue(r Row) bool { return isIssue(r) && r.State() == StateOpen }
+func isOpenIssue(r Row) bool { return isIssue(r) && r.State() != StateClosed }
 
 // builtins is the vocabulary of ADR-006 §1, in the order the bar shows it.
 func builtins() []Command {
@@ -171,13 +171,17 @@ func builtins() []Command {
 		}},
 		{Verb: "kill", Key: "ctrl+k", Label: "Kill", Applies: func(r Row) bool { return r.HasRun() }},
 		{Verb: "window", Key: "w", Label: "Window", Applies: func(r Row) bool { return r.HasRun() }},
-		{Verb: "comment", Key: "c", Label: "Comment", Applies: isOpenIssue},
+		{Verb: "comment", Key: "c", Label: "Comment", Applies: isIssue},
 		{Verb: "edit", Key: "e", Label: "Edit", Applies: isOpenIssue},
 		{Verb: "close", Key: "x", Label: "Close", Args: "<reason>", Applies: isOpenIssue},
 		{Verb: "reopen", Key: "X", Label: "Reopen", Applies: func(r Row) bool { return isIssue(r) && r.State() == StateClosed }},
 		{Verb: "pr", Key: "p", Label: "PR", Applies: func(r Row) bool { return isIssue(r) && r.HasPR() }},
 		{Verb: "blockers", Key: "b", Label: "Blockers", Applies: func(r Row) bool { return isIssue(r) && r.State() == StateBlocked }},
-		{Verb: "archive", Key: "z", Label: "Archive", Applies: func(r Row) bool { return isPlan(r) && r.State() != StateArchived }},
+		{Verb: "archive", Key: "z", Label: "Archive", Applies: func(r Row) bool {
+			// A planning row is a placeholder built from a run; there is no
+			// plans record to set archived_at on yet.
+			return isPlan(r) && r.State() != StateArchived && r.State() != StatePlanning
+		}},
 		{Verb: "unarchive", Key: "z", Label: "Unarchive", Applies: func(r Row) bool { return isPlan(r) && r.State() == StateArchived }},
 		{Verb: "update", Key: "u", Label: "Update agents", Applies: func(r Row) bool { return r.Kind() == KindSettings }},
 		{Verb: "settings", Key: ",", Label: "Settings"},
