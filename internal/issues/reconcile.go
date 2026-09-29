@@ -256,6 +256,9 @@ func (s *Store) settle(item pending, state string) (bool, error) {
 		_, err := s.db.Exec(
 			`UPDATE issues SET pr_state = ?, pr_checked_at = ?, updated_at = ? WHERE number = ?`,
 			state, stamp, stamp, item.number)
+		if err == nil {
+			s.publishIssue(EventIssue, item.number)
+		}
 		return false, err
 	}
 
@@ -278,6 +281,7 @@ func (s *Store) settle(item pending, state string) (bool, error) {
 		return false, err
 	}
 	s.notifyClosed(item.number)
+	s.publishIssue(EventIssue, item.number)
 	return true, nil
 }
 

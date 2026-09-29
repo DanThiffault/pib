@@ -116,7 +116,12 @@ func (s *Store) Create(n NewIssue) (Issue, error) {
 		return Issue{}, err
 	}
 
-	return s.Issue(number)
+	issue, err := s.Issue(number)
+	if err != nil {
+		return Issue{}, err
+	}
+	s.publishIssue(EventIssue, issue.Number)
+	return issue, nil
 }
 
 // insert writes one issue row and its markdown file inside a transaction.
@@ -334,7 +339,12 @@ func (s *Store) Edit(number int64, e Edit) (Issue, error) {
 		return Issue{}, err
 	}
 
-	return s.Issue(number)
+	edited, err := s.Issue(number)
+	if err != nil {
+		return Issue{}, err
+	}
+	s.publishIssue(EventIssue, edited.Number)
+	return edited, nil
 }
 
 // Comment appends to an issue's activity. It is a file append, so nothing
@@ -351,7 +361,11 @@ func (s *Store) Comment(number int64, author, body string) error {
 	if err := AppendComment(s.abs(issue.Path), Comment{Author: author, At: now(), Body: body}); err != nil {
 		return err
 	}
-	return s.touch(number)
+	if err := s.touch(number); err != nil {
+		return err
+	}
+	s.publishIssue(EventIssue, number)
+	return nil
 }
 
 // Comments reads an issue's activity.
@@ -401,6 +415,7 @@ func (s *Store) CloseIssue(number int64, reason string) (Issue, []string, error)
 		return Issue{}, nil, err
 	}
 	s.notifyClosed(number)
+	s.publishIssue(EventIssue, number)
 	return issue, warnings, nil
 }
 
@@ -414,7 +429,12 @@ func (s *Store) ReopenIssue(number int64) (Issue, error) {
 		format(now()), number); err != nil {
 		return Issue{}, err
 	}
-	return s.Issue(number)
+	reopened, err := s.Issue(number)
+	if err != nil {
+		return Issue{}, err
+	}
+	s.publishIssue(EventIssue, number)
+	return reopened, nil
 }
 
 // LinkPR records the pull request that will close this issue. Whether it has
@@ -438,6 +458,7 @@ func (s *Store) LinkPR(number int64, url string) (Issue, error) {
 		return Issue{}, err
 	}
 	s.notifyLinked(issue)
+	s.publishIssue(EventIssue, number)
 	return issue, nil
 }
 
@@ -508,6 +529,7 @@ func (s *Store) reindexPlan(plan string, force bool) (int, error) {
 		}
 		if changed {
 			refreshed++
+			s.publishIssue(EventIssue, number)
 		}
 	}
 	return refreshed, nil

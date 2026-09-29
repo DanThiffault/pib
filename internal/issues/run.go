@@ -44,7 +44,11 @@ func (s *Store) StartRun(id string, issue int64, agent, window string) error {
 			status      = NULL,
 			issue       = COALESCE(excluded.issue, runs.issue)`,
 		id, nullableID(issue), agent, nullable(window), format(now()))
-	return wrapRef(err)
+	if err != nil {
+		return wrapRef(err)
+	}
+	s.publishIssue(EventRun, issue)
+	return nil
 }
 
 // FinishRun records how a run ended, which releases the issue it held.
@@ -54,7 +58,17 @@ func (s *Store) FinishRun(id, status string) error {
 	}
 	_, err := s.db.Exec(
 		`UPDATE runs SET ended_at = ?, status = ? WHERE id = ?`, format(now()), status, id)
-	return err
+	if err != nil {
+		return err
+	}
+	// The run's issue is read back rather than carried in, because the
+	// recorder that ends a run knows the run id and nothing else.
+	var issue int64
+	if err := s.db.QueryRow(`SELECT issue FROM runs WHERE id = ?`, id).Scan(&issue); err != nil {
+		return nil
+	}
+	s.publishIssue(EventRun, issue)
+	return nil
 }
 
 // RunAgent names the agent a run belongs to. A run pib has never heard of
