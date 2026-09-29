@@ -30,13 +30,29 @@ that only surfaces mid-implementation is the same thing again.
 
 | State | Derived from | Commands |
 |---|---|---|
-| **planning** | a `planner` run with no `plans.planner_run` pointing at it yet | jump, kill |
+| **planning** | a `planner` run with `runs.plan IS NULL` and `ended_at IS NULL` | jump, kill |
 | **awaiting review** | applied; opening `plan-reviewer` issue open, no run | review, archive |
-| **under review** | `plan-reviewer` issue has an open run | jump, kill |
-| **in progress** | opening review closed; at least one other issue open | start all, review, archive |
-| **awaiting closing review** | every non-reviewer issue closed; closing review issue open | review, jump, kill |
-| **complete** | every issue closed | archive |
+| **under review** | an open `plan-reviewer` run with `runs.plan` = the plan, or one on the plan's reviewer issue | jump, kill |
+| **in progress** | opening review closed, absent, or `[plan] review = false`; at least one other issue open | start all, review, archive |
+| **awaiting closing review** | every non-reviewer issue closed; no `pass = 'closing'` run for the plan has ended `done` since the last issue closed | review, jump, kill |
+| **complete** | as above, but that closing run exists (or `[plan] review = false`) | archive |
 | **archived** | `plans.archived_at` set | unarchive |
+
+The opening reviewer issue is the plan's issue with `type = plan-reviewer`. Plans that
+predate the review gate have none, and neither do plans applied with
+`[plan] review = false`; both read as **in progress** while work remains.
+
+There is no closing-review issue. Reviewer runs without an issue (the closing pass
+from `recheck`, and `pib plan review`) are traced to their plan by two columns added
+to `runs` in migration 0004:
+
+- `runs.plan`: the plan slug. For runs on an issue it is the issue's plan.
+- `runs.pass`: `opening` or `closing`, set for `plan-reviewer` runs.
+
+`protocol.Request` carries `Plan` and `Pass` through to `Recorder.StartRun`. The
+planner run is linked on apply: the runner exports `PIB_RUN`, and `pib plan apply`
+sets `plans.planner_run` and `runs.plan` on that run. If the closing pass files new
+issues, the plan goes back to **in progress** with no extra code.
 
 `planning` rows are placeholders: they exist in the table from the moment the new-plan
 command spawns a planner, so the run is reachable (jump, kill) before `pib plan apply`
@@ -53,7 +69,7 @@ The existing derivation stands, with one addition, **needs attention**, evaluate
 
 ```
 needs_attention = state = 'open' AND NOT in_progress AND (
-    last_run.status IN ('error', 'needs_input')
+    last_run.status IN ('error', 'needs_input', 'unknown')
     AND last_run.ended_at > issues.updated_at              -- not yet edited since
  OR pr_url IS NOT NULL AND pr_state = 'closed'             -- PR rejected
  OR review_cycle >= [review].cycles AND review_verdict = 'changes'
@@ -61,6 +77,9 @@ needs_attention = state = 'open' AND NOT in_progress AND (
 ready = state = 'open' AND NOT blocked AND NOT in_progress
         AND NOT awaiting_review AND NOT needs_attention
 ```
+
+`unknown` covers a killed window, a pi crash, and an orphan run closed at startup; all
+three count as `agent failed`.
 
 Each row carries an `attention_reason` string (`agent failed`, `agent asked a question`,
 `pull request closed`, `review cycles exhausted`) so the table can say why.
@@ -78,10 +97,14 @@ Each row carries an `attention_reason` string (`agent failed`, `agent asked a qu
 Leaving **needs attention**:
 
 - **retry** starts a new run of the issue's agent. If the PR was closed unmerged the
-  link is cleared first so the coder opens a fresh one.
+  link is cleared first so the coder opens a fresh one. If review cycles were
+  exhausted, retry resets the cycle count for the PR first. The review history is
+  kept; only the count toward the cap starts again.
 - **answer** resumes the stopped agent with the user's text (`protocol.OpResume`).
-- **edit** bumps `issues.updated_at` past the failed run, and the issue is `ready`
-  again — the user changed something so a different thing will happen.
+- **edit** and **comment** bump `issues.updated_at` past the failed run, and the issue
+  is `ready` again — the user changed something so a different thing will happen. This
+  includes an edit made to the markdown file in `$EDITOR` and picked up by reindex:
+  reindex bumps `updated_at` whenever the content changed.
 - **close** abandons it.
 
 Nothing about attention is stored: it is derived from data already written by runs,
