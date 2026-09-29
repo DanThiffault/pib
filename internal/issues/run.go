@@ -62,11 +62,13 @@ func (s *Store) FinishRun(id, status string) error {
 		return err
 	}
 	// The run's issue is read back rather than carried in, because the
-	// recorder that ends a run knows the run id and nothing else.
+	// recorder that ends a run knows the run id and nothing else. A run with
+	// no issue — a planner, the closing-pass reviewer — reads back as zero,
+	// which is what StartRun published for it. The read-back is a lookup,
+	// not a precondition: the write has landed, so it is published either
+	// way, and a run pib has never heard of ends the same way.
 	var issue int64
-	if err := s.db.QueryRow(`SELECT issue FROM runs WHERE id = ?`, id).Scan(&issue); err != nil {
-		return nil
-	}
+	_ = s.db.QueryRow(`SELECT COALESCE(issue, 0) FROM runs WHERE id = ?`, id).Scan(&issue)
 	s.publishIssue(EventRun, issue)
 	return nil
 }

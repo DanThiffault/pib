@@ -194,6 +194,37 @@ func TestRunStartAndEndPublish(t *testing.T) {
 	wantEvent(t, events, EventRun, "orders", issue.Number)
 }
 
+func TestARunWithNoIssuePublishesStartAndEnd(t *testing.T) {
+	store := planned(t)
+	events := watched(t, store)
+
+	// A planner run belongs to no issue, and it is the planning row ending
+	// that a subscriber needs to hear about: a planner that quits without
+	// applying leaves a placeholder to take down.
+	if err := store.StartRun("run-planner", 0, "planner", "@1"); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	wantEvent(t, events, EventRun, "", 0)
+
+	if err := store.FinishRun("run-planner", "needs_input"); err != nil {
+		t.Fatalf("FinishRun: %v", err)
+	}
+	wantEvent(t, events, EventRun, "", 0)
+}
+
+func TestEndingAnUnknownRunStillPublishes(t *testing.T) {
+	store := planned(t)
+	events := watched(t, store)
+
+	// Nothing was written, so there is no identity to read back. The event
+	// still goes out: a subscriber reloading is cheaper than one left
+	// showing a run that has ended.
+	if err := store.FinishRun("run-that-never-existed", "done"); err != nil {
+		t.Fatalf("FinishRun: %v", err)
+	}
+	wantEvent(t, events, EventRun, "", 0)
+}
+
 func TestReindexPublishesForEachRefreshedFile(t *testing.T) {
 	store := planned(t)
 	issue := task(t, store, "Schema")
