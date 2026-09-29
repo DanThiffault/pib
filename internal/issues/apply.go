@@ -275,6 +275,14 @@ func (s *Store) Apply(doc Document, opts ApplyOptions) (ApplyResult, error) {
 	if err = tx.Commit(); err != nil {
 		return ApplyResult{}, err
 	}
+
+	s.publish(Event{Kind: EventPlan, Plan: result.Plan.Slug})
+	for _, number := range result.Created {
+		s.publishIssue(EventIssue, number)
+	}
+	for _, number := range result.Updated {
+		s.publishIssue(EventIssue, number)
+	}
 	return result, nil
 }
 

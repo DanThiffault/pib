@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
@@ -66,6 +67,12 @@ type Store struct {
 	// OnLinked is notified whenever a pull request is linked. Optional; set
 	// it after Open and before the store is shared.
 	OnLinked LinkedHook
+
+	// subscribers is every channel handed out by Subscribe, guarded by
+	// eventsMu so that unsubscribing can close a channel without racing a
+	// publish into it.
+	eventsMu    sync.Mutex
+	subscribers map[chan Event]bool
 }
 
 // notifyClosed tells the hook an issue closed, re-reading it so the hook sees

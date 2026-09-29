@@ -74,6 +74,7 @@ func (s *Store) OpenReview(issue int64, prURL, run string) (Review, error) {
 		return Review{}, fmt.Errorf("opening a review on issue #%d: no row written", issue)
 	}
 
+	s.publishIssue(EventReview, issue)
 	return s.review(id)
 }
 
@@ -130,6 +131,13 @@ func (s *Store) CloseReview(id, verdict string, findings int) (Review, error) {
 	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
 		return Review{}, fmt.Errorf("review %s: %w", id, ErrNotFound)
 	}
+	// The cycle's issue is read back: a cycle is settled by review id, which
+	// names no issue on its own.
+	var issue int64
+	if err := s.db.QueryRow(`SELECT issue FROM reviews WHERE id = ?`, id).Scan(&issue); err != nil {
+		return s.review(id)
+	}
+	s.publishIssue(EventReview, issue)
 	return s.review(id)
 }
 

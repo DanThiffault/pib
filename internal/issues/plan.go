@@ -87,7 +87,12 @@ func (s *Store) CreatePlan(n NewPlan) (Plan, error) {
 		return Plan{}, err
 	}
 
-	return s.Plan(n.Slug)
+	plan, err := s.Plan(n.Slug)
+	if err != nil {
+		return Plan{}, err
+	}
+	s.publish(Event{Kind: EventPlan, Plan: plan.Slug})
+	return plan, nil
 }
 
 // indexPlan records the state of a plan's file on disk.
