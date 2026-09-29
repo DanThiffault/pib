@@ -40,12 +40,14 @@ func SetFrontmatter(path, key, value string) error {
 	}
 
 	// A key that is not there already goes at the end of the block, where a
-	// reader expects an addition rather than a reordering.
+	// reader expects an addition rather than a reordering. The match is on
+	// `key:` so `key:value`, which parse also accepts, is replaced rather
+	// than duplicated.
 	prefix := key + ":"
 	line := prefix + " " + value
 	at := -1
 	for i := 1; i < end; i++ {
-		if t := strings.TrimSpace(lines[i]); t == prefix || strings.HasPrefix(t, prefix+" ") {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), prefix) {
 			at = i
 			break
 		}

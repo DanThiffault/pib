@@ -71,6 +71,44 @@ func TestSetOnEmptyFile(t *testing.T) {
 	}
 }
 
+func TestSetHandlesHeaderCommentAndInnerSpaces(t *testing.T) {
+	for _, header := range []string{"[review]", "[review] # depth", "[ review ]", "[review]\t# depth"} {
+		t.Run(header, func(t *testing.T) {
+			dir := t.TempDir()
+			path := write(t, dir, header+"\ncycles = 3\n")
+
+			if err := Set(path, "review", "cycles", "2"); err != nil {
+				t.Fatalf("Set: %v", err)
+			}
+
+			got := readBody(t, path)
+			want := header + "\ncycles = 2\n"
+			if got != want {
+				t.Errorf("Set produced\n%q\nwant\n%q", got, want)
+			}
+			// A duplicated table would make the file unparseable, which
+			// would break pib itself, not just this test.
+			if _, err := LoadPaths(filepath.Join(dir, "none.toml"), path); err != nil {
+				t.Errorf("rewritten config no longer loads: %v", err)
+			}
+		})
+	}
+}
+
+func TestSetIgnoresHashInsideQuotedValue(t *testing.T) {
+	dir := t.TempDir()
+	path := write(t, dir, "[types]\nreviewer = \"#1\" # who reviews\n")
+
+	if err := Set(path, "types", "reviewer", `"plan-reviewer"`); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	want := "[types]\nreviewer = \"plan-reviewer\"  # who reviews\n"
+	if got := readBody(t, path); got != want {
+		t.Errorf("Set produced %q, want %q", got, want)
+	}
+}
+
 func TestTemplateRoundTripsByteIdentically(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
 	if err := os.WriteFile(path, []byte(Template), 0o644); err != nil {
@@ -107,9 +145,9 @@ func readBody(t *testing.T, path string) string {
 
 func TestSourcesReportsWhereEachKeyCameFrom(t *testing.T) {
 	dir := t.TempDir()
-	global := write(t, dir, "[plan]\nreview = true\n[review]\ncycles = 3\n")
+	global := write(t, dir, "[types]\ntask = \"builder\"\nchore = \"\"\n[plan]\nreview = true\n[review]\ncycles = 3\n")
 	workspace := filepath.Join(dir, "ws.toml")
-	if err := os.WriteFile(workspace, []byte("[review]\ncycles = 1\n"), 0o644); err != nil {
+	if err := os.WriteFile(workspace, []byte("[types]\ntask = \"ws-coder\"\nresearch = \"scout\"\n[review]\ncycles = 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -121,8 +159,48 @@ func TestSourcesReportsWhereEachKeyCameFrom(t *testing.T) {
 		"plan.review":   "global",
 		"plan.isolate":  "default",
 		"review.cycles": "workspace",
+		// The global file is authoritative for the type map once it
+		// exists, so the workspace does not get to reroute task.
+		"types.task":          "global",
+		"types.chore":         "global",
+		"types.research":      "global",
+		"types.feature":       "global",
+		"types.prototype":     "global",
+		"types.reviewer":      "global",
+		"types.code-reviewer": "global",
+		"types.plan-reviewer": "global",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("Sources() = %v, want %v", got, want)
+		t.Errorf("Sources() =\n%v\nwant\n%v", got, want)
+	}
+}
+
+func TestSourcesWithNoGlobalFile(t *testing.T) {
+	dir := t.TempDir()
+	workspace := filepath.Join(dir, "ws.toml")
+	if err := os.WriteFile(workspace, []byte("[types]\ntask = \"ws-coder\"\n[plan]\nisolate = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Sources(filepath.Join(dir, "missing.toml"), workspace)
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+	want := map[string]string{
+		"plan.review":   "default",
+		"plan.isolate":  "workspace",
+		"review.cycles": "default",
+		// With no global file the built-in map applies, so a type the
+		// workspace reroutes is the workspace's and the rest are defaults.
+		"types.task":          "workspace",
+		"types.research":      "default",
+		"types.feature":       "default",
+		"types.prototype":     "default",
+		"types.reviewer":      "default",
+		"types.code-reviewer": "default",
+		"types.plan-reviewer": "default",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Sources() =\n%v\nwant\n%v", got, want)
 	}
 }

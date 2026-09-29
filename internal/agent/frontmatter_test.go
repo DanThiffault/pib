@@ -71,6 +71,24 @@ thinking: high
 	}
 }
 
+func TestSetFrontmatterReplacesUnspacedKeyValue(t *testing.T) {
+	// parse accepts `key:value` as well as `key: value`.
+	path := writeAgent(t, strings.Replace(fmSample, "model: ", "model:", 1))
+
+	if err := SetFrontmatter(path, "model", "anthropic/claude"); err != nil {
+		t.Fatalf("SetFrontmatter: %v", err)
+	}
+	got := readFile(t, path)
+	// A second "model:" line would be accepted by the parser, with the last
+	// one winning, and would quietly drift the file.
+	if n := strings.Count(got, "model:"); n != 1 {
+		t.Errorf("file has %d model lines, want 1:\n%s", n, got)
+	}
+	if !strings.Contains(got, "model: anthropic/claude\n") {
+		t.Errorf("model was not replaced:\n%s", got)
+	}
+}
+
 func TestSetFrontmatterRejectsFileWithoutFrontmatter(t *testing.T) {
 	path := writeAgent(t, "# Just a body\n")
 

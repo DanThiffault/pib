@@ -46,7 +46,7 @@ func Set(path, section, key, value string) error {
 func setLine(lines []string, header, key, value string) ([]string, error) {
 	start := -1
 	for i, line := range lines {
-		if strings.TrimSpace(line) == header {
+		if normalizeHeader(line) == header {
 			start = i
 			break
 		}
@@ -65,25 +65,26 @@ func setLine(lines []string, header, key, value string) ([]string, error) {
 	// The block runs to the next section header.
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
-		if strings.HasPrefix(strings.TrimSpace(lines[i]), "[") {
+		if isHeader(lines[i]) {
 			end = i
 			break
 		}
 	}
 
 	for i := start + 1; i < end; i++ {
-		if left, ok := keyOf(lines[i]); ok && left == key {
-			out := append([]string{}, lines...)
-			eq := strings.Index(lines[i], "=")
-			rewritten := strings.TrimRight(lines[i][:eq+1], " \t") + " " + value
-			// A comment trailing the value belongs to the line the user
-			// wrote, not to the value pib is replacing.
-			if hash := strings.Index(lines[i][eq+1:], "#"); hash >= 0 {
-				rewritten += "  " + strings.TrimSpace(lines[i][eq+1+hash:])
-			}
-			out[i] = rewritten
-			return out, nil
+		entry, ok := keyOf(lines[i])
+		if !ok || entry.key != key {
+			continue
 		}
+		out := append([]string{}, lines...)
+		rewritten := strings.TrimRight(lines[i][:entry.eq+1], " \t") + " " + value
+		// A comment trailing the value belongs to the line the user wrote,
+		// not to the value pib is replacing.
+		if entry.comment != "" {
+			rewritten += "  " + entry.comment
+		}
+		out[i] = rewritten
+		return out, nil
 	}
 
 	// Append after the section's last non-blank line, so the new key lands
@@ -99,58 +100,172 @@ func setLine(lines []string, header, key, value string) ([]string, error) {
 	return append(out, lines[insert:]...), nil
 }
 
-// keyOf returns the key a line sets, if it sets one. A comment sets nothing.
-func keyOf(line string) (string, bool) {
+// entry is one `key = value` line, split so a rewrite can put the value back
+// without disturbing the rest of the line.
+type entry struct {
+	key     string
+	comment string
+	// eq is the index of the "=" in the line, so the key's original spacing
+	// can be kept.
+	eq int
+}
+
+// keyOf parses one line of a TOML block. A blank line, a comment, or a line
+// with no "=" sets no key.
+func keyOf(line string) (entry, bool) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-		return "", false
+		return entry{}, false
 	}
-	eq := strings.Index(trimmed, "=")
+	// The "=" that ends the key is the first one outside a quoted string, so
+	// a key or value containing "=" is not cut in half.
+	eq := indexOutsideQuotes(trimmed, "=")
 	if eq < 0 {
-		return "", false
+		return entry{}, false
 	}
-	name := strings.Trim(strings.TrimSpace(trimmed[:eq]), `"'`)
-	return name, name != ""
+	// Trimming does not move the "=": only leading space is dropped, and the
+	// "=" sits after it.
+	eq += len(line) - len(trimmed)
+
+	key := strings.Trim(strings.TrimSpace(line[:eq]), `"'`)
+	if key == "" {
+		return entry{}, false
+	}
+
+	_, comment := splitComment(line[eq+1:])
+	return entry{key: key, comment: comment, eq: eq}, true
+}
+
+// normalizeHeader returns the table name a line opens, or "" if it opens none.
+// A hand-written header may carry a trailing comment and spaces inside the
+// brackets — `[review] # depth` and `[ review ]` are the same table as
+// `[review]`, and treating them as different would give the file two of them.
+func normalizeHeader(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") || !strings.HasPrefix(trimmed, "[") {
+		return ""
+	}
+	if _, comment := splitComment(trimmed); comment != "" {
+		trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, comment))
+	}
+	inner := strings.TrimSpace(trimmed)
+	if !strings.HasPrefix(inner, "[") || !strings.HasSuffix(inner, "]") {
+		return ""
+	}
+	return "[" + strings.TrimSpace(inner[1:len(inner)-1]) + "]"
+}
+
+// isHeader reports whether a line opens a new table, ending the block above
+// it.
+func isHeader(line string) bool {
+	return normalizeHeader(line) != ""
+}
+
+// splitComment separates a trailing comment from a value. A "#" inside a
+// quoted string is part of the value, not the start of a comment.
+func splitComment(value string) (string, string) {
+	hash := indexOutsideQuotes(value, "#")
+	if hash < 0 {
+		return value, ""
+	}
+	return value[:hash], strings.TrimSpace(value[hash:])
+}
+
+// indexOutsideQuotes returns the index of the first byte of sub outside any
+// quoted string, or -1.
+func indexOutsideQuotes(s, sub string) int {
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == sub[0]:
+			return i
+		}
+	}
+	return -1
 }
 
 // Sources reports, for every key the config understands, which file supplies
 // it. The value is "global", "workspace", or "default" when neither file
 // mentions the key and the built-in applies.
 //
-// It exists so the settings screen can show where a value came from without
-// the user having to know which of the two files to open.
+// Keys are named "section.key": "types.task" for the type map, plus
+// "plan.review", "plan.isolate" and "review.cycles". Every type pib knows
+// about gets an entry, so the settings screen can show a source on every row
+// instead of leaving the TYPES rows blank.
+//
+// The global file is authoritative once it exists, the way LoadPaths is: a
+// built-in type is only a "default" while there is no global file at all.
 func Sources(global, workspace string) (map[string]string, error) {
-	keys := []string{"plan.review", "plan.isolate", "review.cycles"}
+	base, hasGlobal, err := read(global)
+	if err != nil {
+		return nil, err
+	}
+	over, hasWorkspace, err := read(workspace)
+	if err != nil {
+		return nil, err
+	}
 
-	out := make(map[string]string, len(keys))
-	for _, path := range []struct {
-		name string
-		path string
-	}{{"global", global}, {"workspace", workspace}} {
-		if path.path == "" {
-			continue
+	out := map[string]string{}
+
+	if hasGlobal {
+		if base.Plan.Review != nil {
+			out["plan.review"] = "global"
 		}
-		f, found, err := read(path.path)
-		if err != nil {
-			return nil, err
+		if base.Plan.Isolate != nil {
+			out["plan.isolate"] = "global"
 		}
-		if !found {
-			continue
+		if base.Review.Cycles != nil {
+			out["review.cycles"] = "global"
 		}
-		if f.Plan.Review != nil {
-			out["plan.review"] = path.name
+	}
+	if hasWorkspace {
+		if over.Plan.Review != nil {
+			out["plan.review"] = "workspace"
 		}
-		if f.Plan.Isolate != nil {
-			out["plan.isolate"] = path.name
+		if over.Plan.Isolate != nil {
+			out["plan.isolate"] = "workspace"
 		}
-		if f.Review.Cycles != nil {
-			out["review.cycles"] = path.name
+		if over.Review.Cycles != nil {
+			out["review.cycles"] = "workspace"
+		}
+	}
+	for _, key := range []string{"plan.review", "plan.isolate", "review.cycles"} {
+		if _, ok := out[key]; !ok {
+			out[key] = "default"
 		}
 	}
 
-	for _, key := range keys {
-		if _, ok := out[key]; !ok {
-			out[key] = "default"
+	// Every type named anywhere, plus every type pib ships, so a row in the
+	// settings screen always has something to show.
+	names := map[string]bool{}
+	for name := range defaults() {
+		names[name] = true
+	}
+	for name := range base.Types {
+		names[name] = true
+	}
+	for name := range over.Types {
+		names[name] = true
+	}
+	for name := range names {
+		switch {
+		case hasGlobal && base.Types[name] != "":
+			out["types."+name] = "global"
+		case hasGlobal:
+			// The global file exists and does not name this type. It
+			// is authoritative about the whole map, so the type is
+			// whatever it left there — which is to say nothing.
+			out["types."+name] = "global"
+		case hasWorkspace && over.Types[name] != "":
+			out["types."+name] = "workspace"
+		default:
+			out["types."+name] = "default"
 		}
 	}
 
