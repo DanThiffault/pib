@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -145,7 +146,7 @@ func readBody(t *testing.T, path string) string {
 
 func TestSourcesReportsWhereEachKeyCameFrom(t *testing.T) {
 	dir := t.TempDir()
-	global := write(t, dir, "[types]\ntask = \"builder\"\nchore = \"\"\n[plan]\nreview = true\n[review]\ncycles = 3\n")
+	global := write(t, dir, "[types]\ntask = \"builder\"\n[plan]\nreview = true\n[review]\ncycles = 3\n")
 	workspace := filepath.Join(dir, "ws.toml")
 	if err := os.WriteFile(workspace, []byte("[types]\ntask = \"ws-coder\"\nresearch = \"scout\"\n[review]\ncycles = 1\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -159,19 +160,62 @@ func TestSourcesReportsWhereEachKeyCameFrom(t *testing.T) {
 		"plan.review":   "global",
 		"plan.isolate":  "default",
 		"review.cycles": "workspace",
-		// The global file is authoritative for the type map once it
-		// exists, so the workspace does not get to reroute task.
-		"types.task":          "global",
-		"types.chore":         "global",
-		"types.research":      "global",
-		"types.feature":       "global",
-		"types.prototype":     "global",
-		"types.reviewer":      "global",
-		"types.code-reviewer": "global",
-		"types.plan-reviewer": "global",
+		// The workspace overrides the global file key by key, the way
+		// LoadPaths merges the two maps, so it wins for task too.
+		"types.task":     "workspace",
+		"types.research": "workspace",
+		// This global file replaces the built-in map and names only task,
+		// so the rest of the built-ins are not in play at all.
+		"types.feature":       "unmapped",
+		"types.prototype":     "unmapped",
+		"types.reviewer":      "unmapped",
+		"types.code-reviewer": "unmapped",
+		"types.plan-reviewer": "unmapped",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Sources() =\n%v\nwant\n%v", got, want)
+	}
+}
+
+func TestSourcesSaysUnmappedWhenAGlobalFileReplacesTheDefaults(t *testing.T) {
+	dir := t.TempDir()
+	// A global file replaces the built-in map outright, so a type it does
+	// not name has no agent left, and the workspace cannot bring the
+	// built-in back either.
+	global := write(t, dir, "[types]\ntask = \"builder\"\n")
+
+	got, err := Sources(global, filepath.Join(dir, "missing.toml"))
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+	want := map[string]string{
+		"plan.review":         "default",
+		"plan.isolate":        "default",
+		"review.cycles":       "default",
+		"types.task":          "global",
+		"types.research":      "unmapped",
+		"types.feature":       "unmapped",
+		"types.prototype":     "unmapped",
+		"types.reviewer":      "unmapped",
+		"types.code-reviewer": "unmapped",
+		"types.plan-reviewer": "unmapped",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Sources() =\n%v\nwant\n%v", got, want)
+	}
+}
+
+func TestSourcesTreatsAnEmptyValueAsNamed(t *testing.T) {
+	dir := t.TempDir()
+	// `feature = ""` declares a container type; it is not an absent key.
+	global := write(t, dir, "[types]\nfeature = \"\"\n")
+
+	got, err := Sources(global, "")
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+	if got["types.feature"] != "global" {
+		t.Errorf("types.feature = %q, want global: an empty value still names the type", got["types.feature"])
 	}
 }
 
@@ -187,11 +231,9 @@ func TestSourcesWithNoGlobalFile(t *testing.T) {
 		t.Fatalf("Sources: %v", err)
 	}
 	want := map[string]string{
-		"plan.review":   "default",
-		"plan.isolate":  "workspace",
-		"review.cycles": "default",
-		// With no global file the built-in map applies, so a type the
-		// workspace reroutes is the workspace's and the rest are defaults.
+		"plan.review":         "default",
+		"plan.isolate":        "workspace",
+		"review.cycles":       "default",
 		"types.task":          "workspace",
 		"types.research":      "default",
 		"types.feature":       "default",
@@ -202,5 +244,60 @@ func TestSourcesWithNoGlobalFile(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Sources() =\n%v\nwant\n%v", got, want)
+	}
+}
+
+// TestSourcesAgreesWithLoadPaths pins the precedence Sources reports to the
+// precedence LoadPaths applies: a type Sources calls "unmapped" must be one
+// AgentFor cannot resolve, and every other type must resolve.
+func TestSourcesAgreesWithLoadPaths(t *testing.T) {
+	cases := []struct{ global, workspace string }{
+		{"[types]\ntask = \"builder\"\n", ""},
+		{"[types]\n", "[types]\ntask = \"ws-coder\"\n"},
+		{"", "[types]\nresearch = \"scout\"\nfeature = \"\"\n"},
+		{"[types]\nchore = \"\"\n", "[types]\nchore = \"janitor\"\n"},
+		{"", ""},
+		{"[plan]\nreview = false\n[review]\ncycles = 1\n", "[plan]\nreview = true\n"},
+	}
+
+	for _, c := range cases {
+		dir := t.TempDir()
+		global := filepath.Join(dir, "global.toml")
+		workspace := filepath.Join(dir, "ws.toml")
+		if err := os.WriteFile(global, []byte(c.global), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(workspace, []byte(c.workspace), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		cfg, err := LoadPaths(global, workspace)
+		if err != nil {
+			t.Fatalf("LoadPaths: %v", err)
+		}
+		sources, err := Sources(global, workspace)
+		if err != nil {
+			t.Fatalf("Sources: %v", err)
+		}
+
+		for _, key := range sources {
+			typ, ok := strings.CutPrefix(key, "types.")
+			if !ok {
+				continue
+			}
+			_, resolved := cfg.AgentFor(typ)
+			if (sources[key] == "unmapped") == resolved {
+				t.Errorf("global=%q workspace=%q: %s is %q but AgentFor(%q) resolved=%v",
+					c.global, c.workspace, key, sources[key], typ, resolved)
+			}
+		}
+
+		// The scalar knobs must resolve the way the sources say they do.
+		if want := sources["plan.review"]; want != "default" && cfg.PlanReview() != (want == "workspace") {
+			t.Errorf("plan.review from %s but PlanReview() = %v", want, cfg.PlanReview())
+		}
+		if want := sources["review.cycles"]; want != "default" && cfg.ReviewCycles() != 1 {
+			t.Errorf("review.cycles from %s but ReviewCycles() = %d", want, cfg.ReviewCycles())
+		}
 	}
 }

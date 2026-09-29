@@ -199,8 +199,11 @@ func indexOutsideQuotes(s, sub string) int {
 // about gets an entry, so the settings screen can show a source on every row
 // instead of leaving the TYPES rows blank.
 //
-// The global file is authoritative once it exists, the way LoadPaths is: a
-// built-in type is only a "default" while there is no global file at all.
+// A type's source is whichever file names it, the workspace first, exactly as
+// LoadPaths merges the two maps. "default" means the built-in map supplied it,
+// which happens only while there is no global file — a global file replaces
+// the built-in map outright. "unmapped" means neither file names it and there
+// is no built-in left to supply it, so the type has no agent at all.
 func Sources(global, workspace string) (map[string]string, error) {
 	base, hasGlobal, err := read(global)
 	if err != nil {
@@ -242,7 +245,9 @@ func Sources(global, workspace string) (map[string]string, error) {
 	}
 
 	// Every type named anywhere, plus every type pib ships, so a row in the
-	// settings screen always has something to show.
+	// settings screen always has something to show. An entry counts as named
+	// even when its value is empty: `feature = ""` is how a container type is
+	// declared, not an absent key.
 	names := map[string]bool{}
 	for name := range defaults() {
 		names[name] = true
@@ -254,18 +259,19 @@ func Sources(global, workspace string) (map[string]string, error) {
 		names[name] = true
 	}
 	for name := range names {
+		_, inWorkspace := over.Types[name]
+		_, inGlobal := base.Types[name]
 		switch {
-		case hasGlobal && base.Types[name] != "":
-			out["types."+name] = "global"
-		case hasGlobal:
-			// The global file exists and does not name this type. It
-			// is authoritative about the whole map, so the type is
-			// whatever it left there — which is to say nothing.
-			out["types."+name] = "global"
-		case hasWorkspace && over.Types[name] != "":
+		case hasWorkspace && inWorkspace:
 			out["types."+name] = "workspace"
-		default:
+		case hasGlobal && inGlobal:
+			out["types."+name] = "global"
+		case !hasGlobal:
+			// No global file, so the built-in map is in play and this
+			// type came from it.
 			out["types."+name] = "default"
+		default:
+			out["types."+name] = "unmapped"
 		}
 	}
 
