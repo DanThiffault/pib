@@ -75,8 +75,19 @@ func (r *Registry) WithKey(key string) []Command {
 
 // Applies reports whether a command does anything to a row. A command with no
 // predicate applies everywhere.
+//
+// A nil row is an empty table, not a crash: it happens on first run, before
+// anything is selected, and a predicate cannot be asked about a row that is
+// not there. Only the commands that need no row — new, settings, the filters
+// — apply to one.
 func Applies(c Command, row Row) bool {
-	return c.Applies == nil || c.Applies(row)
+	if c.Applies == nil {
+		return true
+	}
+	if row == nil {
+		return false
+	}
+	return c.Applies(row)
 }
 
 // For returns the commands that apply to a row, in bar order. It is what the
@@ -93,7 +104,8 @@ func (r *Registry) For(row Row) []Command {
 
 // Press runs the command a key press names on a row, if there is one. args is
 // empty — a key press carries no arguments. It reports whether anything ran,
-// so a caller can leave a key unhandled rather than swallow it silently.
+// so a caller can leave a key unhandled rather than swallow it silently. A
+// nil row runs only the commands that need no row.
 func (r *Registry) Press(row Row, key string) (tea.Cmd, bool) {
 	for _, c := range r.WithKey(key) {
 		if Applies(c, row) {

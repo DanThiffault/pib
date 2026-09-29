@@ -147,9 +147,53 @@ func TestLineCompletesAVerbAndShowsItsArgs(t *testing.T) {
 	if l.Input() != "close " {
 		t.Errorf("after tab input = %q, want %q", l.Input(), "close ")
 	}
+	if v := l.View(); !strings.Contains(v, "<reason>") {
+		t.Errorf("view = %q, want the hint still there once the verb is complete: that is when the argument is typed", v)
+	}
 	typing(t, l, "stuck")
+	if v := l.View(); !strings.Contains(v, "<reason>") {
+		t.Errorf("view = %q, want the hint while the argument is being typed", v)
+	}
 	if got := messages(enter(t, l)); got != "ran:close stuck" {
 		t.Errorf("messages = %q", got)
+	}
+}
+
+// TestTabLeavesAnArgumentAlone is the guard on tab only ever completing a verb:
+// in :close p, "p" is what the user is typing, not the start of a verb.
+func TestTabLeavesAnArgumentAlone(t *testing.T) {
+	reg := &Registry{}
+	for _, verb := range []string{"close", "comment", "pr"} {
+		if err := reg.Register(Command{Verb: verb, Applies: isOpenIssue}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	row := fixture{kind: KindIssue, state: StateOpen, hasPR: true}
+	l := NewLine(reg, row)
+	l.Open()
+	typing(t, l, "close p")
+	press(t, l, "tab")
+	if l.Input() != "close p" {
+		t.Errorf("input = %q, want tab to leave the argument alone", l.Input())
+	}
+	if v := l.View(); strings.Contains(v, "pr") {
+		t.Errorf("view = %q, want no verb completions offered over an argument", v)
+	}
+}
+
+func TestTabOnAnEmptyLineListsEveryVerb(t *testing.T) {
+	reg := &Registry{}
+	if err := reg.Register(Command{Verb: "close", Applies: isOpenIssue}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(Command{Verb: "new"}); err != nil {
+		t.Fatal(err)
+	}
+	l := NewLine(reg, fixture{kind: KindIssue, state: StateOpen})
+	l.Open()
+	press(t, l, "tab")
+	if v := l.View(); !strings.Contains(v, "close") || !strings.Contains(v, "new") {
+		t.Errorf("view = %q, want both verbs listed", v)
 	}
 }
 
@@ -289,12 +333,40 @@ func TestLineRejectsAVerbThatDoesNotApply(t *testing.T) {
 	}
 }
 
+// TestLineWithNoRow covers the empty table on first run: there is nothing
+// selected, so the commands that need a row do nothing and the ones that do
+// not — new, settings, the filters — still work.
 func TestLineWithNoRow(t *testing.T) {
-	l := NewLine(New(), nil)
+	reg := New()
+	l := NewLine(reg, nil)
+
 	l.Open()
 	typing(t, l, "new")
-	if got := messages(enter(t, l)); got != "noselection:new" {
-		t.Errorf("messages = %q", got)
+	if got := messages(enter(t, l)); got != "ran:new " {
+		t.Errorf("messages = %q, want :new to work with nothing selected", got)
+	}
+
+	l.Open()
+	typing(t, l, "close")
+	if got := messages(enter(t, l)); got != "noselection:close" {
+		t.Errorf("messages = %q, want a command that needs a row to be refused", got)
+	}
+}
+
+func TestLineCompletionWithNoRow(t *testing.T) {
+	l := NewLine(New(), nil)
+	l.Open()
+	// Completion asks the registry what applies; with no row that is the
+	// handful of commands that need none, and asking must not panic.
+	typing(t, l, "n")
+	press(t, l, "tab")
+	if l.Input() != "new " {
+		t.Errorf("input = %q", l.Input())
+	}
+	typing(t, l, "clos")
+	press(t, l, "tab")
+	if l.Input() != "new clos" {
+		t.Errorf("input = %q, want close to have nothing to complete to", l.Input())
 	}
 }
 

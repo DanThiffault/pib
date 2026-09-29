@@ -299,6 +299,82 @@ func TestPressPicksTheSharedCommandThatApplies(t *testing.T) {
 
 // TestRunPassesOnlyWhatItIsGiven checks the handler contract the ":" line
 // depends on: the arguments come from the caller, not from the handler.
+// TestNilRowRunsOnlyTheCommandsThatNeedNoRow covers the empty table on first
+// run: a predicate cannot be asked about a row that is not there, so a nil row
+// gets the commands with no predicate and nothing else.
+func TestNilRowRunsOnlyTheCommandsThatNeedNoRow(t *testing.T) {
+	var ran []string
+	reg := &Registry{}
+	for _, verb := range []string{"new", "start", "close"} {
+		v := verb
+		c := Command{
+			Verb: v, Key: keyFor(v), Label: v,
+			Run: func(Row, []string) tea.Cmd {
+				ran = append(ran, v)
+				return nil
+			},
+		}
+		if v != "new" {
+			c.Applies = isOpenIssue
+		}
+		if err := reg.Register(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, ok := reg.Press(nil, "s"); ok {
+		t.Error("a command with a predicate ran against no row")
+	}
+	if _, ok := reg.Press(nil, "x"); ok {
+		t.Error("a command with a predicate ran against no row")
+	}
+	if _, ok := reg.Press(nil, "n"); !ok {
+		t.Error("a command with no predicate did nothing on an empty table")
+	}
+	if strings.Join(ran, ",") != "new" {
+		t.Errorf("ran = %v, want only new", ran)
+	}
+	for _, c := range reg.For(nil) {
+		if c.Verb != "new" {
+			t.Errorf("For(nil) offered %q", c.Verb)
+		}
+	}
+}
+
+func keyFor(verb string) string {
+	if verb == "start" {
+		return "s"
+	}
+	return verb[:1]
+}
+
+func TestAppliesIsFalseForAPredicateOnNoRow(t *testing.T) {
+	if Applies(Command{Verb: "close", Applies: isOpenIssue}, nil) {
+		t.Error("a command with a predicate applied to no row")
+	}
+	if !Applies(Command{Verb: "new"}, nil) {
+		t.Error("a command with no predicate did not apply to no row")
+	}
+}
+
+func TestBarAndHelpOnNoRow(t *testing.T) {
+	bar := Bar(New(), nil, 0)
+	if !strings.Contains(bar, "n New") {
+		t.Errorf("bar = %q, want the commands that need no row", bar)
+	}
+	for _, absent := range []string{"x Close", "s Start", "b Blockers"} {
+		if strings.Contains(bar, absent) {
+			t.Errorf("bar = %q, want no %q with nothing selected", bar, absent)
+		}
+	}
+	for _, l := range strings.Split(Help(New(), nil), "\n") {
+		switch strings.Fields(l)[1] {
+		case "close", "start", "blockers", "reopen":
+			t.Errorf("help lists %q with nothing selected:\n%s", l, l)
+		}
+	}
+}
+
 func TestRunPassesOnlyWhatItIsGiven(t *testing.T) {
 	var got []string
 	c := Command{Verb: "close", Run: func(_ Row, args []string) tea.Cmd {

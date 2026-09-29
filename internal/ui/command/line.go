@@ -169,13 +169,13 @@ func (l *Line) submit() tea.Cmd {
 	l.remember(input)
 	l.Close()
 
-	if l.row == nil {
-		return func() tea.Msg { return NoSelectionMsg{Verb: verb} }
-	}
 	c, ok := l.reg.ByVerb(verb)
 	if !ok {
 		return func() tea.Msg { return UnknownVerbMsg{Input: input} }
 	}
+	// A nil row is an empty table, not an error: the commands that act on
+	// whatever is selected (new, settings, the filters) still apply, and the
+	// ones that act on a row do not.
 	if !Applies(c, l.row) {
 		return func() tea.Msg { return NoSelectionMsg{Verb: verb} }
 	}
@@ -186,30 +186,41 @@ func (l *Line) submit() tea.Cmd {
 	)
 }
 
-// complete fills in the word under the cursor from the verbs that apply to
-// the row. A unique prefix is completed and, for the verb itself, followed by
-// a space; an ambiguous one is extended as far as the candidates agree and
-// listed in the view.
+// complete fills in the verb from the commands that apply to the row. A unique
+// prefix is completed and given a trailing space, ready for the argument; an
+// ambiguous one is extended as far as the candidates agree and listed in the
+// view. An empty buffer lists every verb there is.
+//
+// Tab only ever completes the verb. Past the first word the buffer holds the
+// user's argument, and replacing "p" with "pr" in :close p is a way of
+// silently changing what someone typed.
 func (l *Line) complete() {
-	word, start := l.currentWord()
+	word := string(l.input)
+	if !l.completingVerb() {
+		l.completions = nil
+		return
+	}
 	candidates := l.matching(word)
 	if len(candidates) == 0 {
 		l.completions = nil
 		return
 	}
 	if len(candidates) == 1 {
-		l.input = append(l.input[:start], []rune(candidates[0])...)
-		if isVerbWord(l.input) {
-			l.input = append(l.input, ' ')
-		}
+		l.input = []rune(candidates[0] + " ")
 		l.completions = nil
 		return
 	}
-	prefix := commonPrefix(candidates)
-	if len([]rune(prefix)) > len([]rune(word)) {
-		l.input = append(l.input[:start], []rune(prefix)...)
+	if prefix := commonPrefix(candidates); len(prefix) > len(word) {
+		l.input = []rune(prefix)
 	}
 	l.completions = candidates
+}
+
+// completingVerb reports whether the buffer is still on the verb: empty, or
+// one word and no space yet.
+func (l *Line) completingVerb() bool {
+	s := string(l.input)
+	return s == "" || !strings.Contains(s, " ")
 }
 
 // matching returns the applicable verbs starting with a prefix.
@@ -223,27 +234,19 @@ func (l *Line) matching(prefix string) []string {
 	return out
 }
 
-// currentWord returns the word being typed and where it starts in the buffer.
-func (l *Line) currentWord() (word string, start int) {
-	fields := strings.Fields(string(l.input))
-	if !strings.HasSuffix(string(l.input), " ") && len(fields) > 0 {
-		word = fields[len(fields)-1]
-	}
-	start = len([]rune(string(l.input))) - len([]rune(word))
-	return word, start
-}
-
-// hint is the Args hint of the verb typed so far, when there is exactly one
-// candidate for it.
+// hint is the Args hint of the verb, taken from the first word. It is the
+// hint for what the user is about to type, so it has to survive completion:
+// "close<tab>" leaves the buffer at "close ", and the hint is wanted exactly
+// then.
 func (l *Line) hint() string {
 	if l.completions != nil {
 		return ""
 	}
-	word, _ := l.currentWord()
-	if word == "" {
+	fields := strings.Fields(string(l.input))
+	if len(fields) == 0 {
 		return ""
 	}
-	candidates := l.matching(word)
+	candidates := l.matching(fields[0])
 	if len(candidates) != 1 {
 		return ""
 	}
@@ -293,11 +296,4 @@ func commonPrefix(candidates []string) string {
 		}
 	}
 	return prefix
-}
-
-// isVerbWord reports whether the buffer still ends in the verb: completion
-// only adds a space while the verb itself is being typed.
-func isVerbWord(input []rune) bool {
-	fields := strings.Fields(string(input))
-	return len(fields) == 1 && !strings.HasSuffix(string(input), " ")
 }
