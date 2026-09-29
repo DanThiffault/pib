@@ -132,11 +132,10 @@ func (s *Store) CloseReview(id, verdict string, findings int) (Review, error) {
 		return Review{}, fmt.Errorf("review %s: %w", id, ErrNotFound)
 	}
 	// The cycle's issue is read back: a cycle is settled by review id, which
-	// names no issue on its own.
+	// names no issue on its own. As with a run, the read-back only fills in
+	// the event's identity — it never decides whether one is published.
 	var issue int64
-	if err := s.db.QueryRow(`SELECT issue FROM reviews WHERE id = ?`, id).Scan(&issue); err != nil {
-		return s.review(id)
-	}
+	_ = s.db.QueryRow(`SELECT issue FROM reviews WHERE id = ?`, id).Scan(&issue)
 	s.publishIssue(EventReview, issue)
 	return s.review(id)
 }
