@@ -12,12 +12,24 @@ type Registry struct {
 	commands []Command
 }
 
-// New returns a registry holding the built-in commands of ADR-006 §1. Their
-// handlers are nil: the screens install the ones that touch the world, and a
-// command with no handler does nothing rather than panicking, so a partially
-// wired registry is still usable.
+// New returns a registry holding the built-in commands of ADR-006 §1, with
+// no handlers. The screens attach theirs with Handle as they wire each verb,
+// and a command with no handler does nothing rather than panicking, so a
+// partly wired registry is still usable.
+//
+// The built-ins go through Register, so the checks that keep a motion key or a
+// duplicate verb out of the registry hold for them too.
 func New() *Registry {
-	return &Registry{commands: builtins()}
+	r := &Registry{}
+	for _, c := range builtins() {
+		if err := r.Register(c); err != nil {
+			// The built-in vocabulary is a constant of this package and
+			// Register has just refused part of it: a mistake in the
+			// source, not a runtime condition to handle.
+			panic("command: built-in command is not registrable: " + err.Error())
+		}
+	}
+	return r
 }
 
 // Register adds a command.
@@ -50,6 +62,23 @@ func (r *Registry) Register(c Command) error {
 // Commands returns every command, in bar order.
 func (r *Registry) Commands() []Command {
 	return append([]Command(nil), r.commands...)
+}
+
+// Handle attaches a handler to a registered verb, and returns an error if no
+// command has that verb.
+//
+// This is how a screen wires a verb: the predicate stays where it was written,
+// in the registry, and only the handler is added. Register is for verbs the
+// registry does not have; re-registering a built-in to give it a handler would
+// move its predicate into the screen and leave two copies of it to disagree.
+func (r *Registry) Handle(verb string, run func(Row, []string) tea.Cmd) error {
+	for i := range r.commands {
+		if r.commands[i].Verb == verb {
+			r.commands[i].Run = run
+			return nil
+		}
+	}
+	return fmt.Errorf("verb %q is not registered", verb)
 }
 
 // ByVerb returns the command the ":" line dispatches to.
