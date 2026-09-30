@@ -187,6 +187,33 @@ func TestEditingTheFileClearsAttentionButAnUnchangedReindexDoesNot(t *testing.T)
 	}
 }
 
+// A body-only edit is the ordinary way someone answers a failing agent:
+// open the issue, say more about what was wanted, save. The prose is not
+// indexed, so this is the case a comparison of the indexed columns misses.
+func TestEditingOnlyTheBodyClearsAttention(t *testing.T) {
+	freeze(t, "2026-08-29T12:00:00Z")
+	store := planned(t)
+	issue := task(t, store, "Alpha")
+	runOf(t, store, issue.Number, "run-1", "error")
+	wantAttention(t, store, issue.Number, AttentionFailed)
+
+	freeze(t, "2026-08-29T13:00:00Z")
+	path := filepath.Join(store.dir, issue.Path)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, []byte("\nUse postgres, not sqlite.\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Reindex("orders"); err != nil {
+		t.Fatal(err)
+	}
+	if status := attention(t, store, issue.Number); status.NeedsAttention {
+		t.Errorf("after editing the body, reason = %q, want nothing to attend to", status.AttentionReason)
+	}
+}
+
 func TestAClosedPullRequestNeedsAttention(t *testing.T) {
 	store := planned(t)
 	issue := task(t, store, "Alpha")
@@ -300,6 +327,72 @@ func TestResettingReviewCyclesClearsTheCapButKeepsTheHistory(t *testing.T) {
 	}
 }
 
+// A review base is measured on one pull request. A replacement numbers its
+// cycles from one again, so carrying the old base across would give the new
+// diff the previous one's cycles on top of its own and let it run to double
+// the cap.
+func TestAReviewBaseDoesNotOutliveItsPullRequest(t *testing.T) {
+	freeze(t, "2026-08-29T12:00:00Z")
+	store := planned(t)
+	issue := task(t, store, "Alpha")
+	exhaustedReview(t, store, issue.Number, DefaultReviewCycles)
+	if err := store.ResetReviewCycles(issue.Number); err != nil {
+		t.Fatal(err)
+	}
+	if status := attention(t, store, issue.Number); status.ReviewBase != DefaultReviewCycles {
+		t.Fatalf("review base = %d, want it at the newest cycle", status.ReviewBase)
+	}
+
+	// The pull request is replaced: unlinked by a retry, and a new one linked
+	// when the coder finishes.
+	if _, err := store.UnlinkPR(issue.Number); err != nil {
+		t.Fatal(err)
+	}
+	const replacement = "https://github.com/o/r/pull/2"
+	if _, err := store.LinkPR(issue.Number, replacement); err != nil {
+		t.Fatal(err)
+	}
+	if status := attention(t, store, issue.Number); status.ReviewBase != 0 {
+		t.Errorf("review base = %d, want it cleared with the old pull request", status.ReviewBase)
+	}
+
+	// The replacement gets the whole cap, not what's left of the old one's.
+	for i := 0; i < DefaultReviewCycles; i++ {
+		review, err := store.OpenReview(issue.Number, replacement, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.CloseReview(review.ID, VerdictChanges, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.db.Exec(`UPDATE issues SET pr_state = 'open' WHERE number = ?`, issue.Number); err != nil {
+		t.Fatal(err)
+	}
+	wantAttention(t, store, issue.Number, AttentionReview)
+}
+
+func TestRelinkingTheSamePullRequestKeepsTheReviewBase(t *testing.T) {
+	store := planned(t)
+	issue := task(t, store, "Alpha")
+	const url = "https://github.com/o/r/pull/1"
+	if _, err := store.LinkPR(issue.Number, url); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE issues SET review_base = 2 WHERE number = ?`, issue.Number); err != nil {
+		t.Fatal(err)
+	}
+	// The same pull request linked again is the same diff, with the same
+	// history: a coder re-linking its own request must not restart the cap.
+	if _, err := store.LinkPR(issue.Number, url); err != nil {
+		t.Fatal(err)
+	}
+	status := attention(t, store, issue.Number)
+	if status.ReviewBase != 2 {
+		t.Errorf("review base = %d, want the same pull request to keep its base", status.ReviewBase)
+	}
+}
+
 func TestResettingReviewCyclesOnAMissingIssueIsAnError(t *testing.T) {
 	store := planned(t)
 	if err := store.ResetReviewCycles(9999); err == nil {
@@ -346,21 +439,41 @@ func TestALiveRunIsNotAttentionItIsProgress(t *testing.T) {
 }
 
 // TestTheClockIsHonoured guards the comparison the derivation rests on: a run
-// that ended before the last write is old news.
+// that ended at the same second as the last write to its issue is the newer of
+// the two, and a write strictly after the run takes the issue back.
 func TestTheClockIsHonoured(t *testing.T) {
 	freeze(t, "2026-08-29T12:00:00Z")
 	store := planned(t)
 	issue := task(t, store, "Alpha")
 
+	// The coder links its pull request and is killed in the same second. It
+	// ended after the last write, so it is reported rather than lost.
+	if _, err := store.LinkPR(issue.Number, "https://github.com/o/r/pull/1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
 		t.Fatal(err)
 	}
-	// A run that ended when the issue was created is not later than the
-	// issue, so nothing has happened since the user last looked.
-	if _, err := store.db.Exec(`UPDATE runs SET ended_at = ?, status = 'error' WHERE id = 'run-1'`, stamp); err != nil {
+	if err := store.FinishRun("run-1", "unknown"); err != nil {
+		t.Fatal(err)
+	}
+	wantAttention(t, store, issue.Number, AttentionFailed)
+}
+
+// TestTheClockIsHonoured is the other half: a run that ended before the last
+// write to the issue is old news, whatever the seconds say.
+func TestARunOlderThanTheLastWriteIsNotAttention(t *testing.T) {
+	freeze(t, "2026-08-29T12:00:00Z")
+	store := planned(t)
+	issue := task(t, store, "Alpha")
+	runOf(t, store, issue.Number, "run-1", "error")
+	wantAttention(t, store, issue.Number, AttentionFailed)
+
+	freeze(t, "2026-08-29T13:00:00Z")
+	if err := store.Comment(issue.Number, "me", "have another go"); err != nil {
 		t.Fatal(err)
 	}
 	if status := attention(t, store, issue.Number); status.NeedsAttention {
-		t.Errorf("reason = %q, want a run older than the issue ignored", status.AttentionReason)
+		t.Errorf("after a later comment, reason = %q, want nothing to attend to", status.AttentionReason)
 	}
 }

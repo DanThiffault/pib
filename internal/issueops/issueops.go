@@ -37,6 +37,24 @@ type Handler struct {
 	// operation is settled by the server. A nil Spawn leaves both operations
 	// reporting that no agent can be started.
 	Spawn Spawner
+	// Report is told when an agent started on the user's behalf could not be
+	// started, which is only possible for an answer: a resume runs detached
+	// and has already replied by the time it fails. Optional; without it the
+	// issue is left needing attention, which says something went wrong
+	// without saying what.
+	Report func(error)
+}
+
+// report hands a background failure to whoever is listening. It must be safe
+// to call from a goroutine and with a nil receiver's field, so it is a
+// function rather than a log call.
+func (h Handler) report(err error) {
+	if err == nil {
+		return
+	}
+	if h.Report != nil {
+		h.Report(err)
+	}
 }
 
 // Spawner launches an agent. runner.Runner satisfies it.
@@ -478,6 +496,12 @@ func (h Handler) issueRetry(ctx context.Context, req protocol.Request) (protocol
 	if status.Agent == "" {
 		return protocol.Response{}, fmt.Errorf("no agent is mapped to type %q", status.Type)
 	}
+	// Retry is the one server-side entry point both the TUI and the CLI call,
+	// so this is the only place a second agent can be kept off an issue. Two
+	// coders in one workspace fight over the same branch.
+	if status.InProgress {
+		return protocol.Response{}, fmt.Errorf("an agent is already working on #%d", params.Number)
+	}
 
 	if status.PRURL != "" && status.PRState == "closed" {
 		if _, err := h.Store.UnlinkPR(params.Number); err != nil {
@@ -490,8 +514,12 @@ func (h Handler) issueRetry(ctx context.Context, req protocol.Request) (protocol
 		}
 	}
 
+	// The agent is started in the background and the run recorded against the
+	// issue, and the reply says so. Blocking here would hold the request open
+	// for as long as the agent works, and a client that closed the connection
+	// would take the run's outcome with it.
 	if _, err := h.Spawn.Run(ctx, protocol.Request{
-		Op:    protocol.OpSpawn,
+		Op:    protocol.OpSpawnBackground,
 		Agent: status.Agent,
 		Name:  fmt.Sprintf("%s #%d", status.Agent, status.Number),
 		Task:  runner.Briefing(status.Number, status.Title),
@@ -526,15 +554,21 @@ func (h Handler) issueAnswer(ctx context.Context, req protocol.Request) (protoco
 		return protocol.Response{}, fmt.Errorf("issue #%d has no run waiting for an answer", params.Number)
 	}
 
-	if _, err := h.Spawn.Run(ctx, protocol.Request{
+	// A resume is not a background operation — the runner only has the
+	// foreground one — so it is started off the request's context and the
+	// reply goes at once. The run is picked up again almost immediately, and
+	// the issue reads as in progress as soon as it is.
+	req = protocol.Request{
 		Op:      protocol.OpResume,
 		Session: run.ID,
 		Answer:  params.Answer,
 		Name:    fmt.Sprintf("%s #%d", run.Agent, run.Issue),
 		Issue:   run.Issue,
-	}); err != nil {
-		return protocol.Response{}, err
 	}
+	go func() {
+		_, err := h.Spawn.Run(context.Background(), req)
+		h.report(fmt.Errorf("resuming #%d: %w", params.Number, err))
+	}()
 
 	return h.detail(params.Number)
 }

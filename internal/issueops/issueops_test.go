@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"time"
+
 	"pib/internal/config"
 	"pib/internal/issues"
 	"pib/internal/protocol"
@@ -439,19 +441,63 @@ func (e errString) Error() string { return string(e) }
 
 func strptr(s string) *string { return &s }
 
-// fakeSpawner records what it was asked to run, in place of the runner and
-// its tmux window.
+// fakeSpawner records what it was asked to run, and records a run against the
+// store the way the real runner does, in place of the runner and its tmux
+// window.
 type fakeSpawner struct {
+	runs *issues.Store
 	seen []protocol.Request
-	err  string
+	// err is what a call fails with, for a runner that cannot start.
+	err string
+
+	called chan error
 }
 
 func (f *fakeSpawner) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
 	f.seen = append(f.seen, req)
 	if f.err != "" {
+		f.signal(errString(f.err))
 		return protocol.Response{}, errString(f.err)
 	}
-	return protocol.Response{Status: protocol.StatusOK}, nil
+	if f.runs != nil {
+		// A spawn records a new run; a resume picks the old one up again,
+		// with the agent the record already names, as the runner does.
+		id, agent := "run-new", req.Agent
+		if req.Op == protocol.OpResume {
+			id = req.Session
+			agent, _ = f.runs.RunAgent(id)
+		}
+		if err := f.runs.StartRun(id, req.Issue, agent, "@3"); err != nil {
+			f.signal(err)
+			return protocol.Response{}, err
+		}
+	}
+	f.signal(nil)
+	return protocol.Response{Status: protocol.StatusOK, Session: req.Session}, nil
+}
+
+func (f *fakeSpawner) signal(err error) {
+	if f.called == nil {
+		return
+	}
+	select {
+	case f.called <- err:
+	default:
+	}
+}
+
+// wait blocks until the spawner has been called, which the answer path does in
+// a goroutine. It fails the test rather than hanging if nothing arrives.
+func (f *fakeSpawner) wait(t *testing.T) {
+	t.Helper()
+	select {
+	case err := <-f.called:
+		if err != nil {
+			t.Fatalf("spawning: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent was never started")
+	}
 }
 
 // firstTask applies the fixture plan and returns the first task's number.
@@ -465,9 +511,15 @@ func firstTask(t *testing.T, h Handler) int64 {
 	return list.Issues[0].Number
 }
 
+// started builds a spawner that records runs against the handler's store, the
+// way the runner does.
+func started(h Handler) *fakeSpawner {
+	return &fakeSpawner{runs: h.Store, called: make(chan error, 4)}
+}
+
 func TestRetryStartsAFreshRun(t *testing.T) {
 	h := handler(t)
-	spawn := &fakeSpawner{}
+	spawn := started(h)
 	h.Spawn = spawn
 	number := firstTask(t, h)
 
@@ -479,24 +531,37 @@ func TestRetryStartsAFreshRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp := run(t, h, protocol.OpIssueRetry, RetryParams{Number: number})
+	// The retry is worth having: without it the issue is sitting in needs
+	// attention with nothing working on it.
+	before := into[IssueDetail](t, run(t, h, protocol.OpIssueView, ViewParams{Number: number}))
+	if !before.Issue.NeedsAttention {
+		t.Fatalf("a run that just failed reads as %q, want it needing attention", before.Issue.AttentionReason)
+	}
+
+	run(t, h, protocol.OpIssueRetry, RetryParams{Number: number})
+	spawn.wait(t)
 	if len(spawn.seen) != 1 {
 		t.Fatalf("spawned %d runs, want 1", len(spawn.seen))
 	}
 	req := spawn.seen[0]
-	if req.Op != protocol.OpSpawn || req.Agent != "coder" || req.Issue != number {
-		t.Errorf("request = %+v, want a coder spawned for #%d", req, number)
+	if req.Op != protocol.OpSpawnBackground || req.Agent != "coder" || req.Issue != number {
+		t.Errorf("request = %+v, want a coder started in the background for #%d", req, number)
 	}
 
-	detail := into[IssueDetail](t, resp)
-	if detail.Issue.NeedsAttention {
-		t.Errorf("after a retry, attention = %q, want the issue back in play", detail.Issue.AttentionReason)
+	// The run is recorded, so the issue is in progress rather than needing
+	// attention — which is what the retry bought.
+	after := into[IssueDetail](t, run(t, h, protocol.OpIssueView, ViewParams{Number: number}))
+	if after.Issue.NeedsAttention {
+		t.Errorf("after a retry, attention = %q, want the issue back in play", after.Issue.AttentionReason)
+	}
+	if !after.Issue.InProgress {
+		t.Error("after a retry, in progress = false, want the new run recorded")
 	}
 }
 
 func TestRetryUnlinksAClosedPullRequest(t *testing.T) {
 	h := handler(t)
-	spawn := &fakeSpawner{}
+	spawn := started(h)
 	h.Spawn = spawn
 	number := firstTask(t, h)
 
@@ -505,22 +570,21 @@ func TestRetryUnlinksAClosedPullRequest(t *testing.T) {
 	h.Lookup = fakeLookup{state: "closed"}
 	run(t, h, protocol.OpIssueList, ListParams{Type: "task"})
 
-	resp := run(t, h, protocol.OpIssueRetry, RetryParams{Number: number})
-	detail := into[IssueDetail](t, resp)
+	run(t, h, protocol.OpIssueRetry, RetryParams{Number: number})
+	spawn.wait(t)
+
+	detail := into[IssueDetail](t, run(t, h, protocol.OpIssueView, ViewParams{Number: number}))
 	if detail.Issue.PRURL != "" {
 		t.Errorf("pull request = %q, want the closed one unlinked", detail.Issue.PRURL)
 	}
 	if detail.Issue.NeedsAttention {
 		t.Errorf("attention = %q, want the retry to have cleared it", detail.Issue.AttentionReason)
 	}
-	if len(spawn.seen) != 1 {
-		t.Fatalf("spawned %d runs, want 1", len(spawn.seen))
-	}
 }
 
 func TestRetryResetsExhaustedReviewCycles(t *testing.T) {
 	h := handler(t)
-	spawn := &fakeSpawner{}
+	spawn := started(h)
 	h.Spawn = spawn
 	number := firstTask(t, h)
 
@@ -535,11 +599,20 @@ func TestRetryResetsExhaustedReviewCycles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	status := into[IssueDetail](t, run(t, h, protocol.OpIssueView, ViewParams{Number: number})).Issue
+	if !status.NeedsAttention {
+		t.Fatalf("attention = %q, want the review cap to have been reached", status.AttentionReason)
+	}
 
-	resp := run(t, h, protocol.OpIssueRetry, RetryParams{Number: number})
-	detail := into[IssueDetail](t, resp)
+	run(t, h, protocol.OpIssueRetry, RetryParams{Number: number})
+	spawn.wait(t)
+
+	detail := into[IssueDetail](t, run(t, h, protocol.OpIssueView, ViewParams{Number: number}))
 	if detail.Issue.NeedsAttention {
 		t.Errorf("attention = %q, want the review cap reset", detail.Issue.AttentionReason)
+	}
+	if detail.Issue.ReviewBase != h.Config.ReviewCycles() {
+		t.Errorf("review base = %d, want it reset from the newest cycle", detail.Issue.ReviewBase)
 	}
 	reviews, err := h.Store.Reviews(number)
 	if err != nil {
@@ -547,6 +620,25 @@ func TestRetryResetsExhaustedReviewCycles(t *testing.T) {
 	}
 	if len(reviews) != h.Config.ReviewCycles() {
 		t.Errorf("reviews = %d, want the history kept", len(reviews))
+	}
+}
+
+func TestRetryRefusesAnIssueThatIsAlreadyRunning(t *testing.T) {
+	h := handler(t)
+	spawn := started(h)
+	h.Spawn = spawn
+	number := firstTask(t, h)
+
+	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Run(context.Background(), protocol.Request{
+		Op: protocol.OpIssueRetry, Payload: mustJSON(t, RetryParams{Number: number}),
+	}); err == nil {
+		t.Error("retrying a live issue started a second agent")
+	}
+	if len(spawn.seen) != 0 {
+		t.Errorf("spawned %+v, want nothing", spawn.seen)
 	}
 }
 
@@ -560,7 +652,9 @@ func TestRetryNeedsAnAgentAndARunner(t *testing.T) {
 		t.Error("a retry with no runner succeeded")
 	}
 
-	h.Spawn = &fakeSpawner{err: "no tmux"}
+	// A spawn that fails is a retry that did not happen, and the reply says so
+	// rather than leaving a cleared issue with no agent on it.
+	h.Spawn = &fakeSpawner{err: "no such agent", called: make(chan error, 1)}
 	if _, err := h.Run(context.Background(), protocol.Request{
 		Op: protocol.OpIssueRetry, Payload: mustJSON(t, RetryParams{Number: number}),
 	}); err == nil {
@@ -570,7 +664,7 @@ func TestRetryNeedsAnAgentAndARunner(t *testing.T) {
 
 func TestAnswerResumesTheRunThatAsked(t *testing.T) {
 	h := handler(t)
-	spawn := &fakeSpawner{}
+	spawn := started(h)
 	h.Spawn = spawn
 	number := firstTask(t, h)
 
@@ -581,7 +675,14 @@ func TestAnswerResumesTheRunThatAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp := run(t, h, protocol.OpIssueAnswer, AnswerParams{Number: number, Answer: "use postgres"})
+	// The answer is worth having: the agent is waiting on one.
+	before := into[IssueDetail](t, run(t, h, protocol.OpIssueView, ViewParams{Number: number}))
+	if before.Issue.AttentionReason != issues.AttentionAsked {
+		t.Fatalf("attention = %q, want a question to answer", before.Issue.AttentionReason)
+	}
+
+	run(t, h, protocol.OpIssueAnswer, AnswerParams{Number: number, Answer: "use postgres"})
+	spawn.wait(t)
 	if len(spawn.seen) != 1 {
 		t.Fatalf("spawned %d runs, want 1", len(spawn.seen))
 	}
@@ -592,14 +693,55 @@ func TestAnswerResumesTheRunThatAsked(t *testing.T) {
 	if req.Issue != number {
 		t.Errorf("request issue = %d, want %d", req.Issue, number)
 	}
-	if into[IssueDetail](t, resp).Issue.Number != number {
-		t.Errorf("reply is about another issue")
+
+	// The run is picked up again, so the issue is working rather than stuck.
+	after := into[IssueDetail](t, run(t, h, protocol.OpIssueView, ViewParams{Number: number}))
+	if !after.Issue.InProgress {
+		t.Error("after an answer, in progress = false, want the run picked up again")
+	}
+	if after.Issue.NeedsAttention {
+		t.Errorf("after an answer, attention = %q, want nothing to attend to", after.Issue.AttentionReason)
+	}
+}
+
+// An answer is resumed off the request's context, so a resume that fails
+// cannot be reported in the reply. It is reported instead, or the issue is
+// left saying an agent is waiting for an answer that never arrived.
+func TestAFailedResumeIsReported(t *testing.T) {
+	h := handler(t)
+	number := firstTask(t, h)
+
+	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Store.FinishRun("run-1", "needs_input"); err != nil {
+		t.Fatal(err)
+	}
+
+	reported := make(chan error, 1)
+	h.Spawn = &fakeSpawner{err: "no session to resume", called: make(chan error, 1)}
+	h.Report = func(err error) { reported <- err }
+
+	run(t, h, protocol.OpIssueAnswer, AnswerParams{Number: number, Answer: "use postgres"})
+	select {
+	case err := <-reported:
+		if err == nil {
+			t.Error("a failed resume reported nothing")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a failed resume was never reported")
+	}
+
+	// And the issue is still waiting for an answer, so nothing is lost.
+	status := into[IssueDetail](t, run(t, h, protocol.OpIssueView, ViewParams{Number: number})).Issue
+	if !status.NeedsAttention {
+		t.Errorf("attention = %q, want the question still outstanding", status.AttentionReason)
 	}
 }
 
 func TestAnswerNeedsARunWaitingAndSomethingToSay(t *testing.T) {
 	h := handler(t)
-	h.Spawn = &fakeSpawner{}
+	h.Spawn = started(h)
 	number := firstTask(t, h)
 
 	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {

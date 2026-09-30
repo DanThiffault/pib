@@ -1,7 +1,9 @@
 package issues
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -447,9 +449,16 @@ func (s *Store) LinkPR(number int64, url string) (Issue, error) {
 		return Issue{}, errors.New("a pull request link needs a url")
 	}
 
-	if _, err := s.db.Exec(
-		`UPDATE issues SET pr_url = ?, pr_state = 'open', pr_checked_at = NULL, updated_at = ? WHERE number = ?`,
-		url, format(now()), number); err != nil {
+	// A review base belongs to the pull request it was measured on. A
+	// replacement request numbers its cycles from one again, so carrying a
+	// base across would give the new diff the old one's cycles on top of its
+	// own and let it run to double the cap.
+	_, err := s.db.Exec(`
+		UPDATE issues SET pr_url = ?, pr_state = 'open', pr_checked_at = NULL, updated_at = ?,
+		       review_base = CASE WHEN pr_url IS ? THEN review_base ELSE 0 END
+		WHERE number = ?`,
+		url, format(now()), url, number)
+	if err != nil {
 		return Issue{}, err
 	}
 
@@ -465,12 +474,16 @@ func (s *Store) LinkPR(number int64, url string) (Issue, error) {
 // UnlinkPR forgets a pull request, so a retry can open a fresh one. The
 // history of the previous request is left in the reviews rows; only the link
 // is dropped.
+//
+// The review base goes with it: it measured cycles on that request, and the
+// replacement numbers its own from one.
 func (s *Store) UnlinkPR(number int64) (Issue, error) {
 	if _, err := s.Issue(number); err != nil {
 		return Issue{}, err
 	}
 	if _, err := s.db.Exec(
-		`UPDATE issues SET pr_url = NULL, pr_state = NULL, pr_checked_at = NULL, updated_at = ? WHERE number = ?`,
+		`UPDATE issues SET pr_url = NULL, pr_state = NULL, pr_checked_at = NULL,
+		        review_base = 0, updated_at = ? WHERE number = ?`,
 		format(now()), number); err != nil {
 		return Issue{}, err
 	}
@@ -568,17 +581,15 @@ func (s *Store) reindex(number int64) error {
 // still work, and Content reports the real error when someone asks for it.
 func (s *Store) refresh(number int64, force bool) (bool, error) {
 	var (
-		rel        string
-		mtime      int64
-		size       int64
-		title      string
-		issueType  string
-		acceptance sql.NullString
+		rel   string
+		mtime int64
+		size  int64
+		hash  sql.NullString
 	)
 	err := s.db.QueryRow(`
-		SELECT path, indexed_mtime, indexed_size, title, type, acceptance
+		SELECT path, indexed_mtime, indexed_size, indexed_hash
 		FROM issues WHERE number = ?`, number).
-		Scan(&rel, &mtime, &size, &title, &issueType, &acceptance)
+		Scan(&rel, &mtime, &size, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -604,25 +615,28 @@ func (s *Store) refresh(number int64, force bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// The empty list is stored as NULL rather than "[]", so what the column
-	// holds is compared as a string, not against the query argument.
 	arg, err := encodeList(file.Acceptance)
 	if err != nil {
 		return false, err
 	}
-	indexed, _ := arg.(string)
+	sum, err := hashFile(s.abs(rel))
+	if err != nil {
+		return false, err
+	}
 
 	// A file edited outside pib is the user changing the issue, exactly as an
 	// Edit would be: it counts towards taking the issue out of needs
-	// attention, so reindexing bumps updated_at. A reindex of an unchanged
-	// file is not a change and leaves it alone.
-	changed := title != file.Title || issueType != file.Type || acceptance.String != indexed
+	// attention, so reindexing bumps updated_at. The hash is of the whole
+	// file rather than of the fields reindex reads back, so an edit to the
+	// prose — the usual way someone clarifies a task — counts too. A reindex
+	// of an unchanged file is not a change and leaves it alone.
 	_, err = s.db.Exec(`
 		UPDATE issues SET title = ?, type = ?, acceptance = ?, indexed_mtime = ?, indexed_size = ?,
+		       indexed_hash = ?,
 		       updated_at = CASE WHEN ? THEN ? ELSE updated_at END
 		WHERE number = ?`,
-		file.Title, file.Type, arg, info.ModTime().UnixNano(), info.Size(),
-		changed, format(now()), number)
+		file.Title, file.Type, arg, info.ModTime().UnixNano(), info.Size(), sum,
+		hash.String != sum, format(now()), number)
 	return err == nil, err
 }
 
@@ -632,6 +646,19 @@ func (s *Store) touch(number int64) error {
 		return err
 	}
 	return s.reindex(number)
+}
+
+// hashFile summarises a file's bytes, so a later reindex can tell whether it
+// is looking at the same file it indexed last time. The content is hashed
+// rather than the mtime: a touched-but-unchanged file is not a change, and a
+// change is a change whatever the clock did.
+func hashFile(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // abs resolves a stored path against the data directory.
@@ -645,8 +672,14 @@ func setPath(tx *sql.Tx, number int64, rel, abs string) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`UPDATE issues SET path = ?, indexed_mtime = ?, indexed_size = ? WHERE number = ?`,
-		rel, info.ModTime().UnixNano(), info.Size(), number)
+	sum, err := hashFile(abs)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`
+		UPDATE issues SET path = ?, indexed_mtime = ?, indexed_size = ?, indexed_hash = ?
+		WHERE number = ?`,
+		rel, info.ModTime().UnixNano(), info.Size(), sum, number)
 	return err
 }
 
