@@ -227,6 +227,9 @@ func startServer(ws workspace.Status) tea.Cmd {
 				Store:  store,
 				Config: cfg,
 				Lookup: pr.CLI{},
+				// Retrying an issue and answering a question both start an
+				// agent, so the server needs the runner the interface uses.
+				Spawn: agents,
 				// Every pass that finds a pull request still open also scans
 				// it for out-of-scope findings the user has asked to have
 				// filed. Collect returns immediately; the agent runs off the

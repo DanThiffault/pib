@@ -10,11 +10,14 @@ package issueops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 
 	"pib/internal/config"
 	"pib/internal/issues"
 	"pib/internal/protocol"
+	"pib/internal/runner"
 )
 
 // Handler answers issue and plan requests.
@@ -30,6 +33,15 @@ type Handler struct {
 	// out-of-scope findings to file. It must not block — reconcile calls it
 	// while a client is waiting on a listing. Optional.
 	Triage Triager
+	// Spawn launches the agent behind a retry or an answer, so the whole
+	// operation is settled by the server. A nil Spawn leaves both operations
+	// reporting that no agent can be started.
+	Spawn Spawner
+}
+
+// Spawner launches an agent. runner.Runner satisfies it.
+type Spawner interface {
+	Run(ctx context.Context, req protocol.Request) (protocol.Response, error)
 }
 
 // Triager scans open linked pull requests for out-of-scope findings the
@@ -118,6 +130,17 @@ type (
 		Verdict  string `json:"verdict"`
 		Findings int    `json:"findings"`
 	}
+
+	// RetryParams asks for a new run of an issue's agent.
+	RetryParams struct {
+		Number int64 `json:"number"`
+	}
+
+	// AnswerParams replies to a question an agent asked.
+	AnswerParams struct {
+		Number int64  `json:"number"`
+		Answer string `json:"answer"`
+	}
 )
 
 // Results returned in a response payload.
@@ -196,6 +219,10 @@ func (h Handler) Run(ctx context.Context, req protocol.Request) (protocol.Respon
 		return h.issueReopen(req)
 	case protocol.OpIssueReindex:
 		return h.issueReindex(req)
+	case protocol.OpIssueRetry:
+		return h.issueRetry(ctx, req)
+	case protocol.OpIssueAnswer:
+		return h.issueAnswer(ctx, req)
 	case protocol.OpReviewRecord:
 		return h.reviewRecord(req)
 
@@ -425,6 +452,104 @@ func (h Handler) issueReindex(req protocol.Request) (protocol.Response, error) {
 	return reply(ReindexResult{Refreshed: refreshed})
 }
 
+// issueRetry clears whatever stopped the last run and starts a fresh one.
+//
+// The two things that need clearing are done in order, both only when they
+// apply: a pull request closed unmerged is unlinked, so the coder opens a new
+// one rather than finding its own closed; an exhausted review count is reset,
+// so the same pull request is not immediately over its cap again. The
+// reviews themselves are kept.
+func (h Handler) issueRetry(ctx context.Context, req protocol.Request) (protocol.Response, error) {
+	params, err := decode[RetryParams](req)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+
+	status, err := h.Store.Status(params.Number, h.statusOptions())
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if status.State != issues.StateOpen {
+		return protocol.Response{}, fmt.Errorf("issue #%d is closed", params.Number)
+	}
+	if h.Spawn == nil {
+		return protocol.Response{}, fmt.Errorf("no agent runner is available to retry issue #%d", params.Number)
+	}
+	if status.Agent == "" {
+		return protocol.Response{}, fmt.Errorf("no agent is mapped to type %q", status.Type)
+	}
+
+	if status.PRURL != "" && status.PRState == "closed" {
+		if _, err := h.Store.UnlinkPR(params.Number); err != nil {
+			return protocol.Response{}, err
+		}
+	}
+	if exhausted(status, h.Config.ReviewCycles()) {
+		if err := h.Store.ResetReviewCycles(params.Number); err != nil {
+			return protocol.Response{}, err
+		}
+	}
+
+	if _, err := h.Spawn.Run(ctx, protocol.Request{
+		Op:    protocol.OpSpawn,
+		Agent: status.Agent,
+		Name:  fmt.Sprintf("%s #%d", status.Agent, status.Number),
+		Task:  runner.Briefing(status.Number, status.Title),
+		Issue: status.Number,
+	}); err != nil {
+		return protocol.Response{}, err
+	}
+
+	return h.detail(params.Number)
+}
+
+// issueAnswer resumes the run that stopped to ask a question, with what the
+// user said. It is a resume rather than a new run: the agent has the context
+// of everything it did so far.
+func (h Handler) issueAnswer(ctx context.Context, req protocol.Request) (protocol.Response, error) {
+	params, err := decode[AnswerParams](req)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if strings.TrimSpace(params.Answer) == "" {
+		return protocol.Response{}, errors.New("an answer needs some text")
+	}
+	if h.Spawn == nil {
+		return protocol.Response{}, fmt.Errorf("no agent runner is available to answer issue #%d", params.Number)
+	}
+
+	run, ok, err := h.Store.LatestRun(params.Number)
+	if err != nil {
+		return protocol.Response{}, err
+	}
+	if !ok || run.Status != "needs_input" {
+		return protocol.Response{}, fmt.Errorf("issue #%d has no run waiting for an answer", params.Number)
+	}
+
+	if _, err := h.Spawn.Run(ctx, protocol.Request{
+		Op:      protocol.OpResume,
+		Session: run.ID,
+		Answer:  params.Answer,
+		Name:    fmt.Sprintf("%s #%d", run.Agent, run.Issue),
+		Issue:   run.Issue,
+	}); err != nil {
+		return protocol.Response{}, err
+	}
+
+	return h.detail(params.Number)
+}
+
+// exhausted reports whether an issue has spent its review cycles. It mirrors
+// the derivation in the status query, so a retry only resets a cap the
+// listing would otherwise show as exhausted.
+func exhausted(status issues.Status, cycles int) bool {
+	if cycles <= 0 {
+		cycles = issues.DefaultReviewCycles
+	}
+	return status.ReviewVerdict == issues.VerdictChanges &&
+		status.ReviewCycle-status.ReviewBase >= cycles
+}
+
 // detail is the reply every single-issue operation gives: the issue's state
 // after the change, along with its prose and activity.
 func (h Handler) detail(number int64) (protocol.Response, error) {
@@ -465,7 +590,7 @@ func (h Handler) reconcile(ctx context.Context, filter issues.Filter) ([]string,
 // statusOptions hands the store the type mapping it deliberately does not
 // read for itself.
 func (h Handler) statusOptions() issues.StatusOptions {
-	return issues.StatusOptions{AgentFor: h.Config.AgentFor}
+	return issues.StatusOptions{AgentFor: h.Config.AgentFor, ReviewCycles: h.Config.ReviewCycles()}
 }
 
 // decode reads an operation's parameters. An absent payload is the zero

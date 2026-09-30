@@ -203,6 +203,29 @@ func (s *Store) PlanReviews(plan string) (map[int64][]Review, error) {
 	return byIssue, rows.Err()
 }
 
+// ResetReviewCycles starts the review cap again from the pull request's
+// newest cycle, which is what a retry of an exhausted review does.
+//
+// The reviews rows are kept: the detail pane renders their history, and the
+// count toward the cap is the only thing that restarts. A pull request with
+// no review yet resets to zero.
+func (s *Store) ResetReviewCycles(issue int64) error {
+	res, err := s.db.Exec(`
+		UPDATE issues SET review_base = COALESCE((
+			SELECT MAX(v.cycle) FROM reviews v
+			WHERE v.issue = issues.number AND v.pr_url = issues.pr_url
+		), 0)
+		WHERE number = ?`, issue)
+	if err != nil {
+		return err
+	}
+	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+		return fmt.Errorf("issue #%d: %w", issue, ErrNotFound)
+	}
+	s.publishIssue(EventReview, issue)
+	return nil
+}
+
 // review reads one cycle back, so callers see the row as it landed.
 func (s *Store) review(id string) (Review, error) {
 	row := s.db.QueryRow(`

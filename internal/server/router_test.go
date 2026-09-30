@@ -41,6 +41,8 @@ func TestRouterSplitsAgentOperationsFromIssueOperations(t *testing.T) {
 		protocol.OpIssueClose:      "issues",
 		protocol.OpIssueReady:      "issues",
 		protocol.OpIssueReindex:    "issues",
+		protocol.OpIssueRetry:      "issues",
+		protocol.OpIssueAnswer:     "issues",
 	}
 
 	for op, want := range cases {

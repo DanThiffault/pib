@@ -462,6 +462,26 @@ func (s *Store) LinkPR(number int64, url string) (Issue, error) {
 	return issue, nil
 }
 
+// UnlinkPR forgets a pull request, so a retry can open a fresh one. The
+// history of the previous request is left in the reviews rows; only the link
+// is dropped.
+func (s *Store) UnlinkPR(number int64) (Issue, error) {
+	if _, err := s.Issue(number); err != nil {
+		return Issue{}, err
+	}
+	if _, err := s.db.Exec(
+		`UPDATE issues SET pr_url = NULL, pr_state = NULL, pr_checked_at = NULL, updated_at = ? WHERE number = ?`,
+		format(now()), number); err != nil {
+		return Issue{}, err
+	}
+	issue, err := s.Issue(number)
+	if err != nil {
+		return Issue{}, err
+	}
+	s.publishIssue(EventIssue, number)
+	return issue, nil
+}
+
 // Blockers lists the issues an issue is waiting on.
 func (s *Store) blockers(number int64) ([]int64, error) {
 	rows, err := s.db.Query(`SELECT blocker FROM deps WHERE blocked = ? ORDER BY blocker`, number)
@@ -548,13 +568,17 @@ func (s *Store) reindex(number int64) error {
 // still work, and Content reports the real error when someone asks for it.
 func (s *Store) refresh(number int64, force bool) (bool, error) {
 	var (
-		rel   string
-		mtime int64
-		size  int64
+		rel        string
+		mtime      int64
+		size       int64
+		title      string
+		issueType  string
+		acceptance sql.NullString
 	)
-	err := s.db.QueryRow(
-		`SELECT path, indexed_mtime, indexed_size FROM issues WHERE number = ?`, number).
-		Scan(&rel, &mtime, &size)
+	err := s.db.QueryRow(`
+		SELECT path, indexed_mtime, indexed_size, title, type, acceptance
+		FROM issues WHERE number = ?`, number).
+		Scan(&rel, &mtime, &size, &title, &issueType, &acceptance)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -580,15 +604,25 @@ func (s *Store) refresh(number int64, force bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	acceptance, err := encodeList(file.Acceptance)
+	// The empty list is stored as NULL rather than "[]", so what the column
+	// holds is compared as a string, not against the query argument.
+	arg, err := encodeList(file.Acceptance)
 	if err != nil {
 		return false, err
 	}
+	indexed, _ := arg.(string)
 
+	// A file edited outside pib is the user changing the issue, exactly as an
+	// Edit would be: it counts towards taking the issue out of needs
+	// attention, so reindexing bumps updated_at. A reindex of an unchanged
+	// file is not a change and leaves it alone.
+	changed := title != file.Title || issueType != file.Type || acceptance.String != indexed
 	_, err = s.db.Exec(`
-		UPDATE issues SET title = ?, type = ?, acceptance = ?, indexed_mtime = ?, indexed_size = ?
+		UPDATE issues SET title = ?, type = ?, acceptance = ?, indexed_mtime = ?, indexed_size = ?,
+		       updated_at = CASE WHEN ? THEN ? ELSE updated_at END
 		WHERE number = ?`,
-		file.Title, file.Type, acceptance, info.ModTime().UnixNano(), info.Size(), number)
+		file.Title, file.Type, arg, info.ModTime().UnixNano(), info.Size(),
+		changed, format(now()), number)
 	return err == nil, err
 }
 
