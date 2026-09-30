@@ -57,7 +57,7 @@ func (s *Store) FinishRun(id, status string) error {
 		status = "unknown"
 	}
 	_, err := s.db.Exec(
-		`UPDATE runs SET ended_at = ?, status = ? WHERE id = ?`, format(now()), status, id)
+		`UPDATE runs SET ended_at = ?, status = ? WHERE id = ?`, s.runEnded(id), status, id)
 	if err != nil {
 		return err
 	}
@@ -71,6 +71,30 @@ func (s *Store) FinishRun(id, status string) error {
 	_ = s.db.QueryRow(`SELECT COALESCE(issue, 0) FROM runs WHERE id = ?`, id).Scan(&issue)
 	s.publishIssue(EventRun, issue)
 	return nil
+}
+
+// runEnded reports when a run should be said to have ended.
+//
+// Timestamps are recorded to the second, and whether a run needs attention
+// turns on ending after the last write to its issue. A coder that links its
+// pull request and is killed in the same second would otherwise leave the
+// issue looking untouched since the run. The tie is broken towards the run,
+// which is the newer of the two events: a run ending at the same moment as
+// the issue was last written is recorded a second later, so "something
+// happened since" stays true.
+func (s *Store) runEnded(id string) string {
+	// Truncated to the second, because that is what a recorded timestamp
+	// holds: an untruncated now() reads as later than itself once written.
+	ended := now().Truncate(time.Second)
+	var updated string
+	if err := s.db.QueryRow(`
+		SELECT i.updated_at FROM runs r JOIN issues i ON i.number = r.issue
+		WHERE r.id = ?`, id).Scan(&updated); err == nil {
+		if last := parseTime(updated); !ended.After(last) {
+			ended = last.Add(time.Second)
+		}
+	}
+	return format(ended)
 }
 
 // RunAgent names the agent a run belongs to. A run pib has never heard of
@@ -131,9 +155,17 @@ func (s *Store) Runs(issue int64) ([]Run, error) {
 // Opening the store means taking ownership of it, so nothing else can still
 // be working — without this, a pib that crashed would leave its issues stuck
 // in progress forever.
+//
+// Every orphan is closed at the same moment, which is the same tie-break as a
+// run finishing: at or after the last write to its issue, so an issue whose
+// agent vanished is reported rather than left looking ready.
 func (s *Store) closeOrphanRuns() (int, error) {
-	res, err := s.db.Exec(
-		`UPDATE runs SET ended_at = ?, status = 'unknown' WHERE ended_at IS NULL`, format(now()))
+	res, err := s.db.Exec(`
+		UPDATE runs SET
+		    ended_at = MAX(?, COALESCE(
+		        (SELECT i.updated_at FROM issues i WHERE i.number = runs.issue), '')),
+		    status = 'unknown'
+		WHERE ended_at IS NULL`, format(now()))
 	if err != nil {
 		return 0, err
 	}
