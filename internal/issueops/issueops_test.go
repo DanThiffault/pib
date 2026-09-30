@@ -319,7 +319,7 @@ func TestReviewRecordSettlesACycle(t *testing.T) {
 
 	// Settle it.
 	resp, err := h.Run(context.Background(), protocol.Request{
-		Op: protocol.OpReviewRecord,
+		Op:      protocol.OpReviewRecord,
 		Payload: mustJSON(t, ReviewRecordParams{Number: number, Verdict: issues.VerdictChanges, Findings: 3}),
 	})
 	if err != nil {
@@ -352,7 +352,7 @@ func TestReviewRecordNeedsAPullRequestAndOpenCycle(t *testing.T) {
 
 	// No PR linked yet.
 	_, err := h.Run(context.Background(), protocol.Request{
-		Op: protocol.OpReviewRecord,
+		Op:      protocol.OpReviewRecord,
 		Payload: mustJSON(t, ReviewRecordParams{Number: number, Verdict: issues.VerdictApproved, Findings: 0}),
 	})
 	if err == nil || !strings.Contains(err.Error(), "no linked pull request") {
@@ -362,7 +362,7 @@ func TestReviewRecordNeedsAPullRequestAndOpenCycle(t *testing.T) {
 	// PR linked, but no cycle opened.
 	run(t, h, protocol.OpIssueLinkPR, LinkPRParams{Number: number, URL: "https://github.com/o/r/pull/1"})
 	_, err = h.Run(context.Background(), protocol.Request{
-		Op: protocol.OpReviewRecord,
+		Op:      protocol.OpReviewRecord,
 		Payload: mustJSON(t, ReviewRecordParams{Number: number, Verdict: issues.VerdictApproved, Findings: 0}),
 	})
 	if err == nil || !strings.Contains(err.Error(), "no open review cycle") {
@@ -383,7 +383,7 @@ func TestReviewRecordRejectsAnUnknownVerdict(t *testing.T) {
 	}
 
 	_, err := h.Run(context.Background(), protocol.Request{
-		Op: protocol.OpReviewRecord,
+		Op:      protocol.OpReviewRecord,
 		Payload: mustJSON(t, ReviewRecordParams{Number: number, Verdict: "looks-fine", Findings: 0}),
 	})
 	if err == nil || !strings.Contains(err.Error(), "not a review verdict") {
@@ -438,3 +438,223 @@ type errString string
 func (e errString) Error() string { return string(e) }
 
 func strptr(s string) *string { return &s }
+
+// fakeSpawner records what it was asked to run, in place of the runner and
+// its tmux window.
+type fakeSpawner struct {
+	seen []protocol.Request
+	err  string
+}
+
+func (f *fakeSpawner) Run(_ context.Context, req protocol.Request) (protocol.Response, error) {
+	f.seen = append(f.seen, req)
+	if f.err != "" {
+		return protocol.Response{}, errString(f.err)
+	}
+	return protocol.Response{Status: protocol.StatusOK}, nil
+}
+
+// firstTask applies the fixture plan and returns the first task's number.
+func firstTask(t *testing.T, h Handler) int64 {
+	t.Helper()
+	run(t, h, protocol.OpPlanApply, document())
+	list := into[StatusList](t, run(t, h, protocol.OpIssueList, ListParams{Type: "task"}))
+	if len(list.Issues) == 0 {
+		t.Fatal("no tasks")
+	}
+	return list.Issues[0].Number
+}
+
+func TestRetryStartsAFreshRun(t *testing.T) {
+	h := handler(t)
+	spawn := &fakeSpawner{}
+	h.Spawn = spawn
+	number := firstTask(t, h)
+
+	// Something went wrong last time.
+	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Store.FinishRun("run-1", "error"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := run(t, h, protocol.OpIssueRetry, RetryParams{Number: number})
+	if len(spawn.seen) != 1 {
+		t.Fatalf("spawned %d runs, want 1", len(spawn.seen))
+	}
+	req := spawn.seen[0]
+	if req.Op != protocol.OpSpawn || req.Agent != "coder" || req.Issue != number {
+		t.Errorf("request = %+v, want a coder spawned for #%d", req, number)
+	}
+
+	detail := into[IssueDetail](t, resp)
+	if detail.Issue.NeedsAttention {
+		t.Errorf("after a retry, attention = %q, want the issue back in play", detail.Issue.AttentionReason)
+	}
+}
+
+func TestRetryUnlinksAClosedPullRequest(t *testing.T) {
+	h := handler(t)
+	spawn := &fakeSpawner{}
+	h.Spawn = spawn
+	number := firstTask(t, h)
+
+	run(t, h, protocol.OpIssueLinkPR, LinkPRParams{Number: number, URL: "https://github.com/o/r/pull/1"})
+	// The pull request was closed without merging.
+	h.Lookup = fakeLookup{state: "closed"}
+	run(t, h, protocol.OpIssueList, ListParams{Type: "task"})
+
+	resp := run(t, h, protocol.OpIssueRetry, RetryParams{Number: number})
+	detail := into[IssueDetail](t, resp)
+	if detail.Issue.PRURL != "" {
+		t.Errorf("pull request = %q, want the closed one unlinked", detail.Issue.PRURL)
+	}
+	if detail.Issue.NeedsAttention {
+		t.Errorf("attention = %q, want the retry to have cleared it", detail.Issue.AttentionReason)
+	}
+	if len(spawn.seen) != 1 {
+		t.Fatalf("spawned %d runs, want 1", len(spawn.seen))
+	}
+}
+
+func TestRetryResetsExhaustedReviewCycles(t *testing.T) {
+	h := handler(t)
+	spawn := &fakeSpawner{}
+	h.Spawn = spawn
+	number := firstTask(t, h)
+
+	const url = "https://github.com/o/r/pull/1"
+	run(t, h, protocol.OpIssueLinkPR, LinkPRParams{Number: number, URL: url})
+	for i := 0; i < h.Config.ReviewCycles(); i++ {
+		review, err := h.Store.OpenReview(number, url, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.Store.CloseReview(review.ID, issues.VerdictChanges, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resp := run(t, h, protocol.OpIssueRetry, RetryParams{Number: number})
+	detail := into[IssueDetail](t, resp)
+	if detail.Issue.NeedsAttention {
+		t.Errorf("attention = %q, want the review cap reset", detail.Issue.AttentionReason)
+	}
+	reviews, err := h.Store.Reviews(number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews) != h.Config.ReviewCycles() {
+		t.Errorf("reviews = %d, want the history kept", len(reviews))
+	}
+}
+
+func TestRetryNeedsAnAgentAndARunner(t *testing.T) {
+	h := handler(t)
+	number := firstTask(t, h)
+
+	if _, err := h.Run(context.Background(), protocol.Request{
+		Op: protocol.OpIssueRetry, Payload: mustJSON(t, RetryParams{Number: number}),
+	}); err == nil {
+		t.Error("a retry with no runner succeeded")
+	}
+
+	h.Spawn = &fakeSpawner{err: "no tmux"}
+	if _, err := h.Run(context.Background(), protocol.Request{
+		Op: protocol.OpIssueRetry, Payload: mustJSON(t, RetryParams{Number: number}),
+	}); err == nil {
+		t.Error("a retry whose spawn failed reported success")
+	}
+}
+
+func TestAnswerResumesTheRunThatAsked(t *testing.T) {
+	h := handler(t)
+	spawn := &fakeSpawner{}
+	h.Spawn = spawn
+	number := firstTask(t, h)
+
+	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Store.FinishRun("run-1", "needs_input"); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := run(t, h, protocol.OpIssueAnswer, AnswerParams{Number: number, Answer: "use postgres"})
+	if len(spawn.seen) != 1 {
+		t.Fatalf("spawned %d runs, want 1", len(spawn.seen))
+	}
+	req := spawn.seen[0]
+	if req.Op != protocol.OpResume || req.Session != "run-1" || req.Answer != "use postgres" {
+		t.Errorf("request = %+v, want run-1 resumed with the answer", req)
+	}
+	if req.Issue != number {
+		t.Errorf("request issue = %d, want %d", req.Issue, number)
+	}
+	if into[IssueDetail](t, resp).Issue.Number != number {
+		t.Errorf("reply is about another issue")
+	}
+}
+
+func TestAnswerNeedsARunWaitingAndSomethingToSay(t *testing.T) {
+	h := handler(t)
+	h.Spawn = &fakeSpawner{}
+	number := firstTask(t, h)
+
+	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Store.FinishRun("run-1", "done"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, params := range []AnswerParams{
+		{Number: number, Answer: "hello"},
+		{Number: number, Answer: "  "},
+	} {
+		if _, err := h.Run(context.Background(), protocol.Request{
+			Op: protocol.OpIssueAnswer, Payload: mustJSON(t, params),
+		}); err == nil {
+			t.Errorf("answering with %+v succeeded, want an error", params)
+		}
+	}
+}
+
+func TestTheReviewCycleCapComesFromTheConfig(t *testing.T) {
+	h := handler(t)
+	number := firstTask(t, h)
+
+	path := filepath.Join(t.TempDir(), config.FileName)
+	body := "[types]\ntask = \"coder\"\n[plan]\nreview = false\n[review]\ncycles = 1\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadPaths(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Config = cfg
+
+	const url = "https://github.com/o/r/pull/1"
+	run(t, h, protocol.OpIssueLinkPR, LinkPRParams{Number: number, URL: url})
+	review, err := h.Store.OpenReview(number, url, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Store.CloseReview(review.ID, issues.VerdictChanges, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	list := into[StatusList](t, run(t, h, protocol.OpIssueList, ListParams{Type: "task"}))
+	for _, status := range list.Issues {
+		if status.Number != number {
+			continue
+		}
+		if !status.NeedsAttention || status.AttentionReason != issues.AttentionReview {
+			t.Errorf("attention = %v %q, want the cap of one reached", status.NeedsAttention, status.AttentionReason)
+		}
+		return
+	}
+	t.Errorf("#%d is missing from the listing", number)
+}

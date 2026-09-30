@@ -26,6 +26,13 @@ type Status struct {
 	// Launchable reports a ready issue whose type maps to an agent. A ready
 	// issue of an unmapped type has nothing to run it.
 	Launchable bool `json:"launchable"`
+	// NeedsAttention reports an issue whose machine stopped where only a
+	// human can move it: the agent failed or asked a question, the pull
+	// request was closed, or the review cycles ran out.
+	NeedsAttention bool `json:"needsAttention"`
+	// AttentionReason says which of those it is, in the words the interface
+	// shows. Empty unless NeedsAttention.
+	AttentionReason string `json:"attentionReason,omitempty"`
 
 	// Agent is what would run this issue, empty when its type maps to
 	// nothing — either a container type or one nobody has mapped.
@@ -39,6 +46,9 @@ type Status struct {
 	// request, or zero when no review has started on it. A replacement pull
 	// request starts again at one.
 	ReviewCycle int `json:"reviewCycle,omitempty"`
+	// ReviewBase is the cycle a retry last reset the cap from. Review cycles
+	// since then are ReviewCycle - ReviewBase.
+	ReviewBase int `json:"reviewBase,omitempty"`
 	// ReviewVerdict is what that cycle settled on, empty while the reviewer
 	// is still working. Read it with ReviewCycle: cycle 0 is "no review
 	// yet", and a cycle with no verdict is a review running now.
@@ -54,16 +64,49 @@ type StatusOptions struct {
 	// there is one. The store does not read pib's configuration itself; the
 	// caller passes the lookup in.
 	AgentFor func(issueType string) (agent string, ok bool)
+
+	// ReviewCycles is how many reviewer → coder passes a pull request gets
+	// before pib stops and asks the user. Zero or less means
+	// DefaultReviewCycles; the store cannot read the config itself.
+	ReviewCycles int
+}
+
+// DefaultReviewCycles is the cap when a caller supplies none. It matches
+// internal/review's own default, which the store cannot import — review
+// imports issues.
+const DefaultReviewCycles = 3
+
+// Attention reasons, worded as ADR-005 names them: a short label for the
+// thing that stopped, not a sentence to read.
+const (
+	AttentionFailed   = "agent failed"
+	AttentionAsked    = "agent asked a question"
+	AttentionClosedPR = "pull request closed"
+	AttentionReview   = "review cycles exhausted"
+)
+
+// reviewCycles resolves the cap a query was built with.
+func (o StatusOptions) reviewCycles() int {
+	if o.ReviewCycles <= 0 {
+		return DefaultReviewCycles
+	}
+	return o.ReviewCycles
 }
 
 // statusQuery derives every flag in one pass. Readiness is defined once, in
 // the second common table expression, so a listing and a readiness filter
 // can never disagree about what it means.
-const statusQuery = `
+//
+// The cap on review cycles is a Go value, so it is interpolated rather than
+// bound: it is an int from the config, and the query is built per call
+// anyway because of it.
+func statusQuery(cycles int) string {
+	return fmt.Sprintf(`
 WITH flags AS (
 	SELECT i.number, i.plan_id, p.slug AS plan, i.local_id, i.parent, i.path,
 	       i.title, i.type, i.acceptance, i.state, i.closed_at,
 	       i.pr_url, i.pr_state, i.pr_checked_at, i.created_at, i.updated_at,
+	       i.review_base,
 	       EXISTS (
 	           SELECT 1 FROM deps d JOIN issues b ON b.number = d.blocker
 	           WHERE d.blocked = i.number AND b.state = 'open'
@@ -81,21 +124,57 @@ WITH flags AS (
 	           SELECT v.verdict FROM reviews v
 	           WHERE v.issue = i.number AND v.pr_url = i.pr_url
 	           ORDER BY v.cycle DESC LIMIT 1
-	       ), '') AS review_verdict
+	       ), '') AS review_verdict,
+       -- the newest run on the issue, so what an agent left behind is read
+       -- off the same pass
+       COALESCE((
+           SELECT r.status FROM runs r WHERE r.issue = i.number
+           ORDER BY r.rowid DESC LIMIT 1
+       ), '') AS last_run_status,
+       COALESCE((
+           SELECT r.ended_at FROM runs r WHERE r.issue = i.number
+           ORDER BY r.rowid DESC LIMIT 1
+       ), '') AS last_run_ended
 	FROM issues i JOIN plans p ON p.id = i.plan_id
-), status AS (
-	SELECT *, (state = 'open' AND NOT blocked AND NOT in_progress AND NOT awaiting_review) AS ready
+), attention AS (
+	SELECT *,
+	       -- A run asks for attention only while nothing has been done about
+	       -- it since: editing, commenting, linking a pull request and
+	       -- reindexing a changed file all move updated_at past the run.
+	       (state = 'open' AND NOT in_progress AND (
+	           (last_run_status IN ('error', 'needs_input', 'unknown')
+	            AND last_run_ended > updated_at)
+	        OR (pr_url IS NOT NULL AND pr_state = 'closed')
+	        OR (review_cycle - review_base >= %[1]d AND review_verdict = 'changes')
+	       )) AS needs_attention
 	FROM flags
+), status AS (
+	SELECT *,
+	       (state = 'open' AND NOT blocked AND NOT in_progress
+	        AND NOT awaiting_review AND NOT needs_attention) AS ready,
+	       CASE
+	           WHEN last_run_status = 'needs_input'
+	                AND last_run_ended > updated_at THEN '%[2]s'
+	           WHEN last_run_status IN ('error', 'unknown')
+	                AND last_run_ended > updated_at THEN '%[3]s'
+	           WHEN pr_url IS NOT NULL AND pr_state = 'closed' THEN '%[4]s'
+	           WHEN review_cycle - review_base >= %[1]d AND review_verdict = 'changes' THEN '%[5]s'
+	           ELSE ''
+	       END AS attention_reason
+	FROM attention
 )
 SELECT number, plan_id, plan, local_id, parent, path, title, type, acceptance,
        state, closed_at, pr_url, pr_state, pr_checked_at, created_at, updated_at,
-       blocked, in_progress, awaiting_review, ready, review_cycle, review_verdict
+       blocked, in_progress, awaiting_review, ready, review_cycle, review_verdict,
+       review_base, needs_attention, attention_reason
 FROM status
-WHERE 1 = 1`
+WHERE 1 = 1`,
+		cycles, AttentionAsked, AttentionFailed, AttentionClosedPR, AttentionReview)
+}
 
 // Status derives the current state of one issue.
 func (s *Store) Status(number int64, opts StatusOptions) (Status, error) {
-	list, err := s.statuses(statusQuery+` AND number = ?`, []any{number}, "", opts)
+	list, err := s.statuses(statusQuery(opts.reviewCycles())+` AND number = ?`, []any{number}, "", opts)
 	if err != nil {
 		return Status{}, err
 	}
@@ -107,7 +186,7 @@ func (s *Store) Status(number int64, opts StatusOptions) (Status, error) {
 
 // Statuses lists issues with their derived state, lowest number first.
 func (s *Store) Statuses(f Filter, opts StatusOptions) ([]Status, error) {
-	query, args := filterQuery(statusQuery, f)
+	query, args := filterQuery(statusQuery(opts.reviewCycles()), f)
 	return s.statuses(query, args, f.Plan, opts)
 }
 
@@ -119,7 +198,7 @@ func (s *Store) Statuses(f Filter, opts StatusOptions) ([]Status, error) {
 // Launchable, which also needs a type mapped to an agent.
 func (s *Store) Ready(f Filter, opts StatusOptions) ([]Status, error) {
 	f.State = StateOpen
-	query, args := filterQuery(statusQuery, f)
+	query, args := filterQuery(statusQuery(opts.reviewCycles()), f)
 	return s.statuses(query+` AND ready`, args, f.Plan, opts)
 }
 
@@ -159,7 +238,8 @@ func (s *Store) statuses(query string, args []any, plan string, opts StatusOptio
 		var status Status
 		status.Issue, err = scanIssue(rows,
 			&status.Blocked, &status.InProgress, &status.AwaitingReview, &status.Ready,
-			&status.ReviewCycle, &status.ReviewVerdict)
+			&status.ReviewCycle, &status.ReviewVerdict, &status.ReviewBase,
+			&status.NeedsAttention, &status.AttentionReason)
 		if err != nil {
 			return nil, err
 		}
@@ -359,6 +439,8 @@ func why(status Status) string {
 		return "an agent is already working on it"
 	case status.AwaitingReview:
 		return "it is waiting on a pull request"
+	case status.NeedsAttention:
+		return status.AttentionReason
 	case status.Blocked:
 		return fmt.Sprintf("it is blocked by %s", render(status.OpenBlockers))
 	default:

@@ -152,7 +152,8 @@ func TestAnAbandonedPullRequestReleasesTheIssue(t *testing.T) {
 	}
 
 	// A pull request closed without merging means the work was abandoned:
-	// the issue stays open and can be picked up again.
+	// the issue stays open, and needs attention rather than starting over
+	// by itself — the coder that opened it has to be run again.
 	status, err := store.Status(issue.Number, agents)
 	if err != nil {
 		t.Fatal(err)
@@ -160,8 +161,12 @@ func TestAnAbandonedPullRequestReleasesTheIssue(t *testing.T) {
 	if status.State != StateOpen {
 		t.Errorf("state = %q, want the issue still open", status.State)
 	}
-	if status.AwaitingReview || !status.Ready {
-		t.Errorf("status = awaiting %v ready %v, want it ready again", status.AwaitingReview, status.Ready)
+	if status.AwaitingReview || status.Ready {
+		t.Errorf("status = awaiting %v ready %v, want it released", status.AwaitingReview, status.Ready)
+	}
+	if !status.NeedsAttention || status.AttentionReason != AttentionClosedPR {
+		t.Errorf("attention = %v %q, want it reported as a closed pull request",
+			status.NeedsAttention, status.AttentionReason)
 	}
 }
 

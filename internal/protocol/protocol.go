@@ -38,8 +38,13 @@ const (
 	OpIssueLinkPR  Op = "issue.link_pr"
 	OpIssueClose   Op = "issue.close"
 	OpIssueReopen  Op = "issue.reopen"
-	OpIssueReady    Op = "issue.ready"
-	OpIssueReindex  Op = "issue.reindex"
+	OpIssueReady   Op = "issue.ready"
+	OpIssueReindex Op = "issue.reindex"
+	// OpIssueRetry starts a new run of an issue's agent, clearing whatever
+	// stopped the last one.
+	OpIssueRetry Op = "issue.retry"
+	// OpIssueAnswer resumes a run that stopped to ask a question.
+	OpIssueAnswer Op = "issue.answer"
 
 	OpReviewRecord Op = "review.record"
 )
