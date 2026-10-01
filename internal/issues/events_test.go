@@ -183,7 +183,7 @@ func TestRunStartAndEndPublish(t *testing.T) {
 	issue := task(t, store, "Schema")
 	events := watched(t, store)
 
-	if err := store.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	wantEvent(t, events, EventRun, "orders", issue.Number)
@@ -201,7 +201,7 @@ func TestARunWithNoIssuePublishesStartAndEnd(t *testing.T) {
 	// A planner run belongs to no issue, and it is the planning row ending
 	// that a subscriber needs to hear about: a planner that quits without
 	// applying leaves a placeholder to take down.
-	if err := store.StartRun("run-planner", 0, "planner", "@1"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-planner", Issue: 0, Agent: "planner", Window: "@1"}); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	wantEvent(t, events, EventRun, "", 0)

@@ -154,6 +154,9 @@ func TestClosingPassSpawnsPlanReviewer(t *testing.T) {
 	if req.Op != protocol.OpSpawn {
 		t.Errorf("op = %q, want spawn", req.Op)
 	}
+	if req.Plan != "orders" || req.Pass != issues.PassClosing {
+		t.Errorf("plan = %q pass = %q, want the closing pass traced to orders", req.Plan, req.Pass)
+	}
 }
 
 // The closing pass happens at most once per plan.

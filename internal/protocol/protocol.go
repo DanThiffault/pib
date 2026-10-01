@@ -78,6 +78,13 @@ type Request struct {
 	// Issue is the issue this agent is being spawned for, if any. It is
 	// what makes that issue read as in progress while the agent works.
 	Issue int64 `json:"issue,omitempty"`
+	// Plan is the plan a run works on behalf of. A run on an issue is
+	// traced through the issue instead; this is for a run with no issue —
+	// the closing-pass reviewer, `pib plan review`.
+	Plan string `json:"plan,omitempty"`
+	// Pass says whether a plan-reviewer run is the opening or the closing
+	// review of its plan.
+	Pass string `json:"pass,omitempty"`
 
 	// Payload carries the arguments of an issue or plan operation. Its
 	// shape depends on Op; internal/issueops defines them.

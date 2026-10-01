@@ -132,6 +132,11 @@ func (h *Hook) closingRequest(issue issues.Issue) protocol.Request {
 		Agent: h.ReviewAgent,
 		Name:  fmt.Sprintf("closing review %s", issue.Plan),
 		Task:  ClosingBriefing(issue.Plan),
+		// No issue claims this run, so the plan and the pass are what trace
+		// it: they are how the plan reads as under review while it runs, and
+		// how its ending settles the plan.
+		Plan: issue.Plan,
+		Pass: issues.PassClosing,
 	}
 }
 

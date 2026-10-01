@@ -78,7 +78,7 @@ func (f *fakeAgents) Run(_ context.Context, req protocol.Request) (protocol.Resp
 		if agent == "" {
 			agent, _ = f.store.RunAgent(id)
 		}
-		if err := f.store.StartRun(id, req.Issue, agent, "@1"); err != nil {
+		if err := f.store.StartRun(issues.RunStart{ID: id, Issue: req.Issue, Agent: agent, Window: "@1"}); err != nil {
 			return protocol.Response{}, err
 		}
 		if req.Op != protocol.OpSpawnBackground {
@@ -209,6 +209,37 @@ func TestPlanApplyFromStandardInput(t *testing.T) {
 	}
 	if !strings.Contains(out, "Applied plan orders") {
 		t.Errorf("output = %q", out)
+	}
+}
+
+// A planner applying the plan it just wrote names its run, and the run is
+// traced to the plan: the planning placeholder gives way to the real row.
+func TestPlanApplyFromAPlannerNamesTheRun(t *testing.T) {
+	h := setup(t)
+
+	if err := h.store.StartRun(issues.RunStart{ID: "run-plan", Agent: "planner", Window: "@1"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(runner.EnvRun, "run-plan")
+
+	h.ok(t, "plan", "apply", h.planFile(t))
+
+	plan, err := h.store.Plan("orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.PlannerRun != "run-plan" {
+		t.Errorf("planner run = %q, want the run that applied", plan.PlannerRun)
+	}
+
+	list, err := h.store.PlanStatuses(false, issues.PlanStatusOptions{PlanReview: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range list {
+		if status.State == issues.PlanPlanning {
+			t.Errorf("list = %+v, want the planning row gone once the plan applies", list)
+		}
 	}
 }
 
@@ -694,7 +725,7 @@ func TestFollowupWaitsForALiveRun(t *testing.T) {
 	h.worked(t, "2")
 
 	// A run that started and has not ended.
-	if err := h.store.StartRun("run-live", 2, "coder", "@7"); err != nil {
+	if err := h.store.StartRun(issues.RunStart{ID: "run-live", Issue: 2, Agent: "coder", Window: "@7"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -795,6 +826,9 @@ func TestPlanReviewSpawnsTheReviewer(t *testing.T) {
 	}
 	if !strings.Contains(req.Task, "orders") {
 		t.Errorf("task does not name the plan: %q", req.Task)
+	}
+	if req.Plan != "orders" || req.Pass != issues.PassOpening {
+		t.Errorf("plan = %q pass = %q, want the opening pass traced to orders", req.Plan, req.Pass)
 	}
 }
 

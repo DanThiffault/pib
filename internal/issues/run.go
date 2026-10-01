@@ -3,6 +3,7 @@ package issues
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -23,31 +24,82 @@ type Run struct {
 // as unknown rather than rejected: a run that ended oddly still ended.
 var runStatuses = map[string]bool{"done": true, "needs_input": true, "error": true, "unknown": true}
 
+// The passes a plan-reviewer run makes over a plan: the opening review,
+// before any of it is worked, and the closing review, after the last issue
+// closes.
+const (
+	PassOpening = "opening"
+	PassClosing = "closing"
+)
+
+// RunStart describes an agent run being recorded.
+type RunStart struct {
+	ID     string
+	Issue  int64
+	Agent  string
+	Window string
+	// Plan is the plan the run works on behalf of. A run on an issue gets
+	// the issue's plan — the store fills it, callers need not. A run with
+	// no issue — the closing-pass reviewer, `pib plan review` — is traced
+	// to its plan by this, or not at all.
+	Plan string
+	// Pass says whether a plan-reviewer run is the opening or the closing
+	// review. The store fills it for a run on the plan's reviewer issue
+	// (opening); a reviewer run with no issue must say which it is.
+	Pass string
+}
+
 // StartRun records an agent starting work, and is what makes an issue read
 // as in progress. Resuming an agent reuses its id, so the same row is picked
 // back up rather than a second one being written.
-func (s *Store) StartRun(id string, issue int64, agent, window string) error {
-	if id == "" {
+func (s *Store) StartRun(start RunStart) error {
+	if start.ID == "" {
 		return errors.New("a run needs an id")
 	}
-	if agent == "" {
+	if start.Agent == "" {
 		return errors.New("a run needs an agent")
+	}
+	if start.Pass != "" && start.Pass != PassOpening && start.Pass != PassClosing {
+		return fmt.Errorf("a run's pass is %q or %q, not %q", PassOpening, PassClosing, start.Pass)
+	}
+
+	plan, pass := start.Plan, start.Pass
+	if start.Issue != 0 {
+		// The issue decides: its plan is the run's plan whatever the caller
+		// said, and a run on the plan's reviewer issue is the opening pass.
+		// The lookup doubles as the existence check the foreign key gave.
+		var issueType string
+		err := s.db.QueryRow(`
+			SELECT p.slug, i.type FROM issues i JOIN plans p ON p.id = i.plan_id
+			WHERE i.number = ?`, start.Issue).Scan(&plan, &issueType)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("issue #%d: %w", start.Issue, ErrNotFound)
+			}
+			return err
+		}
+		if pass == "" && issueType == ReviewType {
+			pass = PassOpening
+		}
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO runs (id, issue, agent, tmux_window, started_at)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO runs (id, issue, agent, tmux_window, started_at, plan, pass)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			started_at  = excluded.started_at,
 			tmux_window = excluded.tmux_window,
 			ended_at    = NULL,
 			status      = NULL,
-			issue       = COALESCE(excluded.issue, runs.issue)`,
-		id, nullableID(issue), agent, nullable(window), format(now()))
+			issue       = COALESCE(excluded.issue, runs.issue),
+			plan        = COALESCE(excluded.plan, runs.plan),
+			pass        = COALESCE(excluded.pass, runs.pass)`,
+		start.ID, nullableID(start.Issue), start.Agent, nullable(start.Window),
+		format(now()), nullable(plan), nullable(pass))
 	if err != nil {
 		return wrapRef(err)
 	}
-	s.publishIssue(EventRun, issue)
+	s.publishIssue(EventRun, start.Issue)
 	return nil
 }
 

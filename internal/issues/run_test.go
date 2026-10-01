@@ -9,7 +9,7 @@ func TestStartRunPutsAnIssueInProgress(t *testing.T) {
 	store := planned(t)
 	issue := task(t, store, "Alpha")
 
-	if err := store.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 
@@ -40,13 +40,13 @@ func TestRunsKeepEveryAttempt(t *testing.T) {
 	store := planned(t)
 	issue := task(t, store, "Alpha")
 
-	if err := store.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishRun("run-1", "error"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.StartRun("run-2", issue.Number, "coder", "@4"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-2", Issue: issue.Number, Agent: "coder", Window: "@4"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishRun("run-2", "done"); err != nil {
@@ -75,7 +75,7 @@ func TestResumingAgentReusesItsRun(t *testing.T) {
 	store := planned(t)
 	issue := task(t, store, "Alpha")
 
-	if err := store.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishRun("run-1", "needs_input"); err != nil {
@@ -83,7 +83,7 @@ func TestResumingAgentReusesItsRun(t *testing.T) {
 	}
 
 	// A resume knows the session but not the issue; the row keeps it.
-	if err := store.StartRun("run-1", 0, "coder", "@7"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: 0, Agent: "coder", Window: "@7"}); err != nil {
 		t.Fatalf("resuming: %v", err)
 	}
 
@@ -121,7 +121,7 @@ func TestOpeningTheStoreClosesOrphanedRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	issue := task(t, first, "Alpha")
-	if err := first.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := first.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	// A crash: the run is never finished.
@@ -155,18 +155,18 @@ func TestRunRecordsAreChecked(t *testing.T) {
 	store := planned(t)
 	issue := task(t, store, "Alpha")
 
-	if err := store.StartRun("", issue.Number, "coder", ""); err == nil {
+	if err := store.StartRun(RunStart{ID: "", Issue: issue.Number, Agent: "coder", Window: ""}); err == nil {
 		t.Error("a run with no id was accepted")
 	}
-	if err := store.StartRun("run-1", issue.Number, "", ""); err == nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "", Window: ""}); err == nil {
 		t.Error("a run with no agent was accepted")
 	}
-	if err := store.StartRun("run-1", 404, "coder", ""); err == nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: 404, Agent: "coder", Window: ""}); err == nil {
 		t.Error("a run against an issue that does not exist was accepted")
 	}
 
 	// An unrecognised outcome is recorded as unknown rather than rejected.
-	if err := store.StartRun("run-1", issue.Number, "coder", ""); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: ""}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishRun("run-1", "exploded"); err != nil {
@@ -185,7 +185,7 @@ func TestARunWithNoIssueIsStillRecorded(t *testing.T) {
 	store := planned(t)
 
 	// The planner itself is not working on an issue.
-	if err := store.StartRun("run-1", 0, "planner", "@1"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: 0, Agent: "planner", Window: "@1"}); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
 	if err := store.FinishRun("run-1", "done"); err != nil {
@@ -215,7 +215,7 @@ func TestOrphanCleanupLeavesFinishedRunsAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	issue := task(t, first, "Alpha")
-	if err := first.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := first.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := first.FinishRun("run-1", "done"); err != nil {

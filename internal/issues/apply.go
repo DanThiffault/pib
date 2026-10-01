@@ -171,6 +171,16 @@ func (s *Store) Apply(doc Document, opts ApplyOptions) (ApplyResult, error) {
 		written = append(written, planFile)
 	}
 
+	// A planner that applies its own plan stops being a placeholder: the
+	// run is traced to the plan it produced, so the planning row the plan
+	// table shows for it disappears even though the planner is still open.
+	if result.Plan.PlannerRun != "" {
+		if _, err = tx.Exec(`UPDATE runs SET plan = ? WHERE id = ?`,
+			result.Plan.Slug, result.Plan.PlannerRun); err != nil {
+			return ApplyResult{}, err
+		}
+	}
+
 	// Pass one: every issue exists and has a number, so pass two can wire
 	// references in any order the document happens to use.
 	local, err := existingLocalIDs(tx, result.Plan.ID)

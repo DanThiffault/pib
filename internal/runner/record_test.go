@@ -8,22 +8,15 @@ import (
 	"testing"
 
 	"pib/internal/agent"
+	"pib/internal/issues"
 	"pib/internal/protocol"
 	"pib/internal/session"
 	"pib/internal/tmux"
 )
 
-// startCall is one recorded StartRun.
-type startCall struct {
-	id     string
-	issue  int64
-	agent  string
-	window string
-}
-
 // fakeRecorder stands in for the issue store.
 type fakeRecorder struct {
-	started  []startCall
+	started  []issues.RunStart
 	finished map[string]string
 	// known stands in for runs recorded before this process started.
 	known map[string]string
@@ -34,11 +27,11 @@ func newRecorder() *fakeRecorder {
 	return &fakeRecorder{finished: map[string]string{}, known: map[string]string{}}
 }
 
-func (f *fakeRecorder) StartRun(id string, issue int64, agent, window string) error {
+func (f *fakeRecorder) StartRun(start issues.RunStart) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.started = append(f.started, startCall{id, issue, agent, window})
+	f.started = append(f.started, start)
 	return nil
 }
 
@@ -49,8 +42,8 @@ func (f *fakeRecorder) FinishRun(id, status string) error {
 
 func (f *fakeRecorder) RunAgent(id string) (string, error) {
 	for _, start := range f.started {
-		if start.id == id {
-			return start.agent, nil
+		if start.ID == id {
+			return start.Agent, nil
 		}
 	}
 	return f.known[id], nil
@@ -104,17 +97,17 @@ func TestSpawnRecordsTheRunAgainstItsIssue(t *testing.T) {
 		t.Fatalf("started %d runs, want 1", len(recorder.started))
 	}
 	start := recorder.started[0]
-	if start.issue != 7 {
-		t.Errorf("issue = %d, want 7", start.issue)
+	if start.Issue != 7 {
+		t.Errorf("issue = %d, want 7", start.Issue)
 	}
-	if start.agent != "coder" || start.window != "@99" {
+	if start.Agent != "coder" || start.Window != "@99" {
 		t.Errorf("start = %+v", start)
 	}
-	if start.id != resp.Session {
-		t.Errorf("run id %q does not match the session %q", start.id, resp.Session)
+	if start.ID != resp.Session {
+		t.Errorf("run id %q does not match the session %q", start.ID, resp.Session)
 	}
 
-	if got := recorder.finished[start.id]; got != string(session.StatusDone) {
+	if got := recorder.finished[start.ID]; got != string(session.StatusDone) {
 		t.Errorf("finished as %q, want done", got)
 	}
 }
@@ -131,8 +124,64 @@ func TestSpawnWithNoIssueStillRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(recorder.started) != 1 || recorder.started[0].issue != 0 {
+	if len(recorder.started) != 1 || recorder.started[0].Issue != 0 {
 		t.Errorf("started = %+v, want one run against no issue", recorder.started)
+	}
+}
+
+// A run with no issue to claim — the closing-pass reviewer, `pib plan
+// review` — is traced to its plan by what the request carries through.
+func TestSpawnRecordsThePlanAndPassItWasGiven(t *testing.T) {
+	finishing(t, `{"type":"done"}`)
+
+	recorder := newRecorder()
+	r := scout(t)
+	r.Record = recorder
+
+	if _, err := r.Run(context.Background(), protocol.Request{
+		Op: protocol.OpSpawn, Agent: "plan-reviewer", Task: "settle the plan",
+		Plan: "orders", Pass: issues.PassClosing,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(recorder.started) != 1 {
+		t.Fatalf("started = %+v", recorder.started)
+	}
+	start := recorder.started[0]
+	if start.Plan != "orders" || start.Pass != issues.PassClosing {
+		t.Errorf("start = %+v, want the plan and the closing pass recorded", start)
+	}
+}
+
+// An agent is told its own run id, so one that changes what it was spawned
+// towards — a planner applying its plan — can name itself.
+func TestTheAgentIsToldItsRun(t *testing.T) {
+	finishing(t, `{"type":"done"}`)
+
+	var env map[string]string
+	original := newWindow
+	newWindow = func(opts tmux.Options, _ []string) (tmux.Window, error) {
+		env = opts.Env
+		if path := opts.Env[EnvExitFile]; path != "" {
+			os.WriteFile(path, []byte(`{"type":"done"}`), 0o644)
+		}
+		return tmux.Window{ID: "@99"}, nil
+	}
+	t.Cleanup(func() { newWindow = original })
+
+	recorder := newRecorder()
+	r := scout(t)
+	r.Record = recorder
+
+	if _, err := r.Run(context.Background(), protocol.Request{
+		Op: protocol.OpSpawn, Agent: "planner", Task: "write a plan",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if env[EnvRun] == "" || env[EnvRun] != recorder.started[0].ID {
+		t.Errorf("%s = %q, want the recorded run id %q", EnvRun, env[EnvRun], recorder.started[0].ID)
 	}
 }
 
@@ -150,7 +199,7 @@ func TestAnAgentThatSaysNothingIsRecordedAsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id := recorder.started[0].id
+	id := recorder.started[0].ID
 	if got := recorder.finished[id]; got != string(session.StatusUnknown) {
 		t.Errorf("finished as %q, want unknown", got)
 	}
@@ -201,8 +250,8 @@ func TestResumeContinuesTheSameRun(t *testing.T) {
 	if len(recorder.started) != 1 {
 		t.Fatalf("started = %+v", recorder.started)
 	}
-	if recorder.started[0].id != "abc123" {
-		t.Errorf("run id = %q, want the session it is continuing", recorder.started[0].id)
+	if recorder.started[0].ID != "abc123" {
+		t.Errorf("run id = %q, want the session it is continuing", recorder.started[0].ID)
 	}
 	if got := recorder.finished["abc123"]; got != string(session.StatusDone) {
 		t.Errorf("finished as %q", got)
