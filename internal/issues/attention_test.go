@@ -37,7 +37,7 @@ func wantAttention(t *testing.T, s *Store, number int64, reason string) {
 // so the derivation sees the run as the newest thing that happened.
 func runOf(t *testing.T, s *Store, number int64, id, status string) {
 	t.Helper()
-	if err := s.StartRun(id, number, "coder", "@3"); err != nil {
+	if err := s.StartRun(RunStart{ID: id, Issue: number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(
@@ -83,7 +83,7 @@ func TestACrashedAgentCountsAsAFailedAgent(t *testing.T) {
 	issue := task(t, store, "Alpha")
 
 	// The agent process died, so the run is recorded as unknown too.
-	if err := store.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	freeze(t, "2026-08-29T12:01:00Z")
@@ -105,7 +105,7 @@ func TestAnOrphanClosedAtStartupCountsAsAFailedAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	issue := task(t, first, "Alpha")
-	if err := first.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := first.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	// pib itself goes away without finishing the run.
@@ -430,7 +430,7 @@ func TestUnlinkingAPullRequestReleasesTheIssue(t *testing.T) {
 func TestALiveRunIsNotAttentionItIsProgress(t *testing.T) {
 	store := planned(t)
 	issue := task(t, store, "Alpha")
-	if err := store.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if status := attention(t, store, issue.Number); status.NeedsAttention {
@@ -451,7 +451,7 @@ func TestTheClockIsHonoured(t *testing.T) {
 	if _, err := store.LinkPR(issue.Number, "https://github.com/o/r/pull/1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.StartRun("run-1", issue.Number, "coder", "@3"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.FinishRun("run-1", "unknown"); err != nil {

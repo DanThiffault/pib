@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"pib/internal/agent"
+	"pib/internal/issues"
 	"pib/internal/protocol"
 	"pib/internal/session"
 	"pib/internal/tmux"
@@ -33,6 +34,9 @@ const (
 	// for one. It saves an agent depending on whoever wrote its task to
 	// have mentioned the number.
 	EnvIssue = "PIB_ISSUE"
+	// EnvRun is the run's own id, so an agent that changes what it was
+	// spawned towards — a planner applying its plan — can name itself.
+	EnvRun = "PIB_RUN"
 )
 
 // pollInterval is how often a running window is checked.
@@ -50,7 +54,7 @@ var newWindow = tmux.NewWindow
 // on and offer the window an agent is in. It is optional: a runner without
 // one simply spawns agents and keeps no history.
 type Recorder interface {
-	StartRun(id string, issue int64, agent, window string) error
+	StartRun(start issues.RunStart) error
 	FinishRun(id, status string) error
 	// RunAgent names the agent a run belongs to, so a resumed session is
 	// itself again rather than a session id.
@@ -62,6 +66,16 @@ type run struct {
 	id    string
 	issue int64
 	agent string
+	plan  string
+	pass  string
+}
+
+// start is the recording of this run's beginning.
+func (info run) start(window string) issues.RunStart {
+	return issues.RunStart{
+		ID: info.id, Issue: info.issue, Agent: info.agent,
+		Window: window, Plan: info.plan, Pass: info.pass,
+	}
 }
 
 // Workspaces hands out a working directory per issue. worktree.Manager
@@ -152,7 +166,7 @@ func (r Runner) spawn(ctx context.Context, req protocol.Request) (protocol.Respo
 	}
 
 	return r.await(ctx,
-		run{id: runID, issue: req.Issue, agent: def.Name},
+		run{id: runID, issue: req.Issue, agent: def.Name, plan: req.Plan, pass: req.Pass},
 		runDir, name, append([]string{agent.Executable}, args...))
 }
 
@@ -209,7 +223,7 @@ func (r Runner) spawnBackground(req protocol.Request) (protocol.Response, error)
 	}
 
 	if r.Record != nil {
-		if err := r.Record.StartRun(runID, req.Issue, def.Name, window.ID); err != nil {
+		if err := r.Record.StartRun(run{id: runID, issue: req.Issue, agent: def.Name, plan: req.Plan, pass: req.Pass}.start(window.ID)); err != nil {
 			tmux.Kill(window.ID)
 			return protocol.Response{}, err
 		}
@@ -258,7 +272,7 @@ func (r Runner) resume(ctx context.Context, req protocol.Request) (protocol.Resp
 	}
 
 	argv := []string{agent.Executable, "--session", transcript, "--", req.Answer}
-	return r.await(ctx, run{id: id, issue: req.Issue, agent: name}, runDir, window, argv)
+	return r.await(ctx, run{id: id, issue: req.Issue, agent: name, plan: req.Plan, pass: req.Pass}, runDir, window, argv)
 }
 
 // agentOf names the agent a run belongs to. Without a recorder there is
@@ -296,7 +310,7 @@ func (r Runner) await(ctx context.Context, info run, runDir, name string, argv [
 	// goes rather than being left working untracked. This is what rejects a
 	// request naming an issue that does not exist.
 	if r.Record != nil {
-		if err := r.Record.StartRun(info.id, info.issue, info.agent, window.ID); err != nil {
+		if err := r.Record.StartRun(info.start(window.ID)); err != nil {
 			tmux.Kill(window.ID)
 			return protocol.Response{}, err
 		}
@@ -328,6 +342,8 @@ func childEnv(runDir, socket, agentName string, issue int64) map[string]string {
 		EnvExitFile: filepath.Join(runDir, session.ExitFileName),
 		EnvSocket:   socket,
 		EnvAgent:    agentName,
+		// The run dir is named by the run id; a resumed run keeps its own.
+		EnvRun: filepath.Base(runDir),
 	}
 	if issue != 0 {
 		env[EnvIssue] = strconv.FormatInt(issue, 10)

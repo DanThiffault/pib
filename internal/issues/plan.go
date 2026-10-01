@@ -32,6 +32,10 @@ type Plan struct {
 	Acceptance []string  `json:"acceptance,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 	PlannerRun string    `json:"plannerRun,omitempty"`
+	// ArchivedAt is when the plan was archived, zero while it is live.
+	// Archived is the one plan state that is stored rather than derived:
+	// the user puts a plan there by hand.
+	ArchivedAt time.Time `json:"archivedAt,omitzero"`
 }
 
 // NewPlan describes a plan to create.
@@ -44,7 +48,7 @@ type NewPlan struct {
 }
 
 // planColumns is the select list every plan scan expects.
-const planColumns = `id, slug, title, path, acceptance, created_at, planner_run`
+const planColumns = `id, slug, title, path, acceptance, created_at, planner_run, archived_at`
 
 // CreatePlan records a new plan and writes its markdown file.
 func (s *Store) CreatePlan(n NewPlan) (Plan, error) {
@@ -181,6 +185,32 @@ func (s *Store) Plan(slug string) (Plan, error) {
 	return scanPlan(s.db.QueryRow(`SELECT `+planColumns+` FROM plans WHERE id = ?`, id))
 }
 
+// ArchivePlan shelves a plan: it stops showing up in listings unless asked
+// for. Nothing about the plan is deleted, so unarchiving brings it back
+// exactly as it was.
+func (s *Store) ArchivePlan(slug string) error {
+	return s.setArchived(slug, format(now()))
+}
+
+// UnarchivePlan returns an archived plan to the live listings.
+func (s *Store) UnarchivePlan(slug string) error {
+	return s.setArchived(slug, nil)
+}
+
+// setArchived writes the one stored plan state and says so. Archiving what
+// is already archived just moves the timestamp.
+func (s *Store) setArchived(slug string, at any) error {
+	res, err := s.db.Exec(`UPDATE plans SET archived_at = ? WHERE slug = ?`, at, slug)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return fmt.Errorf("plan %q: %w", slug, ErrNotFound)
+	}
+	s.publish(Event{Kind: EventPlan, Plan: slug})
+	return nil
+}
+
 // PlanCounts holds aggregated issue counts for a plan.
 type PlanCounts struct {
 	Total  int
@@ -279,13 +309,15 @@ func scanPlan(row scanner) (Plan, error) {
 		acceptance sql.NullString
 		created    string
 		run        sql.NullString
+		archived   sql.NullString
 	)
-	if err := row.Scan(&plan.ID, &plan.Slug, &plan.Title, &path, &acceptance, &created, &run); err != nil {
+	if err := row.Scan(&plan.ID, &plan.Slug, &plan.Title, &path, &acceptance, &created, &run, &archived); err != nil {
 		return Plan{}, err
 	}
 	plan.Path = path.String
 	plan.CreatedAt = parseTime(created)
 	plan.PlannerRun = run.String
+	plan.ArchivedAt = parseTime(archived.String)
 
 	if acceptance.Valid && acceptance.String != "" {
 		if err := json.Unmarshal([]byte(acceptance.String), &plan.Acceptance); err != nil {

@@ -467,7 +467,7 @@ func (f *fakeSpawner) Run(_ context.Context, req protocol.Request) (protocol.Res
 			id = req.Session
 			agent, _ = f.runs.RunAgent(id)
 		}
-		if err := f.runs.StartRun(id, req.Issue, agent, "@3"); err != nil {
+		if err := f.runs.StartRun(issues.RunStart{ID: id, Issue: req.Issue, Agent: agent, Window: "@3"}); err != nil {
 			f.signal(err)
 			return protocol.Response{}, err
 		}
@@ -524,7 +524,7 @@ func TestRetryStartsAFreshRun(t *testing.T) {
 	number := firstTask(t, h)
 
 	// Something went wrong last time.
-	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+	if err := h.Store.StartRun(issues.RunStart{ID: "run-1", Issue: number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Store.FinishRun("run-1", "error"); err != nil {
@@ -629,7 +629,7 @@ func TestRetryRefusesAnIssueThatIsAlreadyRunning(t *testing.T) {
 	h.Spawn = spawn
 	number := firstTask(t, h)
 
-	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+	if err := h.Store.StartRun(issues.RunStart{ID: "run-1", Issue: number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.Run(context.Background(), protocol.Request{
@@ -668,7 +668,7 @@ func TestAnswerResumesTheRunThatAsked(t *testing.T) {
 	h.Spawn = spawn
 	number := firstTask(t, h)
 
-	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+	if err := h.Store.StartRun(issues.RunStart{ID: "run-1", Issue: number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Store.FinishRun("run-1", "needs_input"); err != nil {
@@ -711,7 +711,7 @@ func TestAFailedResumeIsReported(t *testing.T) {
 	h := handler(t)
 	number := firstTask(t, h)
 
-	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+	if err := h.Store.StartRun(issues.RunStart{ID: "run-1", Issue: number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Store.FinishRun("run-1", "needs_input"); err != nil {
@@ -744,7 +744,7 @@ func TestAnswerNeedsARunWaitingAndSomethingToSay(t *testing.T) {
 	h.Spawn = started(h)
 	number := firstTask(t, h)
 
-	if err := h.Store.StartRun("run-1", number, "coder", "@3"); err != nil {
+	if err := h.Store.StartRun(issues.RunStart{ID: "run-1", Issue: number, Agent: "coder", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Store.FinishRun("run-1", "done"); err != nil {

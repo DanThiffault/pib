@@ -147,6 +147,20 @@ func (a App) planApply(args []string) error {
 		return fmt.Errorf("%s is not valid json", positional[0])
 	}
 
+	// A planner applying the plan it just wrote names its run: the id it
+	// was spawned with rides in on the document, so the store can trace the
+	// run to the plan and its planning placeholder disappears.
+	if run := os.Getenv(runner.EnvRun); run != "" {
+		doc, err := issues.ParseDocument(document)
+		if err != nil {
+			return err
+		}
+		doc.Plan.PlannerRun = run
+		if document, err = json.Marshal(doc); err != nil {
+			return err
+		}
+	}
+
 	resp, err := a.send(protocol.Request{Op: protocol.OpPlanApply, Payload: document})
 	if err != nil {
 		return err
@@ -325,6 +339,9 @@ func (a App) planReview(args []string) error {
 				"`pib plan view %s` and `pib issue list --plan %s`, then check every "+
 				"issue against the codebase it will change.",
 			slug, slug, slug),
+		// No issue claims this run; the plan and the pass trace it.
+		Plan: slug,
+		Pass: issues.PassOpening,
 	})
 	if err != nil {
 		return err

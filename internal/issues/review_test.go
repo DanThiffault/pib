@@ -199,7 +199,7 @@ func TestReviewsDoNotRedefineReadiness(t *testing.T) {
 func TestOpenReviewRecordsItsRun(t *testing.T) {
 	store := planned(t)
 	issue := task(t, store, "Alpha")
-	if err := store.StartRun("run-1", issue.Number, "code-reviewer", "@3"); err != nil {
+	if err := store.StartRun(RunStart{ID: "run-1", Issue: issue.Number, Agent: "code-reviewer", Window: "@3"}); err != nil {
 		t.Fatal(err)
 	}
 
