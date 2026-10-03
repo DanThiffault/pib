@@ -1399,24 +1399,26 @@ func TestSettingsOpensAPlaceholderAndEscReturns(t *testing.T) {
 
 // ── The registry, the bar, the line and help ─────────────────────────────
 
-// The bar shows the wired verbs and nothing else: the verbs that are not
-// wired yet are not registered, so they cannot show.
-func TestTheBarShowsOnlyWiredVerbs(t *testing.T) {
+// The bar shows exactly the wired verbs whose predicates admit the row: a
+// running issue gets followup, kill and window, and none of the verbs for
+// rows it is not — no retry without attention, no pr without a pull
+// request, none of the plan verbs.
+func TestTheBarShowsOnlyVerbsThatApply(t *testing.T) {
 	m := issuesModel(t, []issues.Status{{
 		Issue:      issues.Issue{Number: 1, Title: "Working", State: issues.StateOpen},
 		InProgress: true,
 		Run:        "run-1",
 	}})
 
-	bar := m.commandBarView(120)
-	for _, want := range []string{"n New", "ctrl+k Kill", "w Window", ", Settings", "Z Closed", "! Needs you", ": Cmd", "? Help"} {
+	bar := m.commandBarView(200)
+	for _, want := range []string{"n New", "f Follow up", "ctrl+k Kill", "w Window", "c Comment", "e Edit", "x Close", ", Settings", "Z Closed", "! Needs you", ": Cmd", "? Help"} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("bar missing %q: %q", want, bar)
 		}
 	}
-	for _, unwanted := range []string{"r Retry", "a Answer", "f Follow up", "c Comment", "e Edit", "x Close", "X Reopen", "p PR", "b Blockers", "z Archive", "v Review"} {
+	for _, unwanted := range []string{"s Start", "v Review", "r Retry", "a Answer", "X Reopen", "p PR", "b Blockers", "z Archive"} {
 		if strings.Contains(bar, unwanted) {
-			t.Errorf("bar shows %q, which is not wired: %q", unwanted, bar)
+			t.Errorf("bar shows %q, which does nothing to a running issue: %q", unwanted, bar)
 		}
 	}
 }
@@ -1498,8 +1500,9 @@ func TestTheLineRendersOnTheBarRow(t *testing.T) {
 }
 
 // Help is generated from the same registry as the bar, so it cannot list a
-// key that does nothing: a launchable row gets start, a running row gets
-// kill and window, and the unwired verbs appear for neither.
+// key that does nothing: a launchable row gets start, comment, edit and
+// close, and the verbs for other rows — retry, review, archive — appear for
+// neither.
 func TestHelpListsMotionAndTheWiredCommands(t *testing.T) {
 	m := issuesModel(t, []issues.Status{startable(1)})
 
@@ -1508,14 +1511,14 @@ func TestHelpListsMotionAndTheWiredCommands(t *testing.T) {
 		t.Fatal("? did not open help")
 	}
 	view := m.View()
-	for _, want := range []string{"Motion", "drill in", "Commands", "new", "start", "settings"} {
+	for _, want := range []string{"Motion", "drill in", "Commands", "new", "start", "comment", "edit", "close", "settings"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("help missing %q:\n%s", want, view)
 		}
 	}
-	for _, unwanted := range []string{"retry", "comment", "archive"} {
+	for _, unwanted := range []string{"retry", "review", "archive", "update"} {
 		if strings.Contains(view, unwanted) {
-			t.Errorf("help lists %q, which is not wired:\n%s", unwanted, view)
+			t.Errorf("help lists %q, which does not apply to a launchable issue:\n%s", unwanted, view)
 		}
 	}
 
