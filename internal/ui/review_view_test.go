@@ -265,7 +265,7 @@ func TestLoadPlanIssuesCarriesTheReviewsWithTheIssues(t *testing.T) {
 	store := testStore(t)
 	issue := storeWithReviewedIssue(t, store)
 
-	msg := loadPlanIssues(store, "orders", config.Config{})()
+	msg := loadPlanIssues(store, "orders", config.Config{}, 0)()
 
 	loaded, ok := msg.(planIssuesLoadedMsg)
 	if !ok {
@@ -422,7 +422,7 @@ func TestTheDetailPaneFillsFromWhatTheInterfaceItselfCollected(t *testing.T) {
 	m.triage = collector
 
 	collectOutOfScope(store, collector, "orders")()
-	msg := loadPlanIssues(store, "orders", m.cfg)()
+	msg := loadPlanIssues(store, "orders", m.cfg, 0)()
 	loaded, ok := msg.(planIssuesLoadedMsg)
 	if !ok {
 		t.Fatalf("loadPlanIssues returned %T", msg)

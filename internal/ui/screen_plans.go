@@ -21,33 +21,41 @@ import (
 )
 
 // plansLoadedMsg carries the plans table as the store derives it, planning
-// rows first.
+// rows first. seq is the load's number, so an answer older than the newest
+// load started is dropped.
 type plansLoadedMsg struct {
+	seq   int
 	plans []issues.PlanStatus
 	err   error
 }
 
-func loadPlans(store *issues.Store, includeArchived bool, cfg config.Config) tea.Cmd {
+func loadPlans(store *issues.Store, includeArchived bool, cfg config.Config, seq int) tea.Cmd {
 	return func() tea.Msg {
 		if store == nil {
-			return plansLoadedMsg{err: errors.New("no store")}
+			return plansLoadedMsg{seq: seq, err: errors.New("no store")}
 		}
 		plans, err := store.PlanStatuses(includeArchived, issues.PlanStatusOptions{
 			ReviewCycles: cfg.ReviewCycles(),
 			PlanReview:   cfg.PlanReview(),
 		})
-		return plansLoadedMsg{plans: plans, err: err}
+		return plansLoadedMsg{seq: seq, plans: plans, err: err}
 	}
 }
 
-// refreshPlans reloads the plans table without raising the loading flag: a
-// store event means the rows are stale, and a spinner over rows that are
-// mostly right would flash every time an agent breathes.
-func (m Model) refreshPlans() tea.Cmd {
-	return loadPlans(m.store, m.showClosed, m.cfg)
+// refreshPlans numbers and starts a plans reload, without raising the
+// loading flag: a store event means the rows are stale, and a spinner over
+// rows that are mostly right would flash every time an agent breathes.
+func (m Model) refreshPlans() (Model, tea.Cmd) {
+	m.plansSeq++
+	return m, loadPlans(m.store, m.showClosed, m.cfg, m.plansSeq)
 }
 
 func (m Model) onPlansLoaded(msg plansLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.plansSeq {
+		// An older load landed after a newer one started. The newer answer
+		// is coming; applying this one would put stale rows back.
+		return m, nil
+	}
 	m.plansLoading = false
 	if msg.err != nil {
 		m.plansErr = msg.err
@@ -193,7 +201,8 @@ func (m Model) drillIntoPlan() (Model, tea.Cmd, bool) {
 	m.planIssuesErr = nil
 	m.planIssuesLoading = true
 	m.notice = ""
-	return m, loadPlanIssues(m.store, plan.Slug, m.cfg), true
+	m.issuesSeq++
+	return m, loadPlanIssues(m.store, plan.Slug, m.cfg, m.issuesSeq), true
 }
 
 // planContentLoadedMsg carries a plan's markdown file for the detail pane.
@@ -477,12 +486,16 @@ func (m Model) handleReadyLoaded(msg readyLoadedMsg) (tea.Model, tea.Cmd) {
 	if m.inFlight == nil {
 		m.inFlight = map[int64]bool{}
 	}
+	// Every issue marked here sorts out of the needs-you block; keep the
+	// cursor on the row it was on.
+	key := m.issueKey()
 	sem := make(chan struct{}, runner.MaxConcurrentAgents)
 	var cmds []tea.Cmd
 	for _, issue := range toStart {
 		m.inFlight[issue.Number] = true
 		cmds = append(cmds, spawnAgentCmd(m.agents, issue, sem))
 	}
+	m.restoreIssueCursor(key)
 	m.notice = fmt.Sprintf("Starting %d agents on plan %s", len(toStart), msg.plan)
 	return m, tea.Batch(cmds...)
 }

@@ -521,7 +521,7 @@ func TestTheIssueUnderTheCursorIsReadWhenThePlanLoads(t *testing.T) {
 	m := plansModel(t, []issues.Plan{{Slug: "orders", Title: "Orders"}})
 	m.store, m.screen, m.drilled = store, screenIssues, "orders"
 
-	msg := loadPlanIssues(store, "orders", m.cfg)()
+	msg := loadPlanIssues(store, "orders", m.cfg, 0)()
 	next, cmd := m.Update(msg)
 	m = next.(Model)
 	if cmd == nil {

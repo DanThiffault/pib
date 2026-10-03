@@ -19,51 +19,55 @@ import (
 // planIssuesLoadedMsg carries one plan's issues and every review cycle in
 // the plan, keyed by issue. The reviews are loaded with the issues rather
 // than asked for when one is selected, so rendering a detail pane never
-// reaches the store.
+// reaches the store. seq is the load's number, so an answer older than the
+// newest load started is dropped.
 type planIssuesLoadedMsg struct {
+	seq      int
 	planSlug string
 	issues   []issues.Status
 	reviews  map[int64][]issues.Review
 	err      error
 }
 
-func loadPlanIssues(store *issues.Store, planSlug string, cfg config.Config) tea.Cmd {
+func loadPlanIssues(store *issues.Store, planSlug string, cfg config.Config, seq int) tea.Cmd {
 	return func() tea.Msg {
 		if store == nil {
-			return planIssuesLoadedMsg{planSlug: planSlug, err: errors.New("no store")}
+			return planIssuesLoadedMsg{seq: seq, planSlug: planSlug, err: errors.New("no store")}
 		}
 		list, err := store.Statuses(issues.Filter{Plan: planSlug}, issues.StatusOptions{
 			AgentFor:     cfg.AgentFor,
 			ReviewCycles: cfg.ReviewCycles(),
 		})
 		if err != nil {
-			return planIssuesLoadedMsg{planSlug: planSlug, err: err}
+			return planIssuesLoadedMsg{seq: seq, planSlug: planSlug, err: err}
 		}
 		// One query for the whole plan's review history. Asking per issue
 		// would be a lookup behind every row of the table.
 		reviews, err := store.PlanReviews(planSlug)
 		if err != nil {
-			return planIssuesLoadedMsg{planSlug: planSlug, err: err}
+			return planIssuesLoadedMsg{seq: seq, planSlug: planSlug, err: err}
 		}
-		return planIssuesLoadedMsg{planSlug: planSlug, issues: list, reviews: reviews}
+		return planIssuesLoadedMsg{seq: seq, planSlug: planSlug, issues: list, reviews: reviews}
 	}
 }
 
-// refreshIssues reloads the issues on screen without raising the loading
-// flag: a silent refresh keeps the table on screen instead of flashing a
-// spinner over it.
-func (m Model) refreshIssues() tea.Cmd {
+// refreshIssues numbers and starts a reload of the issues on screen,
+// without raising the loading flag: a silent refresh keeps the table on
+// screen instead of flashing a spinner over it.
+func (m Model) refreshIssues() (Model, tea.Cmd) {
+	m.issuesSeq++
 	if m.drilled == "" {
-		return nil
+		return m, nil
 	}
-	return loadPlanIssues(m.store, m.drilled, m.cfg)
+	return m, loadPlanIssues(m.store, m.drilled, m.cfg, m.issuesSeq)
 }
 
 func (m Model) onPlanIssuesLoaded(msg planIssuesLoadedMsg) (tea.Model, tea.Cmd) {
 	// A response for a plan the user has already left is stale. Leaving a
 	// plan always starts a fresh load, so there is a live response still
-	// coming for what is on screen.
-	if msg.planSlug != m.drilled {
+	// coming for what is on screen. An older response is dropped the same
+	// way: the newer answer is coming.
+	if msg.planSlug != m.drilled || msg.seq != m.issuesSeq {
 		return m, nil
 	}
 	m.planIssuesLoading = false
@@ -437,7 +441,12 @@ func (m Model) handleStartIssue(issue issues.Status) (tea.Model, tea.Cmd) {
 	if m.inFlight == nil {
 		m.inFlight = map[int64]bool{}
 	}
+	// An issue that is starting is no longer launchable, so it sorts out of
+	// the needs-you block. The cursor has to follow it there, or the next
+	// key lands on whatever row the sort slid under it.
+	key := m.issueKey()
 	m.inFlight[issue.Number] = true
+	m.restoreIssueCursor(key)
 	m.notice = fmt.Sprintf("Starting %s on #%d — %s", issue.Agent, issue.Number, issue.Title)
 
 	cmds := []tea.Cmd{spawnAgentCmd(m.agents, issue)}
