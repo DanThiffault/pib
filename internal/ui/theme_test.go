@@ -7,17 +7,8 @@ import (
 	"pib/internal/ui/theme"
 )
 
-// planView renders the new-plan screen at a given terminal size.
-func planView(t *testing.T, width, height int) string {
-	t.Helper()
-	m := ready(t)
-	m.width, m.height = width, height
-	return m.View()
-}
-
 // The art renders on the startup screen when there is room, and nowhere
-// else — especially not in the new-plan lower pane, where eight lines is
-// more space than the pane has.
+// else.
 func TestPiArtAppearsOnlyWhenThereIsRoomForIt(t *testing.T) {
 	art := strings.TrimSpace(strings.Split(strings.TrimSpace(piArt), "\n")[0])
 
@@ -40,28 +31,11 @@ func TestPiArtAppearsOnlyWhenThereIsRoomForIt(t *testing.T) {
 		t.Error("art rendered on a narrow terminal, where it clips")
 	}
 
-	// The new-plan view never contains the art.
+	// The plans screen never contains the art.
 	m = ready(t)
 	m.width, m.height = 120, 60
-	if view := m.newPlanView(); strings.Contains(view, art) {
-		t.Error("art rendered in the new-plan lower pane")
-	}
-}
-
-// The art is decoration; losing it must never cost the prompt.
-func TestPlanTabKeepsItsPromptAtEverySize(t *testing.T) {
-	for _, size := range []struct{ w, h int }{
-		{120, 60}, // room for everything
-		{120, 20}, // wide but short: no art
-		{40, 60},  // narrow: no art
-		{40, 20},  // neither
-	} {
-		view := planView(t, size.w, size.h)
-		for _, want := range []string{"What do you want to plan?", "[ENTER]"} {
-			if !strings.Contains(view, want) {
-				t.Errorf("%dx%d is missing %q:\n%s", size.w, size.h, want, view)
-			}
-		}
+	if view := m.View(); strings.Contains(view, art) {
+		t.Error("art rendered on the plans screen")
 	}
 }
 

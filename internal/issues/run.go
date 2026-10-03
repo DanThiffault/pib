@@ -149,6 +149,36 @@ func (s *Store) runEnded(id string) string {
 	return format(ended)
 }
 
+// Run looks a run up by id. It is how a screen that knows a run and
+// nothing else — a planning row's planner has no issue — finds the window
+// the run is in.
+func (s *Store) Run(id string) (Run, error) {
+	var (
+		run     Run
+		number  sql.NullInt64
+		window  sql.NullString
+		started string
+		ended   sql.NullString
+		status  sql.NullString
+	)
+	err := s.db.QueryRow(`
+		SELECT id, issue, agent, tmux_window, started_at, ended_at, status
+		FROM runs WHERE id = ?`, id).
+		Scan(&run.ID, &number, &run.Agent, &window, &started, &ended, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Run{}, fmt.Errorf("run %q: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return Run{}, err
+	}
+	run.Issue = number.Int64
+	run.Window = window.String
+	run.StartedAt = parseTime(started)
+	run.EndedAt = parseTime(ended.String)
+	run.Status = status.String
+	return run, nil
+}
+
 // RunAgent names the agent a run belongs to. A run pib has never heard of
 // is not an error — the caller falls back to what it knows.
 func (s *Store) RunAgent(id string) (string, error) {

@@ -105,6 +105,15 @@ func Kill(id string) error {
 	return err
 }
 
+// Select makes a window the current one, so the user is looking at it.
+func Select(id string) error {
+	if !Alive(id) {
+		return fmt.Errorf("tmux: no window %s", id)
+	}
+	_, err := run("select-window", "-t", id)
+	return err
+}
+
 func run(args ...string) (string, error) {
 	out, err := exec.Command("tmux", args...).Output()
 	if err != nil {
