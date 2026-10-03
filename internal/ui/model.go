@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -14,48 +12,31 @@ import (
 	"pib/internal/issues"
 	"pib/internal/server"
 	"pib/internal/triage"
+	"pib/internal/ui/command"
 	"pib/internal/ui/theme"
 	"pib/internal/workspace"
 )
 
 var (
-	titleStyle        = theme.Default.Title
-	itemStyle         = theme.Default.Item
-	helpStyle         = theme.Default.Help
-	promptStyle       = theme.Default.Prompt
-	errorStyle        = theme.Default.Error
-	noticeStyle       = theme.Default.Notice
-	loadingStyle      = theme.Default.Loading
-	activeTabStyle    = theme.Default.TabActive
-	inactiveTabStyle  = theme.Default.TabInactive
-	tabBarStyle       = theme.Default.TabBar
-	selectedItemStyle = theme.Default.Selected
-	dividerStyle      = theme.Default.Divider
+	titleStyle   = theme.Default.Title
+	itemStyle    = theme.Default.Item
+	helpStyle    = theme.Default.Help
+	promptStyle  = theme.Default.Prompt
+	errorStyle   = theme.Default.Error
+	loadingStyle = theme.Default.Loading
+	dividerStyle = theme.Default.Divider
 )
 
-var (
-	upKeys         = key.NewBinding(key.WithKeys("up"))
-	downKeys       = key.NewBinding(key.WithKeys("down"))
-	selectKeys     = key.NewBinding(key.WithKeys("right", "enter"))
-	backKeys       = key.NewBinding(key.WithKeys("left", "esc", "b"))
-	promptBackKeys = key.NewBinding(key.WithKeys("left", "esc"))
-	startKeys      = key.NewBinding(key.WithKeys("s"))
-	newPlanKeys    = key.NewBinding(key.WithKeys("n"))
-	refreshKeys    = key.NewBinding(key.WithKeys("r"))
-	// The full-screen issue view is taller than the terminal often enough to
-	// need its own paging: a comment is a paragraph, and a plan review is
-	// several of them.
-	pageUpKeys   = key.NewBinding(key.WithKeys("pgup", "ctrl+u"))
-	pageDownKeys = key.NewBinding(key.WithKeys("pgdown", "ctrl+d"))
-)
-
+// screen is where the user is in the drill-down: a table of plans, the
+// plan's table of issues, one issue full-screen, or the settings screen.
+// enter replaces a table with its child; esc returns, cursor kept.
 type screen int
 
 const (
-	screenPlans      screen = iota // plans list + DAG of the selected plan
-	screenNewPlan                  // plans list + prompt
-	screenPlanDetail               // issue list + detail of the selected issue
-	screenIssue                    // breadcrumb + full-width issue detail
+	screenPlans screen = iota
+	screenIssues
+	screenIssue
+	screenSettings
 )
 
 type Model struct {
@@ -67,7 +48,6 @@ type Model struct {
 	err       error
 
 	planner   agent.Definition
-	input     textarea.Model
 	notice    string
 	server    *server.Server
 	store     *issues.Store
@@ -78,56 +58,79 @@ type Model struct {
 	installed []string
 	outdated  []string
 
-	screen              screen
-	plans               []issues.Plan
-	plansErr            error
-	plansLoading        bool
-	planCursor          int
-	issueCursor         int
-	planIssues          []issues.Status
-	planIssuesLoading   bool
-	planIssuesErr       error
-	planIssuesLoadedFor string
-	// planReviews is every review cycle in the plan on screen, keyed by
-	// issue. It is loaded with the issues rather than asked for when one is
-	// selected, so rendering a detail pane never reaches the store.
-	planReviews map[int64][]issues.Review
+	screen screen
+	// settingsFrom is where the settings placeholder was opened from; esc
+	// returns there. Settings is not part of the drill-down stack.
+	settingsFrom screen
+
+	// reg is the command registry of ADR-006: every key that is not motion
+	// lives here, and the bar, the help and the ":" line all render from
+	// it. line is the ":" prompt itself.
+	reg  *command.Registry
+	line *command.Line
+	help bool
+
+	// plans is the plans table as the store derives it, planning rows
+	// included. The visible order is computed from it: rows needing the
+	// user first, the rest in the store's own order.
+	plans        []issues.PlanStatus
+	plansErr     error
+	plansLoading bool
+	planCursor   int
+	// planProse is each plan's markdown file — the goal and the acceptance
+	// the detail pane shows — read when the cursor landed on the plan. A
+	// render may not reach the store, so the pane reads from here.
+	planProse map[string]issueProse
+
+	// drilled is the plan whose issues are on screen. planIssues is that
+	// plan's issues; planReviews its review cycles, loaded with the issues
+	// rather than asked for at render.
+	drilled           string
+	planIssues        []issues.Status
+	planReviews       map[int64][]issues.Review
+	planIssuesErr     error
+	planIssuesLoading bool
+	issueCursor       int
 	// issueProse is each issue's markdown file — the prose body and the
-	// comments under `<!-- pib:comments -->` — read when the cursor landed on
-	// that issue and held here. Nothing on issues.Status carries it, and a
-	// render may not reach the store, so this is the only place the
-	// full-screen view can find it. Keyed by issue number, which is unique
-	// across the workspace, so an entry cannot belong to the wrong issue.
-	//
-	// A comment added while pib is open is not seen until it is reopened: the
-	// cache is filled on selection and a tick-driven re-read would be a read
-	// behind no selection, which is the thing this exists to avoid.
+	// comments under `<!-- pib:comments -->` — read when the cursor landed
+	// on that issue and held here, keyed by issue number, which is unique
+	// across the workspace. A render may not reach the store; this is the
+	// only place a pane can find prose.
 	issueProse map[int64]issueProse
-	// issueScroll is how many rows the full-screen issue view has scrolled
-	// down its content. It belongs to the issue on screen, so it resets when
-	// the selected issue changes rather than carrying onto the next one.
+	// issueScroll is how far the full-screen issue view has scrolled. It
+	// belongs to the issue on screen, so it resets when the issue changes.
 	issueScroll int
+
+	// The filters of ADR-006 §1. showClosed (Z) shows closed issues and
+	// archived plans; needsYou (!) keeps only rows that are launchable or
+	// need attention.
+	showClosed bool
+	needsYou   bool
+
 	// triage holds what reconciliation has read off GitHub about
 	// out-of-scope findings, and is the only place the interface may learn
 	// it: a render cannot ask.
 	triage *triage.Collector
 	cfg    config.Config
 
-	help bool
-
 	// inFlight holds the issues pib has an outstanding spawn for. A run is
 	// only recorded once the agent's window exists, so until then the store
 	// still reports the issue ready — this is what pib knows and the store
 	// does not yet.
 	inFlight map[int64]bool
-	// polling is true while a refresh tick is in flight, so that starting a
-	// second agent joins the existing poll instead of opening a second one.
-	polling bool
+
+	// events is the store's change feed, subscribed once the store opens;
+	// every delivery reloads the affected rows and re-arms the wait.
+	events      <-chan issues.Event
+	unsubscribe func()
 }
 
-// Close releases the socket and the issue store. It is safe to call when
-// neither was opened.
+// Close releases the socket, the store subscription and the issue store. It
+// is safe to call when none of them were opened.
 func (m Model) Close() error {
+	if m.unsubscribe != nil {
+		m.unsubscribe()
+	}
 	var err error
 	if m.server != nil {
 		err = m.server.Close()
@@ -141,16 +144,12 @@ func (m Model) Close() error {
 }
 
 func NewModel() Model {
-	ta := textarea.New()
-	ta.Placeholder = "Describe the project you want to plan…"
-	ta.ShowLineNumbers = false
-	ta.CharLimit = 0
-	ta.SetHeight(6)
-	ta.SetWidth(72)
-	// Enter submits the description, so newlines move to alt+enter.
-	ta.KeyMap.InsertNewline = newlineKeys
-
-	return Model{input: ta}
+	reg := wiredRegistry()
+	return Model{
+		screen: screenPlans,
+		reg:    reg,
+		line:   command.NewLine(reg, nil),
+	}
 }
 
 // Err reports a startup failure so the caller can exit non-zero.
@@ -166,15 +165,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if sizeMsg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = sizeMsg.Width
 		m.height = sizeMsg.Height
-		m.input.SetWidth(promptWidth(m.width))
-
-		_, bottomH := paneHeights(m.contentHeight())
-		if h := bottomH - 5; h > 3 {
-			m.input.SetHeight(h)
-		} else {
-			m.input.SetHeight(3)
-		}
-
 		return m, nil
 	}
 
@@ -182,70 +172,209 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled {
 		return m, cmd
 	}
-
 	if m.phase != phasePrompt {
 		return m, nil
 	}
 
-	if _, ok := msg.(backgroundTickMsg); ok {
-		var cmds []tea.Cmd
-		cmds = append(cmds, backgroundTick())
-		if (m.screen == screenPlans || m.screen == screenPlanDetail || m.screen == screenIssue) && m.currentPlanSlug() != "" {
-			cmds = append(cmds, m.refreshIssues())
+	// The ":" line owns the keyboard while it is open; everything else —
+	// store events, loads — is handled below as usual.
+	if m.line.Active() {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			_, cmd := m.line.Update(keyMsg)
+			return m, cmd
 		}
-		return m, tea.Batch(cmds...)
 	}
 
+	switch msg := msg.(type) {
+	case storeEventMsg:
+		return m.onStoreEvent(msg.event)
+	case eventsClosedMsg:
+		m.events = nil
+		return m, nil
+	case plansLoadedMsg:
+		return m.onPlansLoaded(msg)
+	case planIssuesLoadedMsg:
+		return m.onPlanIssuesLoaded(msg)
+	case planContentLoadedMsg:
+		if m.planProse == nil {
+			m.planProse = map[string]issueProse{}
+		}
+		m.planProse[msg.slug] = issueProse{file: msg.file, err: msg.err}
+		return m, nil
+	case issueContentLoadedMsg:
+		// The cache is keyed by issue number rather than by the selection, so
+		// a response that arrives after the cursor has moved still fills the
+		// entry the next visit to that issue will look for.
+		if m.issueProse == nil {
+			m.issueProse = map[int64]issueProse{}
+		}
+		m.issueProse[msg.number] = issueProse{file: msg.file, err: msg.err}
+		return m, nil
+
 	// The out-of-scope scan is armed once, at startup, and re-armed only
-	// from its own message. Arming a slow tick from the fast one would
-	// create a fresh timer on every one of its three-second deliveries, and
-	// nothing ever cancels the abandoned ones: the number of scans would
-	// grow with the square of how long pib has been open.
-	if _, ok := msg.(outOfScopeTickMsg); ok {
-		return m, tea.Batch(outOfScopeTick(), collectOutOfScope(m.store, m.triage, m.currentPlanSlug()))
+	// from its own message. It reads GitHub, and no store event covers it.
+	case outOfScopeTickMsg:
+		return m, tea.Batch(outOfScopeTick(), collectOutOfScope(m.store, m.triage, m.triagePlan()))
+	case outOfScopeCollectedMsg:
+		return m, nil
+
+	// Semantic messages from the registry's handlers.
+	case newPlanMsg:
+		return m.handleNewPlan()
+	case plannerFinishedMsg:
+		if msg.err != nil {
+			m.notice = "planner: " + msg.err.Error()
+		} else {
+			m.notice = "planner session ended"
+		}
+		if m.planner.AutoExit {
+			return m, tea.Quit
+		}
+		return m, nil
+	case startIssueMsg:
+		return m.handleStartIssue(msg.issue)
+	case startAllMsg:
+		return m, loadReadyIssues(m.store, msg.plan, m.cfg)
+	case readyLoadedMsg:
+		return m.handleReadyLoaded(msg)
+	case agentFinishedMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("%s #%d stopped: %v", msg.issue.Agent, msg.issue.Number, msg.err)
+		} else {
+			m.notice = fmt.Sprintf("%s #%d finished: %s", msg.issue.Agent, msg.issue.Number, msg.status)
+		}
+		delete(m.inFlight, msg.issue.Number)
+		return m, m.refreshIssues()
+	case killMsg:
+		m.notice = ""
+		return m, killRunCmd(m.store, msg.run, msg.issue)
+	case killResultMsg:
+		if msg.err != nil {
+			m.notice = "could not kill the run: " + msg.err.Error()
+		} else {
+			m.notice = "killed run " + msg.run
+		}
+		return m, nil
+	case windowMsg:
+		return m, selectRunWindowCmd(m.store, msg.run, msg.issue)
+	case windowResultMsg:
+		if msg.err != nil {
+			m.notice = "could not reach the window: " + msg.err.Error()
+		}
+		return m, nil
+	case settingsMsg:
+		// Opening settings over settings must not lose the way back.
+		if m.screen != screenSettings {
+			m.settingsFrom = m.screen
+			m.screen = screenSettings
+		}
+		m.notice = ""
+		return m, nil
+	case toggleClosedMsg:
+		m.showClosed = !m.showClosed
+		// Archived plans are a load parameter, so the plans table reloads;
+		// the issues table filters what it already holds.
+		if m.screen == screenPlans {
+			return m, m.refreshPlans()
+		}
+		m.clampCursors()
+		return m, nil
+	case toggleNeedsYouMsg:
+		m.needsYou = !m.needsYou
+		m.clampCursors()
+		return m, nil
+
+	// The ":" line's reports.
+	case command.UnknownVerbMsg:
+		m.notice = "no such command: " + msg.Input
+		return m, nil
+	case command.NoSelectionMsg:
+		m.notice = "nothing here for " + msg.Verb
+		return m, nil
+	case command.InactiveMsg, command.Ran:
+		m.notice = ""
+		return m, nil
 	}
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		if m.help {
-			m.help = false
-			if keyMsg.String() == "?" || keyMsg.Type == tea.KeyEsc {
-				return m, nil
-			}
-			// Fall through to normal handling for any other key.
-		}
+		return m.key(keyMsg)
+	}
+	return m, nil
+}
 
-		if keyMsg.String() == "?" && !m.input.Focused() {
-			m.help = !m.help
+// key handles a key press once startup is done: help, the global keys, then
+// motion, then whatever the registry bound. Nothing else may claim a key.
+func (m Model) key(keyMsg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := keyMsg.String()
+
+	if m.help {
+		m.help = false
+		if key == "?" || key == "esc" {
 			return m, nil
 		}
+		// Fall through to normal handling for any other key.
+	}
 
-		if keyMsg.String() == "q" && !m.input.Focused() {
-			return m, tea.Quit
-		}
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "?":
+		m.help = !m.help
+		return m, nil
+	case ":":
+		m.line.SetRow(m.currentRow())
+		m.line.Open()
+		return m, nil
+	}
 
-		// esc is back on every screen but the top level, where it quits;
-		// ctrl+c quits from anywhere.
-		quitting := key.Matches(keyMsg, cancelKeys)
-		if m.screen != screenPlans && key.Matches(keyMsg, backKeys) {
-			quitting = false
+	if next, cmd, ok := m.motion(key); ok {
+		return next, cmd
+	}
+
+	if cmd, ok := m.reg.Press(m.currentRow(), key); ok {
+		m.notice = ""
+		return m, cmd
+	}
+	return m, nil
+}
+
+// motion is the reserved navigation of ADR-006 §1. These keys are never
+// commands: they move the cursor, drill in and back out, page, and quit.
+func (m Model) motion(key string) (Model, tea.Cmd, bool) {
+	back := func() (Model, tea.Cmd, bool) {
+		switch m.screen {
+		case screenIssue:
+			m.screen = screenIssues
+			m.notice = ""
+		case screenIssues:
+			m.screen = screenPlans
+			m.notice = ""
+		case screenSettings:
+			m.screen = m.settingsFrom
+			m.notice = ""
 		}
-		if quitting {
-			return m, tea.Quit
+		return m, nil, true
+	}
+
+	switch key {
+	case "esc", "h", "left":
+		return back()
+	case "q":
+		if m.screen == screenPlans {
+			return m, tea.Quit, true
 		}
+		return back()
 	}
 
 	switch m.screen {
-	case screenNewPlan:
-		return m.updateScreenNewPlan(msg)
 	case screenPlans:
-		return m.updateScreenPlans(msg)
-	case screenPlanDetail:
-		return m.updateScreenPlans(msg)
+		return m.planMotion(key)
+	case screenIssues:
+		return m.issueMotion(key)
 	case screenIssue:
-		return m.updateScreenPlans(msg)
-	default:
-		return m, nil
+		return m.scrollMotion(key)
 	}
+	return m, nil, false
 }
 
 func (m Model) View() string {
@@ -257,29 +386,26 @@ func (m Model) View() string {
 				view += strings.Repeat("\n", pad)
 			}
 		}
-		return m.ground(view + "\n" + m.actionBarView(m.width))
+		return m.ground(view + "\n" + m.startupBar(m.width))
 	}
 
 	var b strings.Builder
-	b.WriteString(m.statusLineView() + "\n")
-	if m.screen == screenPlanDetail || m.screen == screenIssue {
-		b.WriteString(m.breadcrumbView() + "\n")
-	}
+	b.WriteString(m.breadcrumbView() + "\n")
 	if m.help {
 		b.WriteString(m.helpView())
 	} else {
 		switch m.screen {
-		case screenNewPlan:
-			b.WriteString(m.newPlanView())
-		case screenPlans:
-			b.WriteString(m.plansView())
-		case screenPlanDetail:
-			b.WriteString(m.plansView())
+		case screenIssues:
+			b.WriteString(m.issuesView())
 		case screenIssue:
+			b.WriteString(m.issueScreenView())
+		case screenSettings:
+			b.WriteString(m.settingsView())
+		default:
 			b.WriteString(m.plansView())
 		}
 	}
-	b.WriteString("\n" + m.actionBarView(m.width))
+	b.WriteString("\n" + m.commandBarView(m.width))
 	return m.ground(b.String())
 }
 
@@ -296,34 +422,30 @@ func (m Model) ground(view string) string {
 	return theme.Default.Base.Width(m.width).Render(view)
 }
 
-func (m Model) statusLineView() string {
-	left := "pib"
-	if m.workspace.GitRoot != "" {
-		parts := strings.Split(m.workspace.GitRoot, "/")
-		name := parts[len(parts)-1]
-		if name != "" {
-			left += " · " + name
+// breadcrumbView is the top row: where in the drill-down the user is, with
+// what needs doing on the right, as ADR-006 §3 lays it out.
+func (m Model) breadcrumbView() string {
+	parts := []string{"pib"}
+	switch m.screen {
+	case screenIssues, screenIssue:
+		if m.drilled != "" {
+			parts = append(parts, m.drilled)
+		}
+	case screenSettings:
+		parts = append(parts, "settings")
+	}
+	if m.screen == screenIssue {
+		if issue, ok := m.selectedIssue(); ok {
+			parts = append(parts, fmt.Sprintf("#%d %s", issue.Number, issue.Title))
 		}
 	}
-	if m.workspace.Branch != "" {
-		left += " · " + m.workspace.Branch
-	}
+	left := strings.Join(parts, " › ")
 
-	var right string
-	if m.store != nil {
-		if n := m.store.LiveRunCount(); n > 0 {
-			right = fmt.Sprintf("%d run", n)
-			if n > 1 {
-				right += "s"
-			}
-		}
-	}
-
+	right := m.breadcrumbSummary()
 	width := m.width
 	if width < 1 {
 		width = 1
 	}
-
 	avail := width - lipgloss.Width(left)
 	if right != "" && avail > lipgloss.Width(right)+3 {
 		return left + strings.Repeat(" ", avail-lipgloss.Width(right)) + right
@@ -331,15 +453,108 @@ func (m Model) statusLineView() string {
 	return truncate(left, width)
 }
 
-func (m Model) breadcrumbView() string {
-	parts := []string{"Plans"}
-	if m.planCursor > 0 && m.planCursor <= len(m.plans) {
-		parts = append(parts, m.plans[m.planCursor-1].Slug)
+// breadcrumbSummary is the right-hand side of the breadcrumb: how much of
+// what is on screen needs the user, plus the filters that are on.
+func (m Model) breadcrumbSummary() string {
+	var ready, needs int
+	switch m.screen {
+	case screenPlans:
+		for _, p := range m.visiblePlans() {
+			ready += p.Ready
+			needs += p.NeedsAttention
+		}
+	case screenIssues, screenIssue:
+		for _, issue := range m.visibleIssues() {
+			if issue.Launchable {
+				ready++
+			}
+			if issue.NeedsAttention {
+				needs++
+			}
+		}
 	}
-	if m.screen == screenIssue && m.issueCursor < len(m.planIssues) {
-		parts = append(parts, fmt.Sprintf("#%d %s", m.planIssues[m.issueCursor].Number, m.planIssues[m.issueCursor].Title))
+
+	var parts []string
+	if ready > 0 {
+		parts = append(parts, fmt.Sprintf("%d ready", ready))
 	}
-	return truncate(strings.Join(parts, " › "), m.width)
+	if needs == 1 {
+		parts = append(parts, "1 needs you")
+	} else if needs > 1 {
+		parts = append(parts, fmt.Sprintf("%d need you", needs))
+	}
+	if m.needsYou {
+		parts = append(parts, "!")
+	}
+	if m.showClosed {
+		parts = append(parts, "Z")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// commandBarView renders the bottom row: the ":" line while it is open, a
+// notice while one stands, and otherwise the registry's bar for the selected
+// row — so the keys on show are exactly the keys that do something.
+func (m Model) commandBarView(width int) string {
+	if width < 1 {
+		width = 1
+	}
+	if m.line.Active() {
+		return padLine(m.line.View(), width)
+	}
+	if m.notice != "" {
+		// The notice stands in for the bar. noticeStyle's margin would push
+		// the row past its width, so the colour is applied plainly.
+		return lipgloss.NewStyle().Foreground(theme.DefaultPalette.Tertiary).
+			Render(padLine(truncate(m.notice, width), width))
+	}
+	// The hints are not commands, so the registry does not render them; they
+	// are reserved their cells before the bar is cut.
+	hints := ": Cmd  ? Help"
+	if lipgloss.Width(hints) > width {
+		hints = truncate(hints, width)
+	}
+	bar := command.Bar(m.reg, m.currentRow(), width-lipgloss.Width(hints)-2)
+	if bar != "" {
+		bar += "  "
+	}
+	return padLine(bar+hints, width)
+}
+
+// padLine fills a line to the width with spaces.
+func padLine(s string, width int) string {
+	if gap := width - lipgloss.Width(s); gap > 0 {
+		s += strings.Repeat(" ", gap)
+	}
+	return s
+}
+
+// helpView renders the motion keys and the registry's commands for the
+// selected row, one per line. It is the same registry the bar renders from,
+// so help cannot list a key that does nothing.
+func (m Model) helpView() string {
+	h := m.contentHeight()
+	var b strings.Builder
+	b.WriteString(theme.Default.PaneHeader.Width(m.width).Render("Help") + "\n\n")
+	b.WriteString(itemStyle.Render("Motion") + "\n")
+	for _, line := range []string{
+		"  j k ↑ ↓     move",
+		"  g G         top / bottom",
+		"  ctrl+d/u    page",
+		"  enter l →   drill in",
+		"  esc h ←     back",
+		"  q           back · quit from the top",
+		"  :           command line",
+		"  ?           help",
+		"  ctrl+c      quit",
+	} {
+		b.WriteString(itemStyle.Render(line) + "\n")
+	}
+	b.WriteString("\n" + itemStyle.Render("Commands") + "\n")
+	for _, line := range strings.Split(command.Help(m.reg, m.currentRow()), "\n") {
+		b.WriteString(itemStyle.Render(line) + "\n")
+	}
+	return pad(m.width, h, strings.TrimRight(b.String(), "\n"))
 }
 
 const (
@@ -356,23 +571,30 @@ func paneHeights(total int) (top, bottom int) {
 	if top > maxTopHeight {
 		top = maxTopHeight
 	}
-	bottom = total - top - 1 // 1-row rule
+	bottom = total - top
 	if bottom < 3 {
 		bottom = 3
 	}
 	return
 }
 
+// contentHeight is the rows between the breadcrumb and the command bar.
 func (m Model) contentHeight() int {
-	h := m.height - 1 // status line
-	if m.screen == screenPlanDetail || m.screen == screenIssue {
-		h-- // breadcrumb
-	}
-	h-- // action bar
+	h := m.height - 2
 	if h < 1 {
 		h = 1
 	}
 	return h
+}
+
+// tableHeights splits the content between the table and the detail pane,
+// accounting for the three rules the tall layout draws.
+func (m Model) tableHeights() (top, detail int) {
+	return paneHeights(m.contentHeight() - 3)
+}
+
+func (m Model) isShort() bool {
+	return m.height < 20
 }
 
 func truncate(s string, max int) string {
@@ -387,4 +609,30 @@ func truncate(s string, max int) string {
 		return string(runes[:max])
 	}
 	return string(runes[:max-3]) + "..."
+}
+
+// rule is a full-width horizontal rule.
+func (m Model) rule() string {
+	w := m.width
+	if w < 1 {
+		w = 1
+	}
+	return dividerStyle.Render(strings.Repeat("─", w))
+}
+
+// clampCursors brings the cursors back inside their tables after the rows
+// changed under them.
+func (m *Model) clampCursors() {
+	if last := len(m.visiblePlans()) - 1; m.planCursor > last {
+		m.planCursor = last
+	}
+	if m.planCursor < 0 {
+		m.planCursor = 0
+	}
+	if last := len(m.visibleIssues()) - 1; m.issueCursor > last {
+		m.issueCursor = last
+	}
+	if m.issueCursor < 0 {
+		m.issueCursor = 0
+	}
 }

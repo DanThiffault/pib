@@ -85,6 +85,11 @@ type Request struct {
 	// Pass says whether a plan-reviewer run is the opening or the closing
 	// review of its plan.
 	Pass string `json:"pass,omitempty"`
+	// Foreground selects the agent's window rather than leaving it behind
+	// pib's. It is for a spawn the user is meant to watch — the planner a
+	// `new` command opens; everything pib starts on its own stays in the
+	// background.
+	Foreground bool `json:"foreground,omitempty"`
 
 	// Payload carries the arguments of an issue or plan operation. Its
 	// shape depends on Op; internal/issueops defines them.

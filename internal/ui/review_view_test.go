@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,18 +17,15 @@ import (
 	"pib/internal/triage"
 )
 
-// reviewModel is a model whose plan has one issue carrying a pull request
-// and a review history, with the workspace's default review cap loaded so a
-// DAG row can say which cycle of how many it is on.
+// reviewModel is a model parked on one issue carrying a pull request and a
+// review history, with the workspace's default review cap loaded so a table
+// row can say which cycle of how many it is on.
 func reviewModel(t *testing.T) Model {
 	t.Helper()
 	m := plansModel(t, []issues.Plan{{Slug: "orders", Title: "Orders"}})
-	cfg, err := config.LoadPaths(filepath.Join(t.TempDir(), "missing.toml"), "")
-	if err != nil {
-		t.Fatalf("LoadPaths: %v", err)
-	}
-	m.cfg = cfg
+	m.cfg = defaultCfg(t)
 	m.screen = screenIssue
+	m.drilled = "orders"
 	m.planIssues = []issues.Status{{
 		Issue: issues.Issue{
 			Number: 13, Title: "Implement Order Aggregate", State: issues.StateOpen, Type: "task",
@@ -39,7 +35,6 @@ func reviewModel(t *testing.T) Model {
 		ReviewCycle:    2,
 		Run:            "review-7",
 	}}
-	m.planIssuesLoadedFor = "orders"
 	return m
 }
 
@@ -56,29 +51,29 @@ func settledReview(cycle int, verdict string, findings int) issues.Review {
 
 // A row that says nothing about the review hides three passes of agent time
 // and a diff the user has not looked at yet.
-func TestDAGRowNamesThePullRequestAndItsReviewCycle(t *testing.T) {
+func TestIssuesTableNamesThePullRequestAndItsReviewCycle(t *testing.T) {
 	m := reviewModel(t)
-	m.screen = screenPlans
+	m.screen = screenIssues
 
-	output := m.planDAGPane(100, 10)
+	output := m.issueTable(100, 10)
 	if !strings.Contains(output, "PR #44 · review 2 of 3") {
-		t.Errorf("DAG row does not read \"PR #44 · review 2 of 3\":\n%s", output)
+		t.Errorf("table row does not read \"PR #44 · review 2 of 3\":\n%s", output)
 	}
 }
 
 // A pull request nobody has reviewed yet is still a pull request, and must
 // not claim to be on a cycle it is not.
-func TestDAGRowNamesThePullRequestBeforeAnyReview(t *testing.T) {
+func TestIssuesTableNamesThePullRequestBeforeAnyReview(t *testing.T) {
 	m := reviewModel(t)
-	m.screen = screenPlans
+	m.screen = screenIssues
 	m.planIssues[0].ReviewCycle = 0
 
-	output := m.planDAGPane(100, 10)
+	output := m.issueTable(100, 10)
 	if !strings.Contains(output, "PR #44") {
-		t.Errorf("DAG row does not name the pull request:\n%s", output)
+		t.Errorf("table row does not name the pull request:\n%s", output)
 	}
 	if strings.Contains(output, "review 0") || strings.Contains(output, "review 1") {
-		t.Errorf("DAG row claims a review cycle for a pull request with none:\n%s", output)
+		t.Errorf("table row claims a review cycle for a pull request with none:\n%s", output)
 	}
 }
 
@@ -169,10 +164,12 @@ func TestReviewSectionsRenderWithNoStoreAndNoTriageReads(t *testing.T) {
 	}
 }
 
-// The preview shares its rows with the issue list, so anything it spends on
-// review history is a row the list does not get. It shows none of it.
-func TestPreviewPaneLeavesReviewHistoryToTheFullScreenView(t *testing.T) {
+// The detail pane shares its rows with the issues table, so anything it
+// spends on review history is a row the table does not get. It shows none of
+// it: the history is the full-screen view's work.
+func TestDetailPaneLeavesReviewHistoryToTheFullScreenView(t *testing.T) {
 	m := reviewModel(t)
+	m.screen = screenIssues
 	m.planReviews = map[int64][]issues.Review{13: {settledReview(1, issues.VerdictChanges, 2)}}
 	m.triage = scanCollector(t, 13, "https://github.com/dan/orders/pull/44",
 		marked{body: "<!-- pib:out-of-scope plan=orders id=money-type-is-float -->\nThe money type is a float."})
@@ -180,7 +177,7 @@ func TestPreviewPaneLeavesReviewHistoryToTheFullScreenView(t *testing.T) {
 	preview := m.issuePreviewPane(45, 20)
 	for _, unwanted := range []string{"cycle 1", "money-type-is-float", "Out-of-scope"} {
 		if strings.Contains(preview, unwanted) {
-			t.Errorf("preview pane spent its rows on %q", unwanted)
+			t.Errorf("detail pane spent its rows on %q", unwanted)
 		}
 	}
 	if got := len(strings.Split(preview, "\n")); got != 20 {
@@ -208,8 +205,8 @@ func TestReviewRowsStayWithinThePaneAtEverySizeCovered(t *testing.T) {
 		if len(lines) > m.height {
 			t.Errorf("%dx%d: rendered %d lines into %d", size.w, size.h, len(lines), m.height)
 		}
-		if last := lines[len(lines)-1]; !strings.Contains(last, "[") {
-			t.Errorf("%dx%d: last line is %q, want the action bar", size.w, size.h, last)
+		if last := lines[len(lines)-1]; !strings.Contains(last, "? Help") {
+			t.Errorf("%dx%d: last line is %q, want the command bar", size.w, size.h, last)
 		}
 	}
 }
@@ -252,14 +249,12 @@ func testStore(t *testing.T) *issues.Store {
 }
 
 // shortScanInterval makes the scan's own tick quick enough for a test to
-// watch a whole arming-and-firing cycle without waiting half an hour. The
-// listing tick is shortened with it, because a test that executes a tick
-// waits for it to fire.
+// watch a whole arming-and-firing cycle without waiting half an hour.
 func shortScanInterval(t *testing.T) {
 	t.Helper()
-	previousScan, previousBackground := outOfScopeInterval, backgroundInterval
-	outOfScopeInterval, backgroundInterval = 10*time.Millisecond, 10*time.Millisecond
-	t.Cleanup(func() { outOfScopeInterval, backgroundInterval = previousScan, previousBackground })
+	previous := outOfScopeInterval
+	outOfScopeInterval = 10 * time.Millisecond
+	t.Cleanup(func() { outOfScopeInterval = previous })
 }
 
 // The loading command is the only thing that fills the review history in, so
@@ -315,12 +310,11 @@ func TestTheInterfaceScansOpenPullRequestsForMarkedThreads(t *testing.T) {
 }
 
 // A scan is a GraphQL call per open pull request, and every marked thread it
-// finds can cost a code-reviewer run. Arming the slow tick from the
-// three-second one would create a new chain on every one of those ticks, and
-// nothing ever cancels the abandoned ones — so the scans would grow with the
-// square of how long pib has been open, on the most expensive path in the
-// process.
-func TestTheListingTickDoesNotArmAScanOfItsOwn(t *testing.T) {
+// finds can cost a code-reviewer run. Arming the slow tick from the store
+// events — which arrive constantly — would start a scan on every one, and
+// nothing ever cancels the abandoned ones. The scan re-arms from its own
+// message and nowhere else.
+func TestStoreEventsDoNotArmAScanOfTheirOwn(t *testing.T) {
 	shortScanInterval(t)
 	store := testStore(t)
 	issue := storeWithReviewedIssue(t, store)
@@ -330,32 +324,49 @@ func TestTheListingTickDoesNotArmAScanOfItsOwn(t *testing.T) {
 	m := ready(t)
 	m.store, m.triage = store, collector
 
-	// Twenty deliveries of the fast tick, at any pace, must arm nothing:
-	// the scan is not its business.
+	// Twenty store events, at any pace, must arm nothing: the scan is not
+	// their business.
 	for i := 0; i < 20; i++ {
 		var next tea.Model
-		next, cmd := m.Update(backgroundTickMsg(time.Now()))
+		next, cmd := m.Update(storeEventMsg{event: issues.Event{Kind: issues.EventIssue, Plan: "orders", Issue: issue.Number}})
 		m = next.(Model)
 		drain(cmd)
 	}
 	if got := reader.reads(); got != 0 {
-		t.Errorf("the listing tick triggered %d scans, want none", got)
+		t.Errorf("store events triggered %d scans, want none", got)
 	}
 
 	// One delivery of the scan's own message arms exactly one chain, and
-	// further listing ticks leave that one alone.
+	// further store events leave that one alone.
 	next, cmd := m.Update(outOfScopeTickMsg(time.Now()))
 	m = next.(Model)
 	drain(cmd)
 	waitForReads(t, reader, 1)
 	for i := 0; i < 20; i++ {
-		next, cmd := m.Update(backgroundTickMsg(time.Now()))
+		next, cmd := m.Update(storeEventMsg{event: issues.Event{Kind: issues.EventIssue, Plan: "orders", Issue: issue.Number}})
 		m = next.(Model)
 		drain(cmd)
 	}
 	time.Sleep(20 * outOfScopeInterval)
 	if got := reader.reads(); got != 1 {
 		t.Errorf("%d scans ran, want exactly 1", got)
+	}
+}
+
+// drain runs a command and everything a tea.Batch fans out to, discarding
+// the messages — what the bubbletea runtime does, minus the delivery.
+func drain(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		var wg sync.WaitGroup
+		for _, c := range msg {
+			wg.Add(1)
+			go func(c tea.Cmd) { defer wg.Done(); drain(c) }(c)
+		}
+		wg.Wait()
 	}
 }
 

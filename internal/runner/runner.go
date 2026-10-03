@@ -158,7 +158,11 @@ func (r Runner) spawn(ctx context.Context, req protocol.Request) (protocol.Respo
 		ExtraTools: ControlTools,
 		Extensions: []string{r.ExtensionPath},
 	})...)
-	args = append(args, "--", req.Task)
+	// A spawn with no task opens the agent to ask its own first question —
+	// the planner the `new` command starts is exactly that.
+	if req.Task != "" {
+		args = append(args, "--", req.Task)
+	}
 
 	name := req.Name
 	if name == "" {
@@ -167,7 +171,7 @@ func (r Runner) spawn(ctx context.Context, req protocol.Request) (protocol.Respo
 
 	return r.await(ctx,
 		run{id: runID, issue: req.Issue, agent: def.Name, plan: req.Plan, pass: req.Pass},
-		runDir, name, append([]string{agent.Executable}, args...))
+		runDir, name, append([]string{agent.Executable}, args...), req.Foreground)
 }
 
 // spawnBackground starts an agent and returns immediately, leaving it
@@ -200,7 +204,9 @@ func (r Runner) spawnBackground(req protocol.Request) (protocol.Response, error)
 		ExtraTools: ControlTools,
 		Extensions: []string{r.ExtensionPath},
 	})...)
-	args = append(args, "--", req.Task)
+	if req.Task != "" {
+		args = append(args, "--", req.Task)
+	}
 
 	name := req.Name
 	if name == "" {
@@ -272,7 +278,7 @@ func (r Runner) resume(ctx context.Context, req protocol.Request) (protocol.Resp
 	}
 
 	argv := []string{agent.Executable, "--session", transcript, "--", req.Answer}
-	return r.await(ctx, run{id: id, issue: req.Issue, agent: name, plan: req.Plan, pass: req.Pass}, runDir, window, argv)
+	return r.await(ctx, run{id: id, issue: req.Issue, agent: name, plan: req.Plan, pass: req.Pass}, runDir, window, argv, req.Foreground)
 }
 
 // agentOf names the agent a run belongs to. Without a recorder there is
@@ -289,8 +295,10 @@ func (r Runner) agentOf(id string) string {
 }
 
 // await opens the window, waits for it to close, and reads the result. If the
-// caller goes away the window is killed rather than left orphaned.
-func (r Runner) await(ctx context.Context, info run, runDir, name string, argv []string) (protocol.Response, error) {
+// caller goes away the window is killed rather than left orphaned. A
+// foreground request selects the window, putting it in front of pib; the
+// default leaves pib where the user is looking.
+func (r Runner) await(ctx context.Context, info run, runDir, name string, argv []string, foreground bool) (protocol.Response, error) {
 	dir, err := r.dirFor(info.issue)
 	if err != nil {
 		return protocol.Response{}, err
@@ -300,7 +308,7 @@ func (r Runner) await(ctx context.Context, info run, runDir, name string, argv [
 		Name:       name,
 		Dir:        dir,
 		Env:        childEnv(runDir, r.SocketPath, info.agent, info.issue),
-		Background: true,
+		Background: !foreground,
 	}, argv)
 	if err != nil {
 		return protocol.Response{}, err

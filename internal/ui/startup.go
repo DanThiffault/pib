@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"pib/internal/agent"
 	"pib/internal/config"
@@ -366,11 +367,25 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 		m.extension = msg.extension
 		m.socket = msg.socket
 		m.cfg = msg.config
-		m.screen = screenNewPlan
+		m.screen = screenPlans
 		m.phase = phasePrompt
-		// The out-of-scope scan is armed here, once, alongside the listing
-		// tick that also re-arms itself and only itself.
-		return m, tea.Batch(m.input.Focus(), backgroundTick(), outOfScopeTick()), true
+		var cmds []tea.Cmd
+		if m.store != nil {
+			// The tables live off the store's change feed: each event
+			// reloads the affected rows and re-arms the wait. The plans
+			// table loads once here; after that the feed drives it.
+			m.events, m.unsubscribe = m.store.Subscribe()
+			cmds = append(cmds, waitForEvent(m.events))
+			m.plansLoading = true
+			cmds = append(cmds, loadPlans(m.store, m.showClosed, m.cfg))
+		}
+		// The out-of-scope scan is armed here, once, and re-arms only from
+		// its own message. The batch is built by hand rather than with
+		// tea.Batch, which compacts a one-command batch down to the command
+		// itself — and a test that executes it would then wait out the
+		// scan's whole interval.
+		cmds = append(cmds, outOfScopeTick())
+		return m, func() tea.Msg { return tea.BatchMsg(cmds) }, true
 
 	case tea.KeyMsg:
 		switch m.phase {
@@ -498,4 +513,34 @@ func countAgents(n int) string {
 		return "1 agent"
 	}
 	return fmt.Sprintf("%d agents", n)
+}
+
+// startupBar renders the bottom row while a startup phase is showing. These
+// prompts keep their own keys, out of the registry (ADR-006 §4); once
+// startup finishes, the keys are dead and the command bar takes over.
+func (m Model) startupBar(width int) string {
+	if width < 1 {
+		width = 1
+	}
+	var keys [][2]string
+	switch m.phase {
+	case phaseConfirmAgents:
+		keys = [][2]string{{"y", "Install"}, {"n", "Exit"}}
+	case phaseConfirmUpdate:
+		keys = [][2]string{{"y", "Update"}, {"n", "Keep"}}
+	case phaseConfirmCreate:
+		keys = [][2]string{{"y", "Create"}, {"n", "Exit"}}
+	case phaseFailed:
+		return padLine(anyKeyHint, width)
+	default:
+		return padLine("", width)
+	}
+
+	keyStyle := lipgloss.NewStyle().Foreground(theme.DefaultPalette.Primary).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(theme.DefaultPalette.Fg)
+	var parts []string
+	for _, k := range keys {
+		parts = append(parts, keyStyle.Render("["+strings.ToUpper(k[0])+"]")+labelStyle.Render(k[1]))
+	}
+	return padLine(strings.Join(parts, "  "), width)
 }

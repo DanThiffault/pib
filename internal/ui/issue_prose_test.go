@@ -63,11 +63,11 @@ func proseModelWith(t *testing.T, store *issues.Store) Model {
 	t.Helper()
 	m := plansModel(t, []issues.Plan{{Slug: "orders", Title: "Orders"}})
 	m.screen = screenIssue
+	m.drilled = "orders"
 	m.store = store
 	m.planIssues = []issues.Status{{
 		Issue: issues.Issue{Number: 7, Title: "Show the body", State: issues.StateOpen, Type: "coder"},
 	}}
-	m.planIssuesLoadedFor = "orders"
 	return m
 }
 
@@ -84,15 +84,16 @@ func TestFullScreenShowsTheIssueBody(t *testing.T) {
 	}
 }
 
-// A comment is a finding somebody wrote down, and a finding with no author and
-// no time on it cannot be acted on or reasoned about.
 func TestFullScreenShowsEveryCommentWithItsAuthorAndTime(t *testing.T) {
 	view := proseModel(t).issueFullScreenView()
 
 	for _, want := range []string{
 		"Comments (2)",
-		"plan-reviewer · 2026-09-04 20:38", "Fourteen issues checked",
-		"coder · 2026-09-04 21:05", "the action bar stays put",
+		"plan-reviewer · 2026-09-04 20:38",
+		"Plan review — ui-and-review-workflow",
+		"Fourteen issues checked",
+		"coder · 2026-09-04 21:05",
+		"the action bar stays put",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("full-screen view missing %q:\n%s", want, view)
@@ -100,28 +101,19 @@ func TestFullScreenShowsEveryCommentWithItsAuthorAndTime(t *testing.T) {
 	}
 }
 
-// A comment thread is a conversation. Sorting the comments, or the pane showing
-// only the most recent, would put a reply above the finding it answers, which
-// reads as a finding nobody made.
 func TestCommentsAreShownInTheOrderTheFileStoresThem(t *testing.T) {
-	m := proseModel(t)
-	m.issueProse = map[int64]issueProse{7: {file: issues.File{Comments: []issues.Comment{
-		{Author: "zeta", At: reviewedAt(9, 0), Body: "last comment's body"},
-		{Author: "alpha", At: reviewedAt(8, 0), Body: "first comment's body"},
-	}}}}
+	view := proseModel(t).issueFullScreenView()
 
-	view := m.issueFullScreenView()
-	zeta, alpha := strings.Index(view, "zeta"), strings.Index(view, "alpha")
-	if zeta < 0 || alpha < 0 {
-		t.Fatalf("full-screen view is missing a comment:\n%s", view)
+	reviewer := strings.Index(view, "plan-reviewer ·")
+	coder := strings.Index(view, "coder ·")
+	if reviewer < 0 || coder < 0 {
+		t.Fatalf("comments missing from the view:\n%s", view)
 	}
-	if zeta > alpha {
-		t.Errorf("comments were reordered; the file stores zeta first:\n%s", view)
+	if coder < reviewer {
+		t.Errorf("coder's comment rendered above the plan-reviewer's, against the file's order:\n%s", view)
 	}
 }
 
-// The file stores a comment's time as RFC 3339, which is precise and unreadable
-// at a glance. The other timestamps in the pane set the form this one follows.
 func TestCommentTimesUseTheFormTheRestOfThePaneUses(t *testing.T) {
 	head := commentHead(issues.Comment{Author: "plan-reviewer", At: reviewedAt(20, 38)})
 
@@ -167,10 +159,11 @@ func TestALongBodyScrollsInsteadOfBeingCut(t *testing.T) {
 	}
 }
 
-// The action bar is the only place the keys are, and it sits on the bottom row
-// of the screen. A pane that grew past its height would push it off, at every
-// terminal size the pane is used at, and at any offset the user can reach.
-func TestTheActionBarStaysOnTheBottomRowWhileTheContentScrolls(t *testing.T) {
+// The command bar is the only place the keys are, and it sits on the bottom
+// row of the screen. A pane that grew past its height would push it off, at
+// every terminal size the pane is used at, and at any offset the user can
+// reach.
+func TestTheCommandBarStaysOnTheBottomRowWhileTheContentScrolls(t *testing.T) {
 	m := proseModel(t)
 	var b strings.Builder
 	for i := 0; i < 200; i++ {
@@ -188,8 +181,8 @@ func TestTheActionBarStaysOnTheBottomRowWhileTheContentScrolls(t *testing.T) {
 				t.Errorf("%dx%d at offset %d: rendered %d lines into %d", size.w, size.h, offset, len(lines), m.height)
 			}
 			last := lines[len(lines)-1]
-			if !strings.Contains(last, "[") {
-				t.Errorf("%dx%d at offset %d: last line is %q, want the action bar", size.w, size.h, offset, last)
+			if !strings.Contains(last, "? Help") {
+				t.Errorf("%dx%d at offset %d: last line is %q, want the command bar", size.w, size.h, offset, last)
 			}
 		}
 	}
@@ -232,7 +225,7 @@ func TestTheScrollOffsetResetsWhenTheSelectedIssueChanges(t *testing.T) {
 		Issue: issues.Issue{Number: 8, Title: "Another issue", State: issues.StateOpen, Type: "coder"},
 	})
 	m.issueProse[8] = issueProse{file: issues.File{Body: "A body of its own."}}
-	m.screen = screenPlanDetail
+	m.screen = screenIssues
 	m.issueScroll = 12
 
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -258,7 +251,7 @@ func TestTheScrollOffsetResetsWhenTheSelectedIssueChanges(t *testing.T) {
 }
 
 // A render happens on every frame. Reaching the store for the prose would put a
-// file read behind every frame of every pane, and behind every row of the lists
+// file read behind every frame of every pane, and behind every row of the tables
 // that have no prose to show — so a render that has a store and has not run the
 // read shows none of it.
 func TestARenderNeverReadsTheProseItHasNotBeenGiven(t *testing.T) {
@@ -372,8 +365,7 @@ func TestContentIsReadOncePerSelectedIssue(t *testing.T) {
 	}
 
 	m := plansModel(t, []issues.Plan{{Slug: "orders", Title: "Orders"}})
-	m.screen, m.store = screenPlanDetail, store
-	m.planIssuesLoadedFor = "orders"
+	m.screen, m.store, m.drilled = screenIssues, store, "orders"
 	m.planIssues = []issues.Status{
 		{Issue: issues.Issue{Number: first.Number, Title: "First", State: issues.StateOpen, Type: "coder"}},
 		{Issue: issues.Issue{Number: second.Number, Title: "Second", State: issues.StateOpen, Type: "coder"}},
@@ -509,10 +501,10 @@ func TestContentThatFitsThePaneDoesNotScroll(t *testing.T) {
 	}
 }
 
-// The cursor is on the first issue from the moment the list appears, so the
-// preview pane — the pane on screen as the issues load — has to be the one
-// holding that issue's comment count, not a pane that fills in after the user
-// moves off the issue and back.
+// The cursor is on the first issue from the moment the table appears, so the
+// detail pane — the pane on screen as the issues load — has to be the one
+// holding that issue's comment, not a pane that fills in after the user moves
+// off the issue and back.
 func TestTheIssueUnderTheCursorIsReadWhenThePlanLoads(t *testing.T) {
 	store := testStore(t)
 	if _, err := store.CreatePlan(issues.NewPlan{Slug: "orders", Title: "Orders"}); err != nil {
@@ -527,7 +519,7 @@ func TestTheIssueUnderTheCursorIsReadWhenThePlanLoads(t *testing.T) {
 	}
 
 	m := plansModel(t, []issues.Plan{{Slug: "orders", Title: "Orders"}})
-	m.store, m.screen = store, screenPlanDetail
+	m.store, m.screen, m.drilled = store, screenIssues, "orders"
 
 	msg := loadPlanIssues(store, "orders", m.cfg)()
 	next, cmd := m.Update(msg)
@@ -542,38 +534,40 @@ func TestTheIssueUnderTheCursorIsReadWhenThePlanLoads(t *testing.T) {
 	}
 
 	preview := m.issuePreviewPane(45, 20)
-	if !strings.Contains(preview, "Comments: 1") {
-		t.Errorf("the preview pane does not say there is a comment to read:\n%s", preview)
+	if !strings.Contains(preview, "Latest comment") {
+		t.Errorf("the detail pane does not show the comment that was read:\n%s", preview)
 	}
-	if strings.Contains(preview, "Fourteen issues checked") {
-		t.Errorf("the preview pane spent its rows on the comment itself:\n%s", preview)
+	if !strings.Contains(preview, "Fourteen issues checked") {
+		t.Errorf("the detail pane does not show the comment's text:\n%s", preview)
 	}
 }
 
-// The preview pane shares its rows with the issue list, and half a width cannot
-// hold a fenced diff. It says how much there is to read and leaves the reading
-// to the full-screen view.
-func TestThePreviewPaneCountsTheCommentsWithoutTheirText(t *testing.T) {
+// The detail pane shows the summary and the most recent comment, and leaves
+// the thread to the full-screen view: half a height cannot hold a
+// conversation.
+func TestTheDetailPaneShowsTheSummaryAndOnlyTheLatestComment(t *testing.T) {
 	m := proseModel(t)
-	m.screen = screenPlanDetail
+	m.screen = screenIssues
 
 	preview := m.issuePreviewPane(45, 20)
-	if !strings.Contains(preview, "Comments: 2") {
-		t.Errorf("preview pane does not say there are comments to read:\n%s", preview)
+	for _, want := range []string{"Check every issue in this plan", "Latest comment — coder · 2026-09-04 21:05", "action bar stays put"} {
+		if !strings.Contains(preview, want) {
+			t.Errorf("detail pane missing %q:\n%s", want, preview)
+		}
 	}
-	for _, unwanted := range []string{"plan-reviewer", "Fourteen issues checked", "the action bar stays put"} {
+	for _, unwanted := range []string{"plan-reviewer", "Fourteen issues checked"} {
 		if strings.Contains(preview, unwanted) {
-			t.Errorf("preview pane spent its rows on %q", unwanted)
+			t.Errorf("detail pane spent its rows on the older comment %q:\n%s", unwanted, preview)
 		}
 	}
 }
 
-// The preview's row count is the thing the list beside it lines up with, so a
-// body that wraps must not push it past the height it was given — at any size
-// the plan detail view is used at.
-func TestThePreviewPaneStillFitsTheSizesItsTestsCover(t *testing.T) {
+// The detail pane's row count is the thing the table above it lines up with,
+// so a body that wraps must not push it past the height it was given — at any
+// size the issues screen is used at.
+func TestTheDetailPaneStillFitsTheSizesItsTestsCover(t *testing.T) {
 	m := proseModel(t)
-	m.screen = screenPlanDetail
+	m.screen = screenIssues
 
 	for _, size := range []struct{ w, h int }{{120, 40}, {100, 30}, {45, 20}, {40, 30}, {30, 20}, {20, 12}} {
 		preview := m.issuePreviewPane(size.w, size.h)
@@ -584,7 +578,7 @@ func TestThePreviewPaneStillFitsTheSizesItsTestsCover(t *testing.T) {
 }
 
 // Scrolling takes the cursor keys in the full-screen view only. Down there they
-// still move between issues, and the action keys still start things: a scroll
+// still move between issues, and the command keys still start things: a scroll
 // that swallowed them would make the view read-only.
 func TestScrollingTakesTheCursorKeysOnlyInTheFullScreenView(t *testing.T) {
 	m := proseModel(t)
@@ -608,10 +602,10 @@ func TestScrollingTakesTheCursorKeysOnlyInTheFullScreenView(t *testing.T) {
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("5")})
 	m = next.(Model)
 	if m.issueScroll != 6 {
-		t.Errorf("an action key moved the scroll offset to %d", m.issueScroll)
+		t.Errorf("an unbound key moved the scroll offset to %d", m.issueScroll)
 	}
 	for i := 0; i < 100; i++ {
-		next, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 		m = next.(Model)
 	}
 	if m.issueScroll != 0 {
@@ -624,8 +618,8 @@ func TestScrollingTakesTheCursorKeysOnlyInTheFullScreenView(t *testing.T) {
 	}
 }
 
-// A pane one row short of a header and a row is the degenerate case the plan
-// views already have to survive. Scrolling must not make it overflow.
+// A pane one row short of a header and a row is the degenerate case the
+// tables already have to survive. Scrolling must not make it overflow.
 func TestAScrollingPaneFitsEvenWhenTheTerminalIsAlmostTooShort(t *testing.T) {
 	m := proseModel(t)
 	var b strings.Builder
@@ -635,7 +629,7 @@ func TestAScrollingPaneFitsEvenWhenTheTerminalIsAlmostTooShort(t *testing.T) {
 	m.issueProse = map[int64]issueProse{7: {file: issues.File{Body: b.String()}}}
 
 	for h := 1; h <= 8; h++ {
-		m.width, m.height, m.issueScroll = 20, h+3, 12
+		m.width, m.height, m.issueScroll = 20, h+2, 12
 		rows := strings.Split(m.issueFullScreenView(), "\n")
 		if len(rows) != h {
 			t.Errorf("content height %d: rendered %d lines into %d", h, len(rows), h)
