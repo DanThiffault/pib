@@ -563,7 +563,7 @@ func TestZTogglesArchivedPlans(t *testing.T) {
 	m.store = store
 	m.cfg = defaultCfg(t)
 
-	m = deliver(t, m, collect(loadPlans(store, false, m.cfg))...)
+	m = deliver(t, m, collect(loadPlans(store, false, m.cfg, 0))...)
 	if len(m.visiblePlans()) != 0 {
 		t.Fatalf("an archived plan showed without Z: %v", m.visiblePlans())
 	}
@@ -718,7 +718,8 @@ func TestStoreEventReloadsThePlansAndTheIssuesOnScreen(t *testing.T) {
 	m.store = store
 	m.cfg = defaultCfg(t)
 
-	_, cmd := m.Update(storeEventMsg{event: issues.Event{Kind: issues.EventIssue, Plan: "orders", Issue: issue.Number}})
+	next, cmd := m.Update(storeEventMsg{event: issues.Event{Kind: issues.EventIssue, Plan: "orders", Issue: issue.Number}})
+	m = next.(Model)
 	msgs := collect(cmd)
 
 	var sawPlans, sawIssues bool
@@ -816,6 +817,39 @@ func TestAnIssueEventRefreshesTheProseOnScreen(t *testing.T) {
 }
 
 func strptr(s string) *string { return &s }
+
+// A burst of store events starts loads that run concurrently and land in
+// completion order. An older load landing after a newer one would put stale
+// rows back, so it is dropped by number.
+func TestAnOlderPlansLoadIsDropped(t *testing.T) {
+	m := plansModel(t, nil)
+	m.plansSeq = 2
+
+	m = deliver(t, m, plansLoadedMsg{seq: 2, plans: []issues.PlanStatus{{Plan: issues.Plan{Slug: "new"}}}})
+	if len(m.plans) != 1 || m.plans[0].Slug != "new" {
+		t.Fatalf("the newest load did not apply: %v", m.plans)
+	}
+
+	m = deliver(t, m, plansLoadedMsg{seq: 1, plans: []issues.PlanStatus{{Plan: issues.Plan{Slug: "old"}}}})
+	if len(m.plans) != 1 || m.plans[0].Slug != "new" {
+		t.Errorf("an out-of-order load replaced the rows: %v", m.plans)
+	}
+}
+
+func TestAnOlderIssuesLoadIsDropped(t *testing.T) {
+	m := issuesModel(t, nil)
+	m.issuesSeq = 2
+
+	m = deliver(t, m, planIssuesLoadedMsg{seq: 2, planSlug: "orders", issues: []issues.Status{startable(2)}})
+	if len(m.planIssues) != 1 || m.planIssues[0].Number != 2 {
+		t.Fatalf("the newest load did not apply: %v", m.planIssues)
+	}
+
+	m = deliver(t, m, planIssuesLoadedMsg{seq: 1, planSlug: "orders", issues: []issues.Status{startable(1)}})
+	if len(m.planIssues) != 1 || m.planIssues[0].Number != 2 {
+		t.Errorf("an out-of-order load replaced the rows: %v", m.planIssues)
+	}
+}
 
 // ── The wired commands ───────────────────────────────────────────────────
 
@@ -987,6 +1021,96 @@ func TestStartRefusesASecondAgentOnTheSameIssue(t *testing.T) {
 
 	if got := len(agents.seen()); got != 1 {
 		t.Errorf("spawned %d agents on one issue, want 1", got)
+	}
+}
+
+// An issue that is starting sorts out of the needs-you block. The cursor
+// has to come with it, or the next key lands on whatever row the sort slid
+// under it — a second s would start a different agent.
+func TestStartKeepsTheCursorOnTheIssueItStarted(t *testing.T) {
+	agents := &fakeSpawner{}
+	m := issuesModel(t, []issues.Status{startable(1), startable(2)})
+	m.agents = agents
+
+	// One step, so the spawn's answer stays the store's business and the
+	// in-flight mark stands.
+	next, cmd := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+	drain(cmd)
+
+	issue, ok := m.selectedIssue()
+	if !ok || issue.Number != 1 {
+		t.Fatalf("after s the selection moved to #%d; want it kept on #1", issue.Number)
+	}
+
+	// A second s lands on the same row and starts nothing: an issue that is
+	// starting is not launchable, so the predicate turns the key away.
+	m = keyPress(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	if got := len(agents.seen()); got != 1 {
+		t.Errorf("spawned %d agents, want 1 — the second s went to another row", got)
+	}
+
+	// Behind the predicate, the guard says why for a message that arrives
+	// some other way.
+	next, _ = m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+	if !strings.Contains(m.notice, "already has an agent starting") {
+		t.Errorf("notice = %q, want the already-starting guard", m.notice)
+	}
+}
+
+// The full-screen view shows the issue under the cursor; a start that moved
+// the cursor would swap the issue on screen while the user is reading it.
+func TestStartOnTheFullScreenIssueKeepsItOnScreen(t *testing.T) {
+	m := issuesModel(t, []issues.Status{startable(1), startable(2)})
+	m.screen = screenIssue
+	m.agents = &fakeSpawner{}
+
+	next, _ := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+
+	issue, ok := m.selectedIssue()
+	if !ok || issue.Number != 1 {
+		t.Fatalf("after s the full-screen view moved to #%d; want #1", issue.Number)
+	}
+	if crumb := m.breadcrumbView(); !strings.Contains(crumb, "#1") {
+		t.Errorf("breadcrumb = %q, want it still on #1", crumb)
+	}
+}
+
+// The same slide, from the other direction: an agent finishing releases its
+// in-flight mark, and the row can sort back up. The cursor comes with it.
+func TestAgentFinishedKeepsTheCursor(t *testing.T) {
+	m := issuesModel(t, []issues.Status{startable(1), startable(2)})
+	m.agents = &fakeSpawner{}
+
+	next, cmd := m.Update(startIssueMsg{issue: startable(1)})
+	m = next.(Model)
+	drain(cmd)
+	if issue, _ := m.selectedIssue(); issue.Number != 1 {
+		t.Fatalf("setup: cursor on #%d, want #1", issue.Number)
+	}
+
+	next, _ = m.Update(agentFinishedMsg{issue: startable(1), status: "done"})
+	m = next.(Model)
+	if issue, _ := m.selectedIssue(); issue.Number != 1 {
+		t.Errorf("after the agent finished the cursor moved to #%d; want #1", issue.Number)
+	}
+}
+
+// A start-all landing marks every launchable issue, sliding all of them
+// under the cursor at once.
+func TestStartAllKeepsTheCursorOnItsIssue(t *testing.T) {
+	m := issuesModel(t, []issues.Status{startable(1), startable(2), startable(3)})
+	m.agents = &fakeSpawner{}
+	m.issueCursor = 1
+
+	next, cmd := m.Update(readyLoadedMsg{plan: "orders", issues: []issues.Status{startable(1), startable(2), startable(3)}})
+	m = next.(Model)
+	drain(cmd)
+
+	if issue, _ := m.selectedIssue(); issue.Number != 2 {
+		t.Errorf("after start-all the cursor moved to #%d; want #2", issue.Number)
 	}
 }
 

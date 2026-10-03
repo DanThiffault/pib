@@ -119,6 +119,14 @@ type Model struct {
 	// does not yet.
 	inFlight map[int64]bool
 
+	// plansSeq and issuesSeq order the loads of their table. Bubble Tea runs
+	// commands concurrently, so a burst of store events starts loads that
+	// can land in any order; each load is numbered when it starts, and a
+	// landing older than the newest number assigned is dropped rather than
+	// un-load the newer rows.
+	plansSeq  int
+	issuesSeq int
+
 	// events is the store's change feed, subscribed once the store opens;
 	// every delivery reloads the affected rows and re-arms the wait.
 	events      <-chan issues.Event
@@ -243,8 +251,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = fmt.Sprintf("%s #%d finished: %s", msg.issue.Agent, msg.issue.Number, msg.status)
 		}
+		// Releasing the in-flight mark can make the issue launchable or
+		// needing attention again, which sorts it back up; the cursor comes
+		// with it.
+		key := m.issueKey()
 		delete(m.inFlight, msg.issue.Number)
-		return m, m.refreshIssues()
+		m.restoreIssueCursor(key)
+		return m.refreshIssues()
 	case killMsg:
 		m.notice = ""
 		return m, killRunCmd(m.store, msg.run, msg.issue)
@@ -275,13 +288,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Archived plans are a load parameter, so the plans table reloads;
 		// the issues table filters what it already holds.
 		if m.screen == screenPlans {
-			return m, m.refreshPlans()
+			return m.refreshPlans()
 		}
-		m.clampCursors()
+		m.restoreIssueCursor(m.issueKey())
 		return m, nil
 	case toggleNeedsYouMsg:
 		m.needsYou = !m.needsYou
-		m.clampCursors()
+		m.restorePlanCursor(m.planKey())
+		m.restoreIssueCursor(m.issueKey())
 		return m, nil
 
 	// The ":" line's reports.

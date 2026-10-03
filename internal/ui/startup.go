@@ -377,7 +377,9 @@ func (m Model) updateStartup(msg tea.Msg) (Model, tea.Cmd, bool) {
 			m.events, m.unsubscribe = m.store.Subscribe()
 			cmds = append(cmds, waitForEvent(m.events))
 			m.plansLoading = true
-			cmds = append(cmds, loadPlans(m.store, m.showClosed, m.cfg))
+			var plansCmd tea.Cmd
+			m, plansCmd = m.refreshPlans()
+			cmds = append(cmds, plansCmd)
 		}
 		// The out-of-scope scan is armed here, once, and re-arms only from
 		// its own message. The batch is built by hand rather than with

@@ -41,11 +41,15 @@ func (m Model) onStoreEvent(event issues.Event) (tea.Model, tea.Cmd) {
 	if m.events != nil {
 		cmds = append(cmds, waitForEvent(m.events))
 	}
-	cmds = append(cmds, m.refreshPlans())
+	var plansCmd tea.Cmd
+	m, plansCmd = m.refreshPlans()
+	cmds = append(cmds, plansCmd)
 
 	if m.screen == screenIssues || m.screen == screenIssue {
 		if event.Plan == "" || event.Plan == m.drilled {
-			cmds = append(cmds, m.refreshIssues())
+			var issuesCmd tea.Cmd
+			m, issuesCmd = m.refreshIssues()
+			cmds = append(cmds, issuesCmd)
 		}
 	}
 
