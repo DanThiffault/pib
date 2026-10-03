@@ -9,7 +9,9 @@ import (
 
 	"pib/internal/agent"
 	"pib/internal/config"
+	"pib/internal/issueops"
 	"pib/internal/issues"
+	"pib/internal/protocol"
 	"pib/internal/server"
 	"pib/internal/triage"
 	"pib/internal/ui/command"
@@ -296,6 +298,145 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.needsYou = !m.needsYou
 		m.restorePlanCursor(m.planKey())
 		m.restoreIssueCursor(m.issueKey())
+		return m, nil
+
+	// The lifecycle verbs of ADR-006 §1. Text goes through $EDITOR; the
+	// store's change feed, not these results, is what refreshes the tables.
+	case commentIssueMsg:
+		return m.handleComment(msg.issue)
+	case commentTextMsg:
+		if m.editorFailed("comment", msg.err) {
+			return m, nil
+		}
+		return m, commentCmd(m.store, msg.issue.Number, msg.text)
+	case commentResultMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("could not comment on #%d: %v", msg.number, msg.err)
+		} else {
+			m.notice = fmt.Sprintf("commented on #%d", msg.number)
+		}
+		return m, nil
+
+	case followupIssueMsg:
+		return m.handleFollowup(msg.issue)
+	case followupTextMsg:
+		if m.editorFailed("followup", msg.err) {
+			return m, nil
+		}
+		return m, followupCmd(m.store, m.agents, msg.issue, msg.text)
+	case followupResultMsg:
+		m.notice = msg.err.Error()
+		return m, nil
+
+	case answerIssueMsg:
+		return m.handleAnswer(msg.issue)
+	case answerTextMsg:
+		if m.editorFailed("answer", msg.err) {
+			return m, nil
+		}
+		return m, m.issueOp(protocol.OpIssueAnswer, issueops.AnswerParams{
+			Number: msg.issue.Number, Answer: msg.text,
+		}, func(err error) tea.Msg { return answerResultMsg{number: msg.issue.Number, err: err} })
+	case answerResultMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("could not answer #%d: %v", msg.number, msg.err)
+		} else {
+			m.notice = fmt.Sprintf("answered #%d — resuming the agent", msg.number)
+		}
+		return m, nil
+
+	case retryIssueMsg:
+		m.notice = ""
+		return m, m.issueOp(protocol.OpIssueRetry, issueops.RetryParams{
+			Number: msg.issue.Number,
+		}, func(err error) tea.Msg { return retryResultMsg{issue: msg.issue, err: err} })
+	case retryResultMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("could not retry #%d: %v", msg.issue.Number, msg.err)
+		} else {
+			m.notice = fmt.Sprintf("retrying #%d — %s is starting", msg.issue.Number, msg.issue.Agent)
+		}
+		return m, nil
+
+	case editIssueMsg:
+		return m.handleEdit(msg.issue)
+	case editResultMsg:
+		switch {
+		case msg.err != nil:
+			m.notice = fmt.Sprintf("could not edit #%d: %v", msg.issue.Number, msg.err)
+		case msg.changed:
+			m.notice = fmt.Sprintf("edited #%d", msg.issue.Number)
+		default:
+			m.notice = fmt.Sprintf("#%d unchanged", msg.issue.Number)
+		}
+		return m, nil
+
+	case closeAskMsg:
+		m.line.SetRow(m.currentRow())
+		m.line.OpenWith("close ")
+		return m, nil
+	case closeIssueMsg:
+		m.notice = ""
+		return m, closeIssueCmd(m.store, msg.issue.Number, msg.reason)
+	case closeResultMsg:
+		switch {
+		case msg.err != nil:
+			m.notice = fmt.Sprintf("could not close #%d: %v", msg.number, msg.err)
+		case len(msg.warnings) > 0:
+			m.notice = fmt.Sprintf("closed #%d — %s", msg.number, strings.Join(msg.warnings, "; "))
+		default:
+			m.notice = fmt.Sprintf("closed #%d", msg.number)
+		}
+		return m, nil
+
+	case reopenIssueMsg:
+		m.notice = ""
+		return m, reopenIssueCmd(m.store, msg.issue.Number)
+	case reopenResultMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("could not reopen #%d: %v", msg.number, msg.err)
+		} else {
+			m.notice = fmt.Sprintf("reopened #%d", msg.number)
+		}
+		return m, nil
+
+	case openPRMsg:
+		return m, openPRCmd(msg.url)
+	case prResultMsg:
+		if msg.err != nil {
+			m.notice = "could not open the pull request: " + msg.err.Error()
+		}
+		return m, nil
+
+	case blockersMsg:
+		return m.handleBlockers(msg.issue)
+
+	case archivePlanMsg:
+		m.notice = ""
+		return m, archivePlanCmd(m.store, msg.slug, true)
+	case unarchivePlanMsg:
+		m.notice = ""
+		return m, archivePlanCmd(m.store, msg.slug, false)
+	case archiveResultMsg:
+		verb := "archive"
+		if !msg.archived {
+			verb = "unarchive"
+		}
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("could not %s %s: %v", verb, msg.slug, msg.err)
+		} else {
+			m.notice = verb + "d " + msg.slug
+		}
+		return m, nil
+
+	case reviewPlanMsg:
+		return m.handleReviewPlan(msg.plan)
+	case reviewResultMsg:
+		if msg.err != nil {
+			m.notice = fmt.Sprintf("plan-reviewer on %s stopped: %v", msg.plan, msg.err)
+		} else {
+			m.notice = fmt.Sprintf("plan-reviewer on %s finished: %s", msg.plan, msg.status)
+		}
 		return m, nil
 
 	// The ":" line's reports.

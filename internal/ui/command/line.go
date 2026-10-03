@@ -63,6 +63,14 @@ func (l *Line) Open() {
 	l.cursor = len(l.history)
 }
 
+// OpenWith shows the line with input already in the buffer, the way a
+// command that needs an argument opens it with the verb typed and waiting:
+// x opens it as ":close ".
+func (l *Line) OpenWith(input string) {
+	l.Open()
+	l.input = []rune(input)
+}
+
 // Close hides the line and forgets what was typed.
 func (l *Line) Close() {
 	l.active = false

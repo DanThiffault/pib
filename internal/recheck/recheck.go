@@ -153,6 +153,17 @@ func Briefing(issue issues.Issue) string {
 		issue.Number, issue.Plan, issue.Type, issue.Title)
 }
 
+// OpeningBriefing tells the plan reviewer this is the opening pass: the
+// plan is checked against the codebase before any of it is worked. It is
+// what `pib plan review` sends.
+func OpeningBriefing(plan string) string {
+	return fmt.Sprintf(
+		"Review the plan %q before any of it is worked. Read it with "+
+			"`pib plan view %s` and `pib issue list --plan %s`, then check every "+
+			"issue against the codebase it will change.",
+		plan, plan, plan)
+}
+
 // ClosingBriefing tells the plan reviewer this is the closing pass: every
 // issue has been worked and the review is against the plan's own acceptance
 // criteria.

@@ -334,11 +334,7 @@ func (a App) planReview(args []string) error {
 		Op:    protocol.OpSpawn,
 		Agent: recheck.ReviewerName,
 		Name:  "review " + slug,
-		Task: fmt.Sprintf(
-			"Review the plan %q before any of it is worked. Read it with "+
-				"`pib plan view %s` and `pib issue list --plan %s`, then check every "+
-				"issue against the codebase it will change.",
-			slug, slug, slug),
+		Task:  recheck.OpeningBriefing(slug),
 		// No issue claims this run; the plan and the pass trace it.
 		Plan: slug,
 		Pass: issues.PassOpening,
